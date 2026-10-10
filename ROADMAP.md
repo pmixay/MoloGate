@@ -158,6 +158,14 @@ are not in priority order. Tick an item off when it ships.
   - A dedicated agent tool puts a site online.
 - [ ] Cloudflare API support, also exposed as an agent tool, to create subdomains for deployed sites.
 
+## Status page
+
+- [ ] **Status page** showing:
+  - **Service health:** the health of every service, such as the site, the container nodes, the
+    deploy nodes and each provider and account.
+  - **Global limits:** an indicator of how much of the team's combined limits is left.
+  - **Latency:** system-wide average latencies.
+
 ## Workspaces
 
 - [ ] **Team workspaces:** Mologate is first of all the team's own tool, so every workspace is visible
