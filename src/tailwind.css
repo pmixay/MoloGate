@@ -1,0 +1,138 @@
+@import 'tailwindcss';
+
+@config '../tailwind.config.js';
+
+/*
+  Mologate "Nocturne" theme.
+  The gray scale is a cool ink ramp: 950 is the sidebar, 900 the main ground,
+  850 raised surfaces (composer, user bubble), 800 hairlines and hovers.
+  Lime is the single accent; text placed on it uses accent-ink.
+*/
+@theme {
+	--font-sans:
+		var(--app-font-family, 'Geist'), 'Geist', 'Vazirmatn', ui-sans-serif, system-ui, -apple-system,
+		BlinkMacSystemFont, 'Segoe UI', Ubuntu, Cantarell, 'Noto Sans', sans-serif, 'Helvetica Neue',
+		'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+	--font-mono:
+		'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+		'Courier New', monospace;
+	--font-primary: var(--font-sans);
+	--font-secondary: var(--font-sans);
+
+	--color-gray-50: #f6f7fb;
+	--color-gray-100: #eceef5;
+	--color-gray-200: #dfe1ea;
+	--color-gray-300: #c8cad8;
+	--color-gray-400: #b4b7c7;
+	--color-gray-500: #8b8ea3;
+	--color-gray-600: #6b6e82;
+	--color-gray-700: #3a3c4c;
+	--color-gray-800: #23242f;
+	--color-gray-850: #15161e;
+	--color-gray-900: #0f1016;
+	--color-gray-950: #0b0c11;
+
+	--color-accent: #c6f432;
+	--color-accent-hover: #d4f85f;
+	--color-accent-ink: #0b0c11;
+}
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+	*,
+	::after,
+	::before,
+	::backdrop,
+	::file-selector-button {
+		border-color: var(--color-gray-200, currentColor);
+	}
+}
+
+@layer base {
+	html {
+		font-family: var(--font-sans);
+	}
+
+	pre {
+		font-family:
+			-apple-system, BlinkMacSystemFont, 'Inter', 'Vazirmatn', ui-sans-serif, system-ui, 'Segoe UI',
+			Roboto, Ubuntu, Cantarell, 'Noto Sans', sans-serif, 'Helvetica Neue', Arial,
+			'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+	}
+
+	pre {
+		white-space: pre-wrap;
+	}
+
+	button {
+		@apply cursor-pointer;
+	}
+
+	input::placeholder,
+	textarea::placeholder {
+		color: theme(--color-gray-400);
+	}
+
+	.dark input::placeholder,
+	.dark textarea::placeholder {
+		color: theme(--color-gray-500);
+	}
+
+	input[type='checkbox'] {
+		@apply appearance-none size-3.5 align-middle bg-white border border-gray-300 rounded transition cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-gray-800 dark:border-gray-600 self-center;
+		/* Center the custom mark */
+		display: inline-block;
+		position: relative;
+	}
+
+	input[type='checkbox']:checked {
+		@apply bg-blue-600 border-blue-600;
+	}
+
+	input[type='checkbox']:after {
+		content: '';
+		display: block;
+		width: 100%;
+		height: 100%;
+		/* Hide by default */
+		opacity: 0;
+		transition: opacity 0.2s;
+		position: absolute;
+		top: 0;
+		left: 0;
+		pointer-events: none;
+		/* SVG checkmark as background image */
+		background: url('data:image/svg+xml;utf8,<svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8l3 3l5-5"/></svg>')
+			center/80% no-repeat;
+	}
+
+	input[type='checkbox']:checked:after {
+		opacity: 1;
+	}
+
+	/* Nocturne: checked boxes use the lime accent with an ink checkmark in dark mode */
+	.dark input[type='checkbox']:checked {
+		@apply bg-accent border-accent;
+	}
+
+	.dark input[type='checkbox']:after {
+		background: url('data:image/svg+xml;utf8,<svg viewBox="0 0 16 16" fill="none" stroke="%230b0c11" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8l3 3l5-5"/></svg>')
+			center/80% no-repeat;
+	}
+}
+
+@layer utilities {
+	.font-primary,
+	.font-secondary {
+		font-family: var(--font-sans);
+	}
+}
+
+@custom-variant hover (&:hover);
