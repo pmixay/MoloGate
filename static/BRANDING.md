@@ -14,5 +14,10 @@ branding or obtain written permission or an enterprise license from Open WebUI I
 Keep `LICENSE`, `LICENSE_HISTORY` and `LICENSE_NOTICE` intact, and keep the
 "Built on Open WebUI" attribution in the app.
 
+Logo: the Molotok hammer-and-nails mark. The vector master is `static/static/mologate-mark.svg`
+(it takes the surrounding text colour). App icons draw it light on an ink tile so it reads in both
+themes; `splash.png` uses the original dark colour for light backgrounds and `splash-dark.png` a
+light colour for dark ones.
+
 Fonts: Geist and Geist Mono (`static/assets/fonts/`) are © Vercel and licensed under the
 SIL Open Font License 1.1 (`static/assets/fonts/Geist-OFL.txt`).

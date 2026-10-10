@@ -1,9 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-	<rect width="64" height="64" rx="14" fill="#0f1016" />
-	<rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none" stroke="#2c2d3a" stroke-width="1.5" />
-	<g transform="translate(8 8) scale(2)" fill="none" stroke="#eceef5" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
-		<path d="M5 19.5V5l7 7.5L19 5v14.5" />
-		<path d="M3 19.5h18" />
-		<rect x="10.5" y="15" width="3" height="3" rx="0.6" fill="#c6f432" stroke="none" />
-	</g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="180" fill="#0f1016"/><g transform="translate(512 512) scale(0.98) translate(-512 -506.5)"><path fill="#eceef5" d="M548,393 L543,394 L533,436 L572,446 L576,450 L514,804 L518,799 L635,465 L639,464 L672,475 L683,435 L681,431 Z M475,393 L340,432 L352,475 L385,464 L389,465 L506,800 L509,802 L448,454 L449,447 L491,436 L480,393 Z M601,240 L572,280 L586,370 L678,358 L892,792 L974,780 L748,317 L748,314 L752,312 L807,304 L880,339 L871,280 L837,233 L804,208 Z M422,240 L219,208 L186,233 L152,280 L143,339 L216,304 L271,312 L275,314 L275,317 L49,780 L131,792 L345,358 L437,370 L451,280 Z"/></g></svg>
