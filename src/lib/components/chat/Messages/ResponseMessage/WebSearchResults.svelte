@@ -11,17 +11,19 @@
 </script>
 
 <Collapsible grow={true} className="w-full" buttonClassName="w-full" bind:open={state}>
-	<div class="flex items-center gap-2 text-gray-500 transition">
+	<div
+		class="flex w-fit max-w-full items-center gap-1.5 my-0.5 px-2.5 py-1 rounded-[7px] border border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-700 transition"
+	>
 		<slot />
 		{#if state}
-			<ChevronUp strokeWidth="2.5" className="size-3.5 " />
+			<ChevronUp strokeWidth="2.5" className="size-3 " />
 		{:else}
-			<ChevronDown strokeWidth="2.5" className="size-3.5 " />
+			<ChevronDown strokeWidth="2.5" className="size-3 " />
 		{/if}
 	</div>
 
 	<div
-		class="text-sm border border-gray-50 dark:border-gray-850/30 rounded-xl my-1.5 p-2 w-full"
+		class="text-sm border border-gray-100 dark:border-gray-800 rounded-[10px] my-1.5 p-1.5 w-full"
 		slot="content"
 	>
 		{#if status?.query}
@@ -63,7 +65,7 @@
 				<a
 					href={safeLinkUrl(item.link)}
 					target="_blank"
-					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg font-normal! no-underline! mb-1"
+					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-[7px] font-normal! no-underline! mb-1"
 				>
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
@@ -103,7 +105,7 @@
 				<a
 					href={safeLinkUrl(url)}
 					target="_blank"
-					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg no-underline mb-1"
+					class="flex w-full items-center p-1 px-3 group/item justify-between text-gray-800 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 rounded-[7px] no-underline mb-1"
 				>
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">

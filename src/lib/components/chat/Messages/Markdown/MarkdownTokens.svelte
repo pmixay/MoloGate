@@ -132,7 +132,7 @@
 	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition`;
 
 	// Reasoning / analysis / generic <details> toggles render as quiet bordered chips
-	$: detailChipClassName = `w-fit max-w-full my-0.5 px-2.5 py-1 rounded-[7px] border border-gray-200 dark:border-gray-800 ${
+	$: detailChipClassName = `w-fit max-w-full mt-0.5 mb-2.5 px-2.5 py-1 rounded-[7px] border border-gray-200 dark:border-gray-800 ${
 		compactPreview ? 'text-xs' : 'text-[12.5px] leading-[18px]'
 	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-700 transition`;
 
@@ -227,12 +227,12 @@
 					class=" w-full text-sm text-start text-gray-500 dark:text-gray-400 max-w-full rounded-xl"
 					dir="auto"
 				>
-					<thead class="text-xs text-gray-700 uppercase dark:text-gray-400 border-none">
+					<thead class="text-gray-500 uppercase border-none">
 						<tr class="">
 							{#each token.header as header, headerIdx}
 								<th
 									scope="col"
-									class="px-2.5! py-2! cursor-pointer border-b border-gray-100! dark:border-gray-800!"
+									class="px-2.5! py-2! cursor-pointer border-b border-gray-200! dark:border-gray-800! font-mono! text-[10.5px]! tracking-[0.08em] font-medium! text-gray-500!"
 									style={token.align[headerIdx] ? `text-align: ${token.align[headerIdx]}` : ''}
 								>
 									<div class="gap-1.5 text-start">
@@ -255,11 +255,11 @@
 							<tr class="text-xs">
 								{#each row ?? [] as cell, cellIdx}
 									<td
-										class="px-3! py-2! text-gray-900 dark:text-white w-max {token.rows.length -
+										class="px-3! py-2! text-gray-900 dark:text-gray-200 w-max {token.rows.length -
 											1 ===
 										rowIdx
 											? ''
-											: 'border-b border-gray-50! dark:border-gray-850!'}"
+											: 'border-b border-gray-100! dark:border-gray-800!'}"
 										style={token.align[cellIdx] ? `text-align: ${token.align[cellIdx]}` : ''}
 									>
 										<div class="break-normal">
@@ -282,7 +282,7 @@
 			<div class=" absolute top-1 right-1.5 z-20 hover-reveal flex gap-0.5">
 				<Tooltip content={$i18n.t('Copy')}>
 					<button
-						class="p-1 rounded-lg bg-transparent transition"
+						class="p-1 rounded-[6px] bg-transparent text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
 						on:click={(e) => {
 							e.stopPropagation();
 							copyToClipboard(token.raw.trim(), null, $settings?.copyFormatted ?? false);
@@ -294,7 +294,7 @@
 
 				<Tooltip content={$i18n.t('Export to CSV')}>
 					<button
-						class="p-1 rounded-lg bg-transparent transition"
+						class="p-1 rounded-[6px] bg-transparent text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
 						on:click={(e) => {
 							e.stopPropagation();
 							exportTableToCSVHandler(token, tokenIdx);
@@ -655,3 +655,22 @@
 		{console.log('Unknown token', token)}
 	{/if}
 {/each}
+
+<style>
+	/* Nocturne blockquotes: quiet hairline rule, upright text, no typographic quotes */
+	blockquote {
+		font-style: normal;
+		quotes: none;
+		border-inline-start-width: 2px;
+		border-inline-start-color: var(--color-gray-200, #dfe1ea);
+		color: var(--color-gray-600, #6b6e82);
+	}
+	:global(.dark) blockquote {
+		border-inline-start-color: var(--color-gray-700, #3a3c4c);
+		color: var(--color-gray-400, #b4b7c7);
+	}
+	blockquote :global(p::before),
+	blockquote :global(p::after) {
+		content: none;
+	}
+</style>

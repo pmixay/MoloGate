@@ -172,7 +172,7 @@
 	{@const urlCitations = citations.filter((c) => c?.source?.name?.startsWith('http'))}
 	<div class=" py-1 -mx-0.5 w-full flex gap-1 items-center flex-wrap">
 		<button
-			class="text-xs font-normal text-gray-600 dark:text-gray-300 px-3.5 h-8 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition flex items-center gap-1 border border-gray-50 dark:border-gray-850/30"
+			class="text-xs font-normal text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 px-2.5 h-7 rounded-[7px] hover:bg-gray-50 dark:hover:bg-gray-850 transition flex items-center gap-1.5 border border-gray-200 dark:border-gray-800"
 			aria-label={citations.length === 1
 				? $i18n.t('Toggle 1 source')
 				: $i18n.t('Toggle {{COUNT}} sources', { COUNT: citations.length })}
@@ -187,7 +187,7 @@
 						<img
 							src="https://www.google.com/s2/favicons?sz=32&domain={citation.source.name}"
 							alt="favicon"
-							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-850 bg-white dark:bg-gray-900"
+							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-900 bg-white dark:bg-gray-900"
 							on:error={(e) => {
 								// LICENSE covers this Open WebUI fallback logo.
 								// Do not alter, remove, obscure, or replace it except as LICENSE permits:
@@ -198,7 +198,7 @@
 					{/each}
 					{#if citations.length > 3}
 						<div
-							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-850 bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-[0.5rem] font-normal text-gray-500 dark:text-gray-400 whitespace-nowrap tracking-tighter"
+							class="size-4 rounded-full shrink-0 border border-white dark:border-gray-900 bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-[0.5rem] font-normal text-gray-500 dark:text-gray-400 whitespace-nowrap tracking-tighter"
 							aria-hidden="true"
 						>
 							+{citations.length - Math.min(urlCitations.length, 3)}
@@ -228,17 +228,19 @@
 					aria-label={$i18n.t('View source: {{name}}', {
 						name: decodeString(citation.source.name)
 					})}
-					class="no-toggle outline-hidden flex dark:text-gray-300 bg-transparent text-gray-600 rounded-xl gap-1.5 items-center"
+					class="no-toggle flex dark:text-gray-400 bg-transparent text-gray-600 rounded-[7px] gap-2 items-center focus-visible:outline-2 focus-visible:outline-accent"
 					on:click={() => {
 						showCitationModal = true;
 						selectedCitation = citation;
 					}}
 				>
-					<div class=" font-normal bg-gray-50 dark:bg-gray-850 rounded-md px-1">
+					<div
+						class=" font-mono text-[10.5px] tabular-nums text-gray-500 border border-gray-200 dark:border-gray-800 rounded-[5px] px-1.5 py-px"
+					>
 						{idx + 1}
 					</div>
 					<div
-						class="flex-1 truncate hover:text-black dark:text-white/60 dark:hover:text-white transition text-left"
+						class="flex-1 truncate hover:text-black dark:text-gray-400 dark:hover:text-gray-100 transition text-left"
 					>
 						{decodeString(citation.source.name)}
 					</div>

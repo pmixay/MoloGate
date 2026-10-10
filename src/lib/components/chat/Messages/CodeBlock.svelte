@@ -785,7 +785,6 @@
 	}
 	:global(.dark) .code-block-body :global(.nt-keyword) {
 		color: #b4b7c7;
-		font-style: italic;
 	}
 	:global(.dark) .code-block-body :global(.nt-number) {
 		color: #d4b8ff;

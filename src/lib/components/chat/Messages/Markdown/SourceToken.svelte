@@ -49,20 +49,20 @@
 			<LinkPreview.Trigger>
 				<button
 					aria-label={`${getDisplayTitle(formattedTitle(decodeString(sourceIds[token.ids[0] - 1])))} +${(token?.ids ?? []).length - 1} more sources`}
-					class="text-[0.625rem] w-fit translate-y-[2px] px-2 py-0.5 dark:bg-white/5 dark:text-white/80 dark:hover:text-white bg-gray-50 text-black/80 hover:text-black transition rounded-xl"
+					class="font-mono text-[10.5px] w-fit translate-y-[2px] px-1.5 py-px border border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:border-gray-300 dark:hover:border-gray-700 transition rounded-[5px]"
 					on:click={() => {
 						openPreview = !openPreview;
 					}}
 				>
 					<span class="line-clamp-1">
 						{getDisplayTitle(formattedTitle(decodeString(sourceIds[token.ids[0] - 1])))}
-						<span class="dark:text-white/50 text-black/50">+{(token?.ids ?? []).length - 1}</span>
+						<span class="text-gray-500">+{(token?.ids ?? []).length - 1}</span>
 					</span>
 				</button>
 			</LinkPreview.Trigger>
 			<LinkPreview.Portal>
 				<LinkPreview.Content class="z-[999]" align="start" strategy="fixed" sideOffset={6}>
-					<div class="bg-gray-50 dark:bg-gray-850 rounded-xl p-1 cursor-pointer">
+					<div class="bg-white dark:bg-gray-850 border border-gray-100 dark:border-gray-800 rounded-[10px] p-1 cursor-pointer">
 						{#each token.citationIdentifiers ?? token.ids as identifier}
 							{@const id =
 								typeof identifier === 'string' ? parseInt(identifier.split('#')[0]) : identifier}
