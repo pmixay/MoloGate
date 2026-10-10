@@ -344,7 +344,7 @@
 					<div class="flex items-center">{$i18n.t('Scroll to Top')}</div>
 				</button>
 
-				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+				<hr class="border-gray-100 dark:border-gray-800 mx-1 my-1" />
 			{/if}
 
 			{#if ($artifactContents ?? []).length > 0}
@@ -362,7 +362,7 @@
 					<div class="flex items-center">{$i18n.t('Artifacts')}</div>
 				</button>
 
-				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+				<hr class="border-gray-100 dark:border-gray-800 mx-1 my-1" />
 			{/if}
 
 			{#if !readOnly && !$temporaryChatEnabled && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
@@ -442,7 +442,7 @@
 			</button>
 
 			{#if !readOnly && !$temporaryChatEnabled && chat?.id}
-				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+				<hr class="border-gray-100 dark:border-gray-800 mx-1 my-1" />
 
 				{#if $folders.length > 0}
 					<DropdownSub contentClass="select-none z-50" maxWidth={200}>
@@ -499,7 +499,7 @@
 					</button>
 				{/if}
 
-				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+				<hr class="border-gray-100 dark:border-gray-800 mx-1 my-1" />
 
 				<div class="flex max-h-28 overflow-y-auto px-2 py-1">
 					<Tags chatId={chat.id} />

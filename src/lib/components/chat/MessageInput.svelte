@@ -1837,9 +1837,7 @@
 									<div class="rounded-xl py-0.5 text-gray-600 dark:text-gray-400">
 										<div class="flex min-h-4 items-center gap-3">
 											<span class="min-w-0 flex-1 truncate">{$i18n.t('Context usage')}</span>
-											<span
-												class="shrink-0 font-mono text-[0.625rem] text-gray-500"
-											>
+											<span class="shrink-0 font-mono text-[0.625rem] text-gray-500">
 												{contextValue}
 											</span>
 										</div>
@@ -1884,9 +1882,7 @@
 												{copiedStatusChatId ? $i18n.t('Copied') : chatId}
 											</button>
 										{:else}
-											<span class="font-mono text-[0.625rem] text-gray-500">
-												none
-											</span>
+											<span class="font-mono text-[0.625rem] text-gray-500"> none </span>
 										{/if}
 									</div>
 								</div>
@@ -2297,9 +2293,7 @@
 									</InputMenu>
 
 									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
-										<div
-											class="flex self-center w-px h-4 bg-gray-200 dark:bg-gray-800 shrink-0"
-										/>
+										<div class="flex self-center w-px h-4 bg-gray-200 dark:bg-gray-800 shrink-0" />
 									{/if}
 
 									<div
@@ -2543,7 +2537,9 @@
 															: ''}"
 													>
 														<Terminal className="size-3.5 shrink-0" strokeWidth="2" />
-														<span class="hidden sm:inline truncate">{$i18n.t('Code Interpreter')}</span>
+														<span class="hidden sm:inline truncate"
+															>{$i18n.t('Code Interpreter')}</span
+														>
 
 														<div class="hidden group-hover:block text-gray-500 dark:text-gray-400">
 															<XMark className="size-3.5" strokeWidth="1.75" />

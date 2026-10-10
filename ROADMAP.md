@@ -9,8 +9,9 @@ are not in priority order. Tick an item off when it ships.
       the subscription type, and whether it is an API key or a full account.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
-- [ ] **Automatic limit resets:** automatically apply a limit reset when an account reaches 0%. Any team
-      member can turn auto-reset off globally.
+- [ ] **Automatic limit resets:** when an account reaches 0%, automatically redeem one of the
+      provider's limit-reset coupons (Codex supports these). Any team member can turn auto-reset off
+      globally.
 - [ ] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
@@ -64,8 +65,12 @@ are not in priority order. Tick an item off when it ships.
     - majority vote: several agents answer independently and the answers are compared.
   - **Live view:** each running workflow shows its phases, every agent's status and progress, and a
     link to each agent's conversation.
+  - **Repository:** a workflow starts without a linked repository by default. The user can pick a
+    repository and branch instead. Mologate then clones it automatically, git is set up, and the agents
+    are told to work in that repository.
   - **Limits:** each workflow has a maximum number of agents, a token or limit budget, and a wall-clock
-    timeout. The user confirms before a large workflow starts.
+    timeout. The user confirms before a large workflow starts. Proposed numbers are under
+    [Proposed limits](#proposed-limits).
   - **Control and reuse:** workflows can be cancelled, and resumed after a failure without re-running
     finished steps. Saved workflows can be shared with the team, e.g. "code review", "research a
     topic", "implement + test + review".
@@ -74,8 +79,10 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Background tasks:**
   - A task moves to the background automatically after a set time.
   - Users can see the list of running tasks and stop any of them.
-- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits.
-- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits.
+- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
+      [Proposed limits](#proposed-limits)).
+- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
+      [Proposed limits](#proposed-limits)).
 - [ ] **Ask tool with a timer:**
   - When the agent asks the user a question and gets no answer for more than a minute, the recommended
     option is chosen automatically.
@@ -95,7 +102,9 @@ are not in priority order. Tick an item off when it ships.
   - The user is asked for permission only when an action is critical or very dangerous.
   - Every such prompt includes "Always allow in this chat". Once chosen, even these prompts stop
     appearing in that chat.
-- [ ] Concurrency-based rate limits.
+- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
+      time. Requests over the cap wait in a visible queue. Proposed default under
+      [Proposed limits](#proposed-limits).
 
 ## Deployment
 
@@ -147,11 +156,68 @@ are not in priority order. Tick an item off when it ships.
   - Z.ai coding plan (GLM);
   - OpenRouter.
 
+## Proposed limits
+
+Starting defaults, sized for a team of about five. An admin can change each default up to its hard
+cap.
+
+### Monitor tasks
+
+| Limit                    | Default | Hard cap |
+| ------------------------ | ------- | -------- |
+| Active monitors per user | 5       | 20       |
+| Check interval           | 60 s    | min 15 s |
+| Time limit for one check | 30 s    | 30 s     |
+| Lifetime of a monitor    | 6 h     | 24 h     |
+| Checks per monitor       | 500     | 2,000    |
+
+- A check is a cheap command or HTTP probe run in the container. It never calls a model.
+- When the condition becomes true, the monitor wakes the agent once, then stops.
+- An active monitor keeps its container from pausing, but only until the monitor ends.
+
+### Scheduled tasks
+
+| Limit                              | Default | Hard cap |
+| ---------------------------------- | ------- | -------- |
+| Active schedules per user          | 10      | 25       |
+| Shortest repeat interval           | 1 h     | 15 min   |
+| How far ahead a one-off can be set | 30 days | 90 days  |
+| Run time per run                   | 30 min  | 2 h      |
+| Lifetime of a repeating schedule   | 90 days | 1 year   |
+
+- **No overlap:** a run never starts while the previous run of the same schedule is still going;
+  that run is skipped instead.
+- **Failures:** after 3 failed runs in a row, the schedule turns itself off and notifies its owner.
+- **Low limits:** a run is postponed when the provider account has less than 10% of its limit left.
+
+### Multi-agent workflows
+
+| Limit                        | Default | Hard cap |
+| ---------------------------- | ------- | -------- |
+| Agents per workflow          | 8       | 20       |
+| Agents running at once       | 4       | 8        |
+| Running workflows per user   | 1       | 2        |
+| Wall-clock time per workflow | 1 h     | 4 h      |
+| Tool calls per agent         | 100     | 300      |
+
+- **Before it starts:** a workflow shows its estimated limit usage. It asks for confirmation when it
+  would use more than 8 agents or more than 25% of the remaining 5-hour limit.
+- **When it runs out:** a workflow stops when it hits its budget. Finished steps are kept, so it can
+  be resumed later.
+
+### Concurrent chats
+
+| Limit                              | Default | Hard cap |
+| ---------------------------------- | ------- | -------- |
+| Chats generating at once, per user | 3       | 10       |
+
 ## Open questions
 
-- **Limit resets:** what does "applying a limit reset" mean for each provider? It could be a
-  provider-side reset or switching to another account.
-- **Task limits:** what exact limits apply to monitor tasks, scheduled tasks and multi-agent
-  workflows (counts, durations, budgets)?
-- **Rate limits:** should the concurrency rate limits apply per user, per provider account, or across
-  the whole instance?
+- **Concurrency counting:** do subagents, workflow agents, background tasks and scheduled runs count
+  toward a user's concurrent-chat limit, or do they get their own separate pool?
+- **Reset coupons vs. other accounts:** when an account hits 0%, should Mologate first switch to
+  another account that still has quota, and redeem a reset coupon only when every account is empty?
+  Are accounts shared by the whole team, or tied to the person who connected them?
+- **Container scope:** is there one container per chat, per user, or per workspace?
+- **Personal chats:** are chats outside a workspace private to the person who created them, or
+  visible to the whole team as well?

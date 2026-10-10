@@ -72,9 +72,9 @@
 	{#each filteredItems as model, modelIdx}
 		<Tooltip content={model.id} placement="top-start">
 			<button
-				class="flex h-[1.6875rem] w-full items-center rounded-xl px-2 text-left text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {modelIdx ===
+				class="flex h-[1.6875rem] w-full items-center rounded-xl px-2 text-left text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-800/60 {modelIdx ===
 				selectedIdx
-					? 'bg-gray-50/40 dark:bg-gray-800/40 selected-command-option-button'
+					? 'bg-gray-100 dark:bg-gray-800/60 selected-command-option-button'
 					: ''}"
 				type="button"
 				on:click={() => {
@@ -98,7 +98,7 @@
 							e.currentTarget.src = '/favicon.png';
 						}}
 					/>
-					<div class="min-w-0 truncate">
+					<div class="min-w-0 truncate font-mono text-[12.5px]">
 						{resolveLocalizedModelName(model, $i18n.language)}
 					</div>
 				</div>

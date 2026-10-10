@@ -112,9 +112,7 @@
 					</div>
 				{/if}
 
-				<div
-					class="flex-1 overflow-hidden max-w-full py-0.5 pl-1 {$showSidebar ? 'ml-1' : ''}"
-				>
+				<div class="flex-1 overflow-hidden max-w-full py-0.5 pl-1 {$showSidebar ? 'ml-1' : ''}">
 					{#if chat?.id}
 						<div class="flex max-w-full min-w-0 items-center gap-1.5 mr-2">
 							<div

@@ -60,8 +60,7 @@
 	class="focus-ring group/item flex h-8 w-full cursor-pointer select-none items-center rounded-lg px-2 text-left font-mono text-[13px] font-normal text-gray-700 outline-hidden transition-colors duration-75 dark:text-gray-100 {($settings?.highContrastMode ??
 	false)
 		? 'hover:bg-gray-200 dark:hover:bg-gray-800'
-		: 'hover:bg-gray-100 dark:hover:bg-gray-850'} {index === selectedModelIdx &&
-	!compareEnabled
+		: 'hover:bg-gray-100 dark:hover:bg-gray-850'} {index === selectedModelIdx && !compareEnabled
 		? ($settings?.highContrastMode ?? false)
 			? 'bg-gray-200 dark:bg-gray-800'
 			: 'bg-gray-100 dark:bg-[#1a1b25]'
@@ -177,7 +176,9 @@
 									<span
 										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-lime-400 opacity-75 dark:bg-accent"
 									/>
-									<span class="relative inline-flex size-1.5 rounded-full bg-lime-500 dark:bg-accent" />
+									<span
+										class="relative inline-flex size-1.5 rounded-full bg-lime-500 dark:bg-accent"
+									/>
 								</span>
 							</div>
 						</Tooltip>

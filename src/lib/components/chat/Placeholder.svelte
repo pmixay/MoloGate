@@ -143,7 +143,9 @@
 					}}
 				/>
 			{:else}
-				<div class="flex flex-row justify-center items-center gap-3 @sm:gap-3.5 w-fit px-5 max-w-xl">
+				<div
+					class="flex flex-row justify-center items-center gap-3 @sm:gap-3.5 w-fit px-5 max-w-xl"
+				>
 					<div class="flex shrink-0 justify-center">
 						<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 100 }}>
 							{#each models as model, modelIdx}
@@ -240,7 +242,9 @@
 				</div>
 			{/if}
 
-			<div class="text-base font-normal @md:max-w-3xl w-full pt-4 pb-3 {atSelectedModel ? 'mt-2' : ''}">
+			<div
+				class="text-base font-normal @md:max-w-3xl w-full pt-4 pb-3 {atSelectedModel ? 'mt-2' : ''}"
+			>
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
 						bind:this={messageInput}
