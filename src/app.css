@@ -383,11 +383,11 @@ input[type='number'] {
 }
 
 .cm-gutters {
-	@apply !bg-white dark:!bg-black !border-none;
+	@apply !bg-white dark:!bg-gray-950 !border-none;
 }
 
 .cm-editor {
-	@apply bg-white dark:bg-black;
+	@apply bg-white dark:bg-gray-950;
 }
 
 .tippy-box[data-theme~='dark'] {
@@ -399,9 +399,9 @@ input[type='number'] {
 }
 
 .codespan {
-	padding: 0.15rem 0.3rem;
-	font-size: 0.85em;
-	@apply font-mono rounded-md text-gray-800 bg-gray-100 dark:text-gray-200 dark:bg-gray-800 mx-0.5;
+	padding: 0.0625rem 0.3125rem;
+	font-size: 0.8667em;
+	@apply font-mono font-normal rounded-[5px] border border-gray-200 bg-gray-100 text-gray-900 mx-px dark:border-gray-700/60 dark:bg-gray-800/60 dark:text-gray-100;
 }
 
 .svelte-flow {

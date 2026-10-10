@@ -383,11 +383,11 @@
 				<div class="w-full">
 					<div class="flex {($settings?.chatBubble ?? true) ? 'justify-end pb-1' : 'w-full'}">
 						<div
-							class="{($settings?.chatBubble ?? true)
-								? `max-w-[90%] sm:max-w-[82%] px-4 py-2.5 rounded-[14px] rounded-ee-[4px] border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 text-gray-900 dark:text-gray-100 ${
+							class={($settings?.chatBubble ?? true)
+								? `user-bubble max-w-[90%] sm:max-w-[82%] px-4 py-2.5 rounded-[14px] rounded-ee-[4px] border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 text-gray-900 dark:text-gray-100 ${
 										message.files ? 'rounded-se-[4px]' : ''
 									}`
-								: ' w-full'}"
+								: ' w-full'}
 						>
 							{#if message.content}
 								{#if $settings?.renderMarkdownInUserMessages ?? true}
@@ -726,3 +726,13 @@
 		</div>
 	</div>
 </div>
+
+<style>
+	/* Nocturne: user text in the bubble uses the primary text colour */
+	.user-message :global(.user-bubble .markdown-prose) {
+		color: var(--color-gray-900, #0f1016);
+	}
+	:global(.dark) .user-message :global(.user-bubble .markdown-prose) {
+		color: var(--color-gray-100, #eceef5);
+	}
+</style>

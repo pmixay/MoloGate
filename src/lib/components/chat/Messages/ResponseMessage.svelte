@@ -1358,11 +1358,11 @@
 
 									{#if (isLastMessage && ($user?.role === 'admin' || ($user?.permissions?.chat?.continue_response ?? true))) || $user?.role === 'admin' || ($user?.permissions?.chat?.regenerate_response ?? true)}
 										<span
-										aria-hidden="true"
-										class="{isLastMessage || ($settings?.highContrastMode ?? false)
-											? 'visible'
-											: 'hover-reveal'} self-center w-px h-4 mx-1.5 bg-gray-200 dark:bg-gray-800"
-									></span>
+											aria-hidden="true"
+											class="{isLastMessage || ($settings?.highContrastMode ?? false)
+												? 'visible'
+												: 'hover-reveal'} self-center w-px h-4 mx-1.5 bg-gray-200 dark:bg-gray-800"
+										></span>
 									{/if}
 
 									{#if isLastMessage && ($user?.role === 'admin' || ($user?.permissions?.chat?.continue_response ?? true))}
@@ -1632,7 +1632,6 @@
 											</Tooltip>
 										{/if}
 									{/if}
-
 								{/if}
 							{/if}
 						{/if}

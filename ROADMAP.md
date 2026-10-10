@@ -168,6 +168,9 @@ are not in priority order. Tick an item off when it ships.
   - Restricting OpenCode completely doesn't work, so a different approach to locking it down is
     needed.
 - [ ] Pull in the latest models automatically.
+- [ ] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
+      latest ChatGPT Luna model (currently Luna 6), and follow it automatically as new versions ship.
+      If it's unavailable, they fall back to GLM-5.3 Flash.
 - [ ] **AI lab logos:** upload logos for each lab and group models by lab in the model dropdown.
 - [ ] **codex-lb integration for ChatGPT accounts:**
   - Cut codex-lb down to the minimum it needs: accounts and their limits.
