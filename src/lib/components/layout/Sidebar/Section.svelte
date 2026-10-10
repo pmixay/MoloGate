@@ -125,7 +125,9 @@
 
 		{#if collapsible}
 			<Collapsible bind:open className="w-full" buttonClassName="w-full" onChange={setOpen}>
-				<div class="flex items-center justify-between h-[1.375rem] w-full pl-[1.1875rem] pr-2.5 shrink-0">
+				<div
+					class="flex items-center justify-between h-[1.375rem] w-full pl-[1.1875rem] pr-2.5 shrink-0"
+				>
 					<button
 						type="button"
 						class="group flex flex-1 h-full min-w-0 items-center gap-1 text-left font-mono text-[0.65625rem] font-medium uppercase tracking-[0.08em] text-gray-600 hover:text-gray-900 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-100 rounded-[5px] {buttonClassName}"

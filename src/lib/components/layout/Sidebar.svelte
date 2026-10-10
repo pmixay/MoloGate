@@ -1017,7 +1017,7 @@
 								aria-label={$i18n.t('New Chat')}
 							>
 								<div
-									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition text-gray-800 dark:text-gray-100 ring-1 ring-inset ring-gray-200 bg-white dark:bg-gray-850 dark:ring-gray-700/70 group-hover:bg-gray-100 dark:group-hover:bg-[#1a1b25]"
+									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition text-gray-900 dark:text-gray-100 group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
 								>
 									<EditPencilIcon className="size-4" strokeWidth="1.5" />
 								</div>

@@ -98,10 +98,7 @@
 			{/if}
 
 			{#if !isWritable}
-				<div
-					class="shrink-0 text-[0.625rem] text-gray-500"
-					title={$i18n.t('Read only')}
-				>
+				<div class="shrink-0 text-[0.625rem] text-gray-500" title={$i18n.t('Read only')}>
 					<Eye className="size-3" />
 				</div>
 			{/if}
