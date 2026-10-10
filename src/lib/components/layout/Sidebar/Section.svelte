@@ -128,7 +128,7 @@
 				<div class="flex items-center justify-between h-[1.375rem] w-full pl-[1.1875rem] pr-2.5 shrink-0">
 					<button
 						type="button"
-						class="group flex flex-1 h-full min-w-0 items-center gap-1 text-left font-mono text-[0.65625rem] font-medium uppercase tracking-[0.08em] text-gray-600 hover:text-gray-900 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-100 rounded-[5px] outline-none focus-visible:ring-2 focus-visible:ring-accent {buttonClassName}"
+						class="group flex flex-1 h-full min-w-0 items-center gap-1 text-left font-mono text-[0.65625rem] font-medium uppercase tracking-[0.08em] text-gray-600 hover:text-gray-900 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-100 rounded-[5px] {buttonClassName}"
 						aria-expanded={open}
 						aria-controls="{id}-content"
 					>
@@ -149,7 +149,7 @@
 					{#if onAdd}
 						<button
 							type="button"
-							class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+							class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100"
 							aria-label={onAddLabel}
 							on:click={(e) => {
 								e.stopPropagation();

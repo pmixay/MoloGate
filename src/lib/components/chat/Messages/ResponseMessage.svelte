@@ -682,7 +682,7 @@
 
 		<div class="flex-auto w-0 pl-1 relative">
 			{#if !compactPreview}
-				<div class="flex items-center gap-2.5 min-w-0 h-[26px]">
+				<div class="flex items-center gap-2.5 min-w-0 h-[26px] mb-0.5">
 					<Name>
 						<Tooltip content={localizedModelName} placement="top-start">
 							<span

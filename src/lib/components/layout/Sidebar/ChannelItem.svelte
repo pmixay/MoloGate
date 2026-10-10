@@ -91,7 +91,7 @@
 		: ' text-gray-700 dark:text-gray-400'} cursor-pointer select-none"
 >
 	<a
-		class="min-w-0 flex flex-1 rounded-[5px] outline-none focus-visible:ring-2 focus-visible:ring-accent"
+		class="min-w-0 flex flex-1 rounded-[5px]"
 		href="/channels/{channel.id}"
 		on:click={() => {
 			console.log(channel);
@@ -209,7 +209,7 @@
 		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center text-gray-500">
 			<button
 				type="button"
-				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto outline-none focus-visible:ring-2 focus-visible:ring-accent"
+				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto"
 				on:click={async (e) => {
 					e.stopImmediatePropagation();
 					e.stopPropagation();
@@ -234,7 +234,7 @@
 		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center text-gray-500">
 			<button
 				type="button"
-				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto outline-none focus-visible:ring-2 focus-visible:ring-accent"
+				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto"
 				on:click={(e) => {
 					e.stopImmediatePropagation();
 					e.stopPropagation();

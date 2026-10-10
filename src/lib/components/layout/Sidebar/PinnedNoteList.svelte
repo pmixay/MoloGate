@@ -67,7 +67,7 @@
 			data-id={note.id}
 		>
 			<a
-				class="grow flex min-w-0 items-center gap-2.5 rounded-[5px] text-[0.8125rem] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+				class="grow flex min-w-0 items-center gap-2.5 rounded-[5px] text-[0.8125rem] leading-5"
 				href={`/notes/${note.id}`}
 				on:click={() => {
 					selectedChatId = null;
@@ -86,7 +86,7 @@
 				</div>
 			</a>
 			<button
-				class="hover-reveal self-center p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 rounded-[5px] transition outline-none focus-visible:ring-2 focus-visible:ring-accent"
+				class="hover-reveal self-center p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 rounded-[5px] transition"
 				on:click|preventDefault|stopPropagation={async () => {
 					await toggleNotePinnedStatusById(localStorage.token, note.id);
 					const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(() => []);

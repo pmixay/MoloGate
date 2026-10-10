@@ -537,7 +537,7 @@
 							<button
 								class="{($settings?.highContrastMode ?? false)
 									? ''
-									: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition edit-user-message-button"
+									: 'hover-reveal'} size-7 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition edit-user-message-button"
 								aria-label={$i18n.t('Edit')}
 								on:click={() => {
 									editMessageHandler();
@@ -566,7 +566,7 @@
 							<button
 								class="{($settings?.highContrastMode ?? false)
 									? ''
-									: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
+									: 'hover-reveal'} size-7 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 								aria-label={$i18n.t('Copy')}
 								on:click={() => {
 									copyToClipboard(message.content);
@@ -597,7 +597,7 @@
 									aria-label={$i18n.t('Delete')}
 									class="{($settings?.highContrastMode ?? false)
 										? ''
-										: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
+										: 'hover-reveal'} size-7 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 									on:click={(e) => {
 										if (e.shiftKey) {
 											deleteMessageHandler();

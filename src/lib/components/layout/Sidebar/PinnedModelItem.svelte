@@ -31,7 +31,7 @@
 		}}
 	>
 		<a
-			class="grow flex h-7.5 min-w-0 items-center gap-2.5 rounded-[7px] pl-[0.6875rem] pr-2 group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 transition outline-none focus-visible:ring-2 focus-visible:ring-accent"
+			class="grow flex h-7.5 min-w-0 items-center gap-2.5 rounded-[7px] pl-[0.6875rem] pr-2 group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 transition"
 			href="/?model={model?.id}"
 			on:click={onClick}
 			draggable="false"

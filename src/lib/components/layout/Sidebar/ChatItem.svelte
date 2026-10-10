@@ -152,7 +152,7 @@
 				: $mobile
 					? 'text-gray-700 dark:text-gray-400'
 					: idleRowClass
-	}  whitespace-nowrap text-ellipsis transition outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent`;
+	}  whitespace-nowrap text-ellipsis transition`;
 
 	const selectChatHandler = (event?: MouseEvent) => {
 		openPreview = false;
@@ -521,7 +521,7 @@
 	<!-- Marker slot: lime square for the current chat, a dot for unread chats -->
 	<span class="mr-2 flex w-1.5 shrink-0 items-center justify-center self-center" aria-hidden="true">
 		{#if id === $chatId}
-			<span class="size-1.5 rounded-[1.5px] bg-accent"></span>
+			<span class="size-1.5 rounded-[1.5px] bg-accent ring-1 ring-black/20 dark:ring-0"></span>
 		{:else if unread}
 			<span
 				class="size-1.5 rounded-full bg-gray-900 dark:bg-gray-100 transition-opacity duration-300"
@@ -786,7 +786,7 @@
 						<button
 							type="button"
 							aria-label={$i18n.t('Chat Menu')}
-							class="flex size-[1.375rem] items-center justify-center self-center rounded-[5px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition m-0 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+							class="flex size-[1.375rem] items-center justify-center self-center rounded-[5px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition m-0"
 						>
 							<MoreHorizontalIcon className="size-3.5" strokeWidth="2" />
 						</button>

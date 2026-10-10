@@ -951,15 +951,16 @@
 	<button
 		id="sidebar-new-chat-button"
 		class="hidden"
+		aria-label={$i18n.t('New Chat')}
 		on:click={() => {
 			goto('/');
 			newChatHandler();
 		}}
-	/>
+	></button>
 
 	{#if !$mobile && !$showSidebar}
 		<div
-			class="w-[calc(42px*var(--app-text-scale,1))] shrink-0 py-[calc(0.375rem*var(--app-text-scale,1))] px-[calc(0.25rem*var(--app-text-scale,1))] flex flex-col justify-between text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 hover:bg-gray-100/60 dark:hover:bg-[#0d0e14] h-full z-10 transition-colors border-e border-gray-200/70 dark:border-gray-800/70"
+			class="w-[calc(42px*var(--app-text-scale,1))] shrink-0 py-[calc(0.375rem*var(--app-text-scale,1))] px-[calc(0.25rem*var(--app-text-scale,1))] flex flex-col justify-between text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 h-full z-10 transition-colors border-e border-gray-200/70 dark:border-gray-800/70"
 			id="sidebar"
 			role="navigation"
 			aria-label={$i18n.t('Chat history')}
@@ -976,13 +977,13 @@
 						placement="right"
 					>
 						<button
-							class="flex size-8.5 items-center justify-center transition group outline-none {isWindows
+							class="flex size-8.5 items-center justify-center rounded-lg transition group {isWindows
 								? 'cursor-pointer'
 								: 'cursor-[e-resize]'}"
 							aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 						>
 							<div
-								class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 group-focus-visible:ring-2 group-focus-visible:ring-accent"
+								class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100"
 							>
 								<!-- LICENSE covers this Open WebUI sidebar logo.
 							Do not alter, remove, obscure, or replace it except as LICENSE permits:
@@ -1003,7 +1004,7 @@
 					<div class="">
 						<Tooltip content={$i18n.t('New Chat')} placement="right">
 							<a
-								class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
+								class=" cursor-pointer flex size-8.5 items-center justify-center rounded-lg transition group"
 								href="/"
 								draggable="false"
 								on:click={async (e) => {
@@ -1016,7 +1017,7 @@
 								aria-label={$i18n.t('New Chat')}
 							>
 								<div
-									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition text-gray-800 dark:text-gray-100 ring-1 ring-inset ring-gray-200 bg-white dark:bg-gray-850 dark:ring-gray-700/70 group-hover:bg-gray-100 dark:group-hover:bg-[#1a1b25] group-focus-visible:ring-2 group-focus-visible:ring-accent"
+									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition text-gray-800 dark:text-gray-100 ring-1 ring-inset ring-gray-200 bg-white dark:bg-gray-850 dark:ring-gray-700/70 group-hover:bg-gray-100 dark:group-hover:bg-[#1a1b25]"
 								>
 									<EditPencilIcon className="size-4" strokeWidth="1.5" />
 								</div>
@@ -1027,7 +1028,7 @@
 					<div>
 						<Tooltip content={$i18n.t('Search')} placement="right">
 							<button
-								class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
+								class=" cursor-pointer flex size-8.5 items-center justify-center rounded-lg transition group"
 								on:click={(e) => {
 									e.stopImmediatePropagation();
 									e.preventDefault();
@@ -1038,7 +1039,7 @@
 								aria-label={$i18n.t('Search')}
 							>
 								<div
-									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 group-focus-visible:ring-2 group-focus-visible:ring-accent"
+									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100"
 								>
 									<SearchIcon className="size-4" strokeWidth="1.5" />
 								</div>
@@ -1052,7 +1053,7 @@
 							<div class="">
 								<Tooltip content={$i18n.t(meta.label)} placement="right">
 									<a
-										class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
+										class=" cursor-pointer flex size-8.5 items-center justify-center rounded-lg transition group"
 										href={meta.href}
 										on:click={async (e) => {
 											e.stopImmediatePropagation();
@@ -1065,7 +1066,7 @@
 										aria-current={itemId === activeMenuItemId ? 'page' : undefined}
 									>
 										<div
-											class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-focus-visible:ring-2 group-focus-visible:ring-accent {itemId ===
+											class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition {itemId ===
 											activeMenuItemId
 												? activeRowClass
 												: 'group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100'}"
@@ -1097,11 +1098,11 @@
 							<UserMenu role={$user?.role} profile={$config?.features?.enable_user_status ?? true}>
 								<button
 									type="button"
-									class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
+									class=" cursor-pointer flex size-8.5 items-center justify-center rounded-lg transition group"
 									aria-label={$i18n.t('User menu')}
 								>
 									<div
-										class="self-center relative flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900 group-focus-visible:ring-2 group-focus-visible:ring-accent"
+										class="self-center relative flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
 									>
 										<img
 											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
@@ -1164,7 +1165,7 @@
 					class="sidebar px-2 pt-3 pb-1 flex items-center gap-2 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-1"
 				>
 					<a
-						class="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-0.5 pl-1.5 pr-1 no-drag-region outline-none focus-visible:ring-2 focus-visible:ring-accent"
+						class="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-0.5 pl-1.5 pr-1 no-drag-region"
 						href="/"
 						draggable="false"
 						on:click={newChatHandler}
@@ -1201,7 +1202,7 @@
 						placement="bottom"
 					>
 						<button
-							class="flex size-8 shrink-0 justify-center items-center rounded-[7px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition outline-none focus-visible:ring-2 focus-visible:ring-accent {isWindows
+							class="flex size-8 shrink-0 justify-center items-center rounded-[7px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition {isWindows
 								? 'cursor-pointer'
 								: 'cursor-[w-resize]'}"
 							on:click={() => {
@@ -1235,7 +1236,7 @@
 					<div class="px-2 pb-1">
 						<a
 							id="sidebar-new-chat-button"
-							class="group flex h-11 w-full items-center gap-2.5 rounded-[10px] bg-white pl-3 pr-2.5 text-gray-900 ring-1 ring-inset ring-gray-200 transition hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-700/70 dark:hover:bg-[#1a1b25] dark:hover:ring-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent"
+							class="group flex h-11 w-full items-center gap-2.5 rounded-[10px] bg-white pl-3 pr-2.5 text-gray-900 ring-1 ring-inset ring-gray-200 transition hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-700/70 dark:hover:bg-[#1a1b25] dark:hover:ring-gray-700"
 							href="/"
 							draggable="false"
 							on:click={newChatHandler}
@@ -1254,7 +1255,7 @@
 
 						<button
 							id="sidebar-search-button"
-							class="group mt-1.5 flex h-9 w-full items-center gap-2.5 rounded-[9px] pl-3 pr-2.5 text-left text-gray-600 ring-1 ring-inset ring-gray-200 transition hover:bg-white hover:text-gray-900 dark:text-gray-500 dark:ring-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-300 outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent"
+							class="group mt-1.5 flex h-9 w-full items-center gap-2.5 rounded-[9px] pl-3 pr-2.5 text-left text-gray-600 ring-1 ring-inset ring-gray-200 transition hover:bg-white hover:text-gray-900 dark:text-gray-500 dark:ring-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-300"
 							on:click={() => {
 								showSearch.set(true);
 							}}
@@ -1279,7 +1280,7 @@
 									<div class="flex" data-id={itemId}>
 										<a
 											id="sidebar-{itemId}-button"
-											class="group flex h-8 grow items-center gap-2.5 rounded-lg pl-3 pr-2.5 transition outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent {itemId ===
+											class="group flex h-8 grow items-center gap-2.5 rounded-lg pl-3 pr-2.5 transition {itemId ===
 											activeMenuItemId
 												? activeRowClass
 												: 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-100'}"
@@ -1515,7 +1516,7 @@
 								<Tooltip content={$i18n.t('More')}>
 									<button
 										type="button"
-										class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+										class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100"
 										aria-label={$i18n.t('More')}
 									>
 										<MoreHorizontalIcon className="size-3.5" strokeWidth="2" />
@@ -1733,7 +1734,7 @@
 							>
 								<button
 									type="button"
-									class="group flex h-11 w-full items-center gap-2.5 rounded-[9px] px-2 text-left transition hover:bg-gray-100 dark:hover:bg-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+									class="group flex h-11 w-full items-center gap-2.5 rounded-[9px] px-2 text-left transition hover:bg-gray-100 dark:hover:bg-gray-900"
 									aria-label={$i18n.t('User menu')}
 								>
 									<div class="relative shrink-0 self-center">
@@ -1803,6 +1804,12 @@
 </MobileSwipePanel>
 
 <style>
+	/* Nocturne: keyboard focus inside the sidebar uses the lime accent. The app-wide
+	   :focus-visible outline (app.css) is still blue at its specificity. */
+	:global(#sidebar :focus-visible) {
+		outline-color: var(--color-accent);
+	}
+
 	@media (max-width: 767px) {
 		#sidebar {
 			will-change: transform;
