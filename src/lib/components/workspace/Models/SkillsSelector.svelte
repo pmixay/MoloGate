@@ -94,7 +94,9 @@
 		{/if}
 	</div>
 
-	<div class=" text-xs dark:text-gray-700">
-		{$i18n.t('To select skills here, add them to the "Skills" workspace first.')}
-	</div>
+	{#if activeSkills.length === 0}
+		<div class=" text-xs dark:text-gray-700">
+			{$i18n.t('No skills available yet.')}
+		</div>
+	{/if}
 </div>

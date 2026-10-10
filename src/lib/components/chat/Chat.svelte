@@ -466,32 +466,36 @@
 			? 'ask'
 			: 'full';
 
-	const handleToolApprovalModeChange = async (mode: string) => {
+	// Mologate: persist=false when restoring a draft; it can run before loadChat() fills
+	// params, and saving then would overwrite the chat's params (e.g. reasoning_effort).
+	const handleToolApprovalModeChange = async (mode: string, persist = true) => {
 		const tool_approval_mode = mode === 'ask' ? 'ask' : 'full';
 		params = {
 			...params,
 			tool_approval_mode
 		};
 
-		settings.set({
-			...$settings,
-			params: {
-				...($settings?.params ?? {}),
-				tool_approval_mode
-			}
-		});
-		await updateUserSettings(localStorage.token, { ui: { params: $settings.params } }).catch(
-			(err) => {
-				console.error('[tool permissions settings]', err);
-			}
-		);
-
-		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
-			const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
-				console.error('[tool permissions chat]', err);
-				return null;
+		if (persist) {
+			settings.set({
+				...$settings,
+				params: {
+					...($settings?.params ?? {}),
+					tool_approval_mode
+				}
 			});
-			if (res) chat = res;
+			await updateUserSettings(localStorage.token, { ui: { params: $settings.params } }).catch(
+				(err) => {
+					console.error('[tool permissions settings]', err);
+				}
+			);
+
+			if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
+				const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
+					console.error('[tool permissions chat]', err);
+					return null;
+				});
+				if (res) chat = res;
+			}
 		}
 
 		if (tool_approval_mode === 'full') {
@@ -799,7 +803,7 @@
 			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
 			if (input.toolApprovalMode) {
-				await handleToolApprovalModeChange(input.toolApprovalMode);
+				await handleToolApprovalModeChange(input.toolApprovalMode, false); // Mologate: restore only
 			}
 			return true;
 		} catch (e) {

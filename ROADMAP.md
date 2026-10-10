@@ -28,7 +28,10 @@ are not in priority order. Tick an item off when it ships.
 
 ### Web search
 
-- [ ] Web search is always on, everywhere, with no toggle. The model decides when to use it.
+- [x] Web search is always on, everywhere, with no toggle. The model decides when to use it.
+  - Done: once an admin sets up a search engine, it is on in every chat as a tool the model calls
+    when needed. It is not forced on for models set to legacy tool calling, where it would run on
+    every message.
 
 ### Container nodes
 
@@ -188,9 +191,12 @@ are not in priority order. Tick an item off when it ships.
 ### Interface
 
 - [ ] Responsive layout for phones.
-- [ ] **Effort dropdown:**
+- [x] **Effort dropdown:**
   - Sits to the right of the model selector, styled the same way.
   - Gets each model's supported effort levels automatically, so unsupported levels never show.
+  - Done: levels come from an admin override on the model, else from what the provider reports
+    (Codex-style `supported_reasoning_levels`, a plain level list, or OpenRouter-style
+    `supported_parameters`); the dropdown hides when a model has none. The choice is saved per chat.
 - [ ] Hide image attachments automatically when the selected model can't read images.
 - [ ] **Context indicator:**
   - A ring indicator to the right of the effort dropdown.
@@ -224,6 +230,9 @@ are not in priority order. Tick an item off when it ships.
   - OpenCode, the free-model setup described above;
   - Z.ai coding plan (GLM);
   - OpenRouter.
+  - When connecting each provider, check with a real key that the chosen effort level reaches it in
+    the format it expects. Only a test server has been checked so far; OpenRouter, for example,
+    documents a `reasoning: {effort}` object.
 
 ## Proposed limits
 

@@ -296,6 +296,6 @@
 	</div>
 
 	<div class=" text-xs dark:text-gray-700">
-		{$i18n.t('To attach knowledge base here, add them to the "Knowledge" workspace first.')}
+		{$i18n.t('Select existing knowledge or upload files to give this model reference material.')}
 	</div>
 </div>
