@@ -47,6 +47,9 @@ are not in priority order. Tick an item off when it ships.
   - Tell the agent which files were attached, if that isn't already done.
 - [ ] Browse the files in the current container and preview most of them online, with syntax
       highlighting.
+- [ ] **Change summary:**
+  - After each turn, show the list of files the agent edited in that turn.
+  - Show the number of lines added and removed (+ / −) for the whole session.
 
 ### Agents and tasks
 
