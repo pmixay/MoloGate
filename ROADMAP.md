@@ -6,12 +6,15 @@ are not in priority order. Tick an item off when it ships.
 ## Limits
 
 - [ ] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
-      the subscription type, and whether it is an API key or a full account.
+      the subscription type, and whether it is an API key or a full account. Accounts are shared by the
+      whole team.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
-- [ ] **Automatic limit resets:** when an account reaches 0%, automatically redeem one of the
-      provider's limit-reset coupons (Codex supports these). Any team member can turn auto-reset off
-      globally.
+- [ ] **Account switching and limit resets:**
+  - When an account reaches 0%, switch automatically to another shared account that still has quota.
+  - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
+    these).
+  - Any team member can turn coupon auto-reset off globally.
 - [ ] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
@@ -27,6 +30,7 @@ are not in priority order. Tick an item off when it ships.
 
 ### Container nodes
 
+- [ ] Each chat gets its own container.
 - [ ] The container node can be installed on the same machine as the site or on separate machines.
 - [ ] Support several container nodes with load balancing between them.
 - [ ] Option to cut a container off from the network. The default is full network access.
@@ -106,8 +110,9 @@ are not in priority order. Tick an item off when it ships.
   - Every such prompt includes "Always allow in this chat". Once chosen, even these prompts stop
     appearing in that chat.
 - [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
-      time. Requests over the cap wait in a visible queue. Proposed default under
-      [Proposed limits](#proposed-limits).
+      time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
+      and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
+      defaults under [Proposed limits](#proposed-limits).
 
 ## Deployment
 
@@ -125,6 +130,8 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
+- [ ] **Personal chats:** chats outside a workspace are private to their creator by default. They can
+      be opened to the team with the share feature (see [Interface](#interface)).
 
 ## General
 
@@ -214,13 +221,21 @@ cap.
 | ---------------------------------- | ------- | -------- |
 | Chats generating at once, per user | 3       | 10       |
 
+Subagents, workflow agents, background tasks and scheduled runs don't count toward this limit. They
+use their own limits in this section.
+
+### Subagents and background tasks
+
+| Limit                               | Default | Hard cap |
+| ----------------------------------- | ------- | -------- |
+| Subagents running at once, per chat | 4       | 10       |
+| Background tasks running, per user  | 5       | 15       |
+| Run time per background task        | 2 h     | 8 h      |
+
 ## Open questions
 
-- **Concurrency counting:** do subagents, workflow agents, background tasks and scheduled runs count
-  toward a user's concurrent-chat limit, or do they get their own separate pool?
-- **Reset coupons vs. other accounts:** when an account hits 0%, should Mologate first switch to
-  another account that still has quota, and redeem a reset coupon only when every account is empty?
-  Are accounts shared by the whole team, or tied to the person who connected them?
-- **Container scope:** is there one container per chat, per user, or per workspace?
-- **Personal chats:** are chats outside a workspace private to the person who created them, or
-  visible to the whole team as well?
+- **Workspace files in chat containers:** each chat has its own container. Should a workspace's
+  shared files appear automatically in the container of every chat in that workspace, and should
+  changes made there sync back to the shared files?
+- **Fair use of shared accounts:** since accounts are shared by the team, should there be a per-user
+  share of each account's limits, so one person can't use up an account for everyone?

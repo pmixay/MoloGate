@@ -440,6 +440,13 @@ html.high-contrast :is(input, textarea, [contenteditable='true'], .ProseMirror):
 	outline-offset: -2px;
 }
 
+/* Nocturne: keyboard focus is lime in dark mode (blue stays for contrast in light mode) */
+.dark :focus-visible:not(.ProseMirror):not([contenteditable='true']):not(input):not(textarea),
+.dark .focus-ring:focus-visible,
+html.high-contrast.dark :is(input, textarea, [contenteditable='true'], .ProseMirror):focus-visible {
+	outline-color: var(--color-accent);
+}
+
 .ProseMirror p.is-editor-empty:first-child::before {
 	content: attr(data-placeholder);
 	float: left;
@@ -779,11 +786,6 @@ body {
 .dark body {
 	background: var(--color-gray-900);
 	color: var(--color-gray-100);
-}
-
-/* Nocturne: lime focus ring for keyboard users across the app */
-:focus-visible {
-	outline-color: var(--color-accent);
 }
 
 ::selection {
