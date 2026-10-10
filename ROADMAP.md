@@ -62,6 +62,22 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Subagents:**
   - Users can open and read each subagent's conversation.
   - Preconfigured subagent profiles, such as "general purpose".
+- [ ] **Team-wide and system-wide skills:**
+  - **Open WebUI today:**
+    - Workspace → Skills holds skills made of a name, a description and one markdown text.
+    - They can be imported from `.md` or `.json` files and shared per skill with users or groups.
+    - In a chat, a user can pull a skill in with the `$` picker.
+    - With native tool calling, the model sees a list of every skill it may use (name and description)
+      and loads the full text with a `view_skill` tool when it decides it needs it.
+  - **Upload in the interface at two levels:**
+    - _Team-wide:_ any team member uploads a skill and everyone can use it.
+    - _System-wide:_ admins install skills that every agent always has, including subagents and
+      workflow agents.
+  - **Full skill packages:** upload a skill folder or `.zip` (a `SKILL.md` plus scripts and other
+    files), not only a single markdown text. When a skill is activated, its files are copied into the
+    chat's container so the agent can run the bundled scripts.
+  - **Agents decide:** agents see all available skills and activate the right one when needed, as
+    `view_skill` does today, extended to subagents and workflows.
 - [ ] **Agent-swarm workflows.** Proposed design, to refine:
   - **Definition:** a workflow is an agent tool that starts a task in which many agents work together,
     as in Claude Code. It runs a reusable plan in phases, for example "plan → work in parallel →
