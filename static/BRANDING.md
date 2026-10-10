@@ -1,9 +1,18 @@
-# Open WebUI Branding Assets
+# Mologate Branding
 
-`favicon.png`, `opensearch.xml`, and nearby references contain Open WebUI name, logo, visual, textual, or symbolic identifiers.
+Mologate is a fork of [Open WebUI](https://github.com/open-webui/open-webui) © Open WebUI Inc.,
+used under the Open WebUI License (see `LICENSE`, `LICENSE_HISTORY` and `LICENSE_NOTICE`).
 
-Open WebUI branding in this directory includes assets, filenames, metadata, manifests, references, and surrounding UI that present or preserve the Open WebUI name, logo, visual, textual, or symbolic identifiers.
+The Open WebUI name and logo in this fork's interface, favicons, splash images, app icons and
+manifests have been replaced with Mologate branding. Clause 4 of `LICENSE` allows this only while
+one of its exceptions applies. Mologate relies on exception (i): **no more than 50 end users
+(individual people with direct access) in any rolling 30-day period**.
 
-Do not alter, remove, obscure, or replace Open WebUI branding except as permitted by `LICENSE`.
+If Mologate is ever opened to more than 50 people in a 30-day period, either restore the Open WebUI
+branding or obtain written permission or an enterprise license from Open WebUI Inc. first.
 
-See also: https://docs.openwebui.com/license.
+Keep `LICENSE`, `LICENSE_HISTORY` and `LICENSE_NOTICE` intact, and keep the
+"Built on Open WebUI" attribution in the app.
+
+Fonts: Geist and Geist Mono (`static/assets/fonts/`) are © Vercel and licensed under the
+SIL Open Font License 1.1 (`static/assets/fonts/Geist-OFL.txt`).
