@@ -2047,7 +2047,8 @@ AUTOMATION_MIN_INTERVAL = os.getenv('AUTOMATION_MIN_INTERVAL', '')
 
 AUTOMATION_AUTH_TOKEN_EXPIRES_IN = os.getenv('AUTOMATION_AUTH_TOKEN_EXPIRES_IN', '1h')
 
-ENABLE_NOTES = os.getenv('ENABLE_NOTES', 'True').lower() == 'true'
+# Mologate: Notes is off by default. Admins can turn it back on in Admin Settings → General.
+ENABLE_NOTES = os.getenv('ENABLE_NOTES', 'False').lower() == 'true'
 
 ENABLE_USER_STATUS = os.getenv('ENABLE_USER_STATUS', 'True').lower() == 'true'
 
