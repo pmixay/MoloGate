@@ -49,6 +49,7 @@
 		importChats,
 		deleteAllChats,
 		getChatListBySearchText,
+		getTeamChatList,
 		markChatsRead
 	} from '$lib/apis/chats';
 	import {
@@ -78,6 +79,7 @@
 	import FolderModal from './Sidebar/Folders/FolderModal.svelte';
 	import PinnedModelList from './Sidebar/PinnedModelList.svelte';
 	import PinnedNoteList from './Sidebar/PinnedNoteList.svelte';
+	import TeamChatList from './Sidebar/TeamChatList.svelte';
 	import CalendarIcon from './Sidebar/icons/Calendar.svelte';
 	import ClockIcon from './Sidebar/icons/Clock.svelte';
 	import EditPencilIcon from './Sidebar/icons/EditPencil.svelte';
@@ -100,7 +102,7 @@
 	let navElement;
 	let shiftKey = false;
 
-	let selectedChatId = null;
+	let selectedChatId: any = null;
 
 	// Keep the optimistic sidebar highlight in sync with the active chat. Leaving the
 	// chat view (e.g. navigating to an admin page) clears chatId, and programmatic
@@ -121,6 +123,8 @@
 
 	let showPinnedModels = true;
 	let showPinnedNotes = false;
+	let showTeamChats = true;
+	let teamChats: any[] = [];
 	let showChannels = false;
 	let showFolders = false;
 	let showSharedFolders = false;
@@ -387,6 +391,10 @@
 			(async () => {
 				console.log('Init chat list');
 				await refreshChatRows();
+			})(),
+			(async () => {
+				// Mologate: chats teammates opened to the team.
+				teamChats = (await getTeamChatList(localStorage.token).catch(() => null)) ?? [];
 			})()
 		]);
 	};
@@ -1316,6 +1324,17 @@
 							onAddLabel={$i18n.t('New Note')}
 						>
 							<PinnedNoteList bind:selectedChatId />
+						</SidebarSection>
+					{/if}
+
+					{#if teamChats.length > 0}
+						<SidebarSection
+							id="sidebar-team-chats"
+							bind:open={showTeamChats}
+							name={$i18n.t('Team')}
+							dragAndDrop={false}
+						>
+							<TeamChatList chats={teamChats} bind:selectedChatId />
 						</SidebarSection>
 					{/if}
 

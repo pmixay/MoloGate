@@ -39,6 +39,8 @@ export type OutputDetailToken = {
 		embeds?: string;
 		output?: string;
 		status?: string;
+		// Mologate: why the permission review stopped this call for the user.
+		permission_reason?: string;
 	};
 };
 
@@ -230,7 +232,9 @@ function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string,
 			status,
 			arguments: stringifyAttribute(item.arguments ?? ''),
 			files: stringifyAttribute(resultItem?.files),
-			embeds: stringifyAttribute(resultItem?.embeds)
+			embeds: stringifyAttribute(resultItem?.embeds),
+			permission_reason:
+				typeof (item.permission as any)?.reason === 'string' ? (item.permission as any).reason : ''
 		}
 	};
 }

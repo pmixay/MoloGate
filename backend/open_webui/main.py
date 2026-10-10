@@ -1252,15 +1252,10 @@ async def chat_completion(
             tool_servers = None
 
         automation_id = form_data.pop('automation_id', None)
-        tool_approval_mode = (
-            'full'
-            if automation_id or chat_id.startswith('channel:')
-            else (
-                form_data.get('params', {}).get('tool_approval_mode')
-                if await Config.get('chat.tool_permissions.enable', False)
-                else 'full'
-            )
-            or 'full'
+        # Mologate: permission prompts need someone to answer them, so automations, channels and
+        # internal sub-agent runs skip the review (utils/tool_permissions.py).
+        tool_review = not (
+            automation_id or chat_id.startswith('channel:') or getattr(request.state, 'internal', False) is True
         )
 
         metadata = {
@@ -1292,7 +1287,8 @@ async def chat_completion(
                     or model_info_params.get('function_calling')
                     or 'native'
                 ),
-                'tool_approval_mode': tool_approval_mode,
+                'tool_review': tool_review,
+                'tool_approval_always_allow': bool(form_data.get('params', {}).get('tool_approval_always_allow')),
             },
         }
 
@@ -1670,6 +1666,15 @@ async def chat_completion(
                 ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
             else:
                 ctx.update(form_data=form_data, metadata=metadata, events=events)
+                # Mologate: the drain above may have run approved tool calls and saved their results.
+                # Continue from that output, not the copy taken before it, or the end-of-turn save
+                # writes the old output back and the results disappear from the chat.
+                if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('assistant_message_id'):
+                    assistant_message = await Chats.get_message_by_id_and_message_id(
+                        metadata['chat_id'], metadata['assistant_message_id']
+                    )
+                    if assistant_message:
+                        ctx['assistant_message'] = copy.deepcopy(assistant_message)
 
             return await process_chat_response(response, ctx)
         except asyncio.CancelledError:
@@ -1908,6 +1913,7 @@ async def resolve_chat_message_tool_call(
         'status': True,
         'chat_id': id,
         'message_id': message_id,
+        'always_allow': resolution['always_allow'],
         **(result if isinstance(result, dict) else {}),
     }
 
@@ -2272,7 +2278,6 @@ async def get_app_config(request: Request):
         'automations.enable',
         'notes.enable',
         'chat.context_compaction.enable',
-        'chat.tool_permissions.enable',
         'web.search.enable',
         'web.search.confirmation.enable',
         'web.search.confirmation.content',
@@ -2360,7 +2365,6 @@ async def get_app_config(request: Request):
                     'enable_automations': config.get('automations.enable'),
                     'enable_notes': config.get('notes.enable'),
                     'enable_context_compaction': config.get('chat.context_compaction.enable'),
-                    'enable_tool_permissions': config.get('chat.tool_permissions.enable'),
                     'enable_web_search': config.get('web.search.enable'),
                     'enable_web_search_confirmation': config.get('web.search.confirmation.enable'),
                     'web_search_confirmation_content': config.get('web.search.confirmation.content'),

@@ -51,7 +51,9 @@
 		getUserPosition,
 		getUserTimezone,
 		getWeekday,
-		isRasterImageContentType
+		isImageAttachment,
+		isRasterImageContentType,
+		modelReadsImages
 	} from '$lib/utils';
 	import { uploadFile } from '$lib/apis/files';
 	import { getCwd, uploadNewFileToTerminal } from '$lib/apis/terminal';
@@ -71,6 +73,7 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import ModelSelector from './ModelSelector.svelte';
 	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
+	import ContextIndicator from './ContextIndicator.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -79,6 +82,7 @@
 	import Spinner from '../common/Spinner.svelte';
 
 	import XMark from '../icons/XMark.svelte';
+	import EyeSlash from '../icons/EyeSlash.svelte';
 	import Wrench from '../icons/Wrench.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
 
@@ -176,8 +180,8 @@
 	export let selectedSkillIds: string[] = [];
 	export let selectedFilterIds: string[] = [];
 
-	export let toolApprovalMode = 'full';
-	export let onToolApprovalModeChange: Function = () => {};
+	export let alwaysAllowActions = false;
+	export let onAlwaysAllowActionsChange: Function = () => {};
 
 	export let pendingOAuthTools: {
 		id: string;
@@ -223,8 +227,7 @@
 			}),
 		selectedToolIds,
 		selectedSkillIds,
-		selectedFilterIds,
-		toolApprovalMode
+		selectedFilterIds
 	};
 
 	$: onChange(chatInputDraft);
@@ -716,7 +719,10 @@
 
 	let modelCapabilitiesById: ModelCapabilitiesById = {};
 	$: modelCapabilitiesById = Object.fromEntries(
-		($models ?? []).map((model) => [model.id, model.info?.meta?.capabilities ?? {}])
+		($models ?? []).map((model) => [
+			model.id,
+			{ ...(model.info?.meta?.capabilities ?? {}), vision: modelReadsImages(model) }
+		])
 	);
 
 	const getCapableModelIds = (
@@ -727,6 +733,13 @@
 
 	let visionCapableModels = [];
 	$: visionCapableModels = getCapableModelIds(selectedModelIds, 'vision', modelCapabilitiesById);
+
+	// Mologate: while no selected model can read images, image attachments stay attached but
+	// hidden (switching back to a model that reads images shows them again); Chat.svelte
+	// leaves them out when sending.
+	$: imagesHidden = visionCapableModels.length === 0;
+	$: hiddenImageCount = imagesHidden ? files.filter(isImageAttachment).length : 0;
+	$: visibleFileCount = files.length - hiddenImageCount;
 
 	let fileUploadCapableModels = [];
 	$: fileUploadCapableModels = getCapableModelIds(
@@ -1811,8 +1824,27 @@
 									class="mx-2.5 mt-2.5 pb-1 flex items-center flex-wrap gap-1.5"
 									dir={$settings?.chatDirection ?? 'auto'}
 								>
+									{#if hiddenImageCount > 0}
+										<Tooltip
+											content={$i18n.t(
+												"The selected model can't read images, so they won't be sent. Pick a model that reads images to include them."
+											)}
+											placement="top"
+										>
+											<div
+												class="flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-gray-200 px-2.5 text-[12.5px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+											>
+												<EyeSlash className="size-3.5" strokeWidth="1.75" />
+												<span>
+													{$i18n.t('{{COUNT}} image(s) hidden', { COUNT: hiddenImageCount })}
+												</span>
+											</div>
+										</Tooltip>
+									{/if}
 									{#each files as file, fileIdx}
-										{#if file.type === 'image' || isRasterImageContentType(file?.content_type)}
+										{#if imagesHidden && isImageAttachment(file)}
+											<!-- Hidden: the selected model can't read images. -->
+										{:else if isImageAttachment(file)}
 											{@const fileUrl =
 												file.url.startsWith('data') || file.url.startsWith('http')
 													? file.url
@@ -2037,7 +2069,7 @@
 
 																if (enterPressed) {
 																	e.preventDefault();
-																	if (prompt !== '' || files.length > 0) {
+																	if (prompt !== '' || visibleFileCount > 0) {
 																		dispatch('submit', prompt);
 																	}
 																}
@@ -2097,6 +2129,7 @@
 									<InputMenu
 										bind:files
 										selectedModels={selectedModelIds}
+										{imagesHidden}
 										fileUploadCapableModels={getFilesystemUploadTerminal(
 											$selectedTerminalId,
 											$terminalServers,
@@ -2104,8 +2137,8 @@
 										)
 											? selectedModelIds
 											: fileUploadCapableModels}
-										{toolApprovalMode}
-										{onToolApprovalModeChange}
+										{alwaysAllowActions}
+										{onAlwaysAllowActionsChange}
 										{screenCaptureHandler}
 										{inputFilesHandler}
 										uploadFilesHandler={() => {
@@ -2307,6 +2340,12 @@
 									<!-- Effort selector (agent C): insert <EffortSelector /> on the line below. -->
 									<EffortSelector {selectedModels} bind:params />
 
+									<ContextIndicator
+										selectedModels={selectedModelIds}
+										{history}
+										contextUsage={statusContextUsage}
+									/>
+
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">
 											<button
@@ -2323,7 +2362,7 @@
 										</Tooltip>
 									{/if}
 
-									{#if isActive && prompt === '' && files.length === 0}
+									{#if isActive && prompt === '' && visibleFileCount === 0}
 										<div class=" flex items-center">
 											<Tooltip content={$i18n.t('Stop')}>
 												<button
@@ -2348,7 +2387,7 @@
 												</button>
 											</Tooltip>
 										</div>
-									{:else if prompt !== '' || files.length > 0 || uploadPending}
+									{:else if prompt !== '' || visibleFileCount > 0 || uploadPending}
 										<!-- Mologate: no dictation / voice-mode buttons; send shows once there is input. -->
 										<div class=" flex items-center">
 											<Tooltip
@@ -2360,7 +2399,7 @@
 													id="send-message-button"
 													class="bg-accent text-accent-ink hover:bg-accent-hover flex size-11 items-center justify-center rounded-[11px] transition self-center outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-850"
 													type="submit"
-													disabled={(prompt === '' && files.length === 0) || uploadPending}
+													disabled={(prompt === '' && visibleFileCount === 0) || uploadPending}
 												>
 													{#if uploadPending}
 														<Spinner className="size-5" />

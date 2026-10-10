@@ -127,6 +127,10 @@
 	let capabilities = { ...DEFAULT_CAPABILITIES };
 	// Admin override for the chat effort selector; empty = use provider metadata.
 	let reasoningEffortLevels: string[] = [];
+	// Mologate: context window override for the context indicator; empty uses the provider's.
+	let contextWindow: string | number | null = '';
+	$: detectedContextWindow =
+		($models as any[]).find((m) => m.id === (info?.base_model_id ?? id))?.context_window ?? null;
 	let defaultFeatureIds = [];
 	let builtinTools = {};
 
@@ -334,6 +338,13 @@
 			info.meta.reasoning_effort_levels = reasoningEffortLevels;
 		} else {
 			delete info.meta.reasoning_effort_levels;
+		}
+
+		const contextWindowTokens = Math.trunc(Number(`${contextWindow ?? ''}`.trim()));
+		if (Number.isFinite(contextWindowTokens) && contextWindowTokens > 0) {
+			(info.meta as any).context_window = contextWindowTokens;
+		} else {
+			delete (info.meta as any).context_window;
 		}
 
 		if (enableDescription) {
@@ -582,6 +593,8 @@
 			)
 				.map((level) => `${level}`.trim().toLowerCase())
 				.filter(Boolean);
+			const savedContextWindow = (model as any)?.meta?.context_window;
+			contextWindow = savedContextWindow ? `${savedContextWindow}` : '';
 			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? defaultFeatureIds;
 			builtinTools = model?.meta?.builtinTools ?? builtinTools;
 			terminalId = model?.meta?.terminalId ?? '';
@@ -1268,6 +1281,32 @@
 								modelId={id}
 								baseModelId={info?.base_model_id ?? null}
 							/>
+						</div>
+
+						<div class="my-3">
+							<label
+								class="mb-1.5 block text-xs text-gray-400 dark:text-gray-600"
+								for="model-context-window"
+							>
+								{$i18n.t('Context window (tokens)')}
+							</label>
+							<input
+								id="model-context-window"
+								class="w-full max-w-[12rem] rounded-lg bg-transparent font-mono text-sm outline-hidden"
+								type="number"
+								min="1"
+								step="1"
+								inputmode="numeric"
+								placeholder={detectedContextWindow
+									? `${detectedContextWindow}`
+									: $i18n.t('Not reported')}
+								bind:value={contextWindow}
+							/>
+							<div class="mt-1.5 text-[0.6875rem] leading-4 text-gray-500">
+								{$i18n.t(
+									'Shown by the context indicator in the chat composer. Leave empty to use what the provider reports.'
+								)}
+							</div>
 						</div>
 
 						{#if Object.keys(capabilities).filter((key) => capabilities[key]).length > 0}

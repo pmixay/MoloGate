@@ -10,7 +10,6 @@
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
-	import ExperimentalBadge from '$lib/components/common/ExperimentalBadge.svelte';
 	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
@@ -50,7 +49,8 @@
 		CONTEXT_COMPACTION_TOKEN_CAP: 80000,
 		CONTEXT_COMPACTION_RETENTION_PERCENTAGE: 40,
 		CONTEXT_COMPACTION_PROMPT_TEMPLATE: '',
-		ENABLE_TOOL_PERMISSIONS: false
+		TOOL_PERMISSION_MODEL: '',
+		TOOL_PERMISSION_FALLBACK_MODEL: ''
 	};
 	let showTaskParameters = false;
 
@@ -77,8 +77,7 @@
 						...current,
 						features: {
 							...current.features,
-							enable_context_compaction: chatConfig.ENABLE_CONTEXT_COMPACTION,
-							enable_tool_permissions: chatConfig.ENABLE_TOOL_PERMISSIONS
+							enable_context_compaction: chatConfig.ENABLE_CONTEXT_COMPACTION
 						}
 					}
 				: current
@@ -256,17 +255,42 @@
 			</AdminSettingSection>
 
 			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.chat.title')}>
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.interface.toolPermissions.label')}
-					description={$i18n.t('settings.admin.interface.toolPermissions.description')}
-					let:labelId
-				>
-					<div slot="label" class="flex items-center gap-2">
-						<span>{$i18n.t('settings.admin.interface.toolPermissions.label')}</span>
-						<ExperimentalBadge />
+				<!-- Mologate: tool calls always run without asking unless this reviewer flags one as
+				critical or very dangerous (backend utils/tool_permissions.py). -->
+				<div class="mb-2.5">
+					<div class="text-xs text-gray-600 dark:text-gray-400">
+						{$i18n.t('Permission prompts')}
 					</div>
-					<Switch bind:state={chatConfig.ENABLE_TOOL_PERMISSIONS} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
+					<div class="mt-1.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+						{$i18n.t(
+							'Tool calls run without asking. A reviewer model flags only critical or very dangerous actions, and only those ask the user first. Names match loosely, so "GLM-5.3 Flash" finds z-ai/glm-5.3-flash. With neither model available, built-in rules catch the most destructive commands.'
+						)}
+					</div>
+				</div>
+
+				<div class="mb-3 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+					<AdminSettingField label={$i18n.t('Reviewer model')}>
+						<input
+							class={inputClass}
+							list="tool-permission-models"
+							placeholder="codex-auto-approve"
+							bind:value={chatConfig.TOOL_PERMISSION_MODEL}
+						/>
+					</AdminSettingField>
+					<AdminSettingField label={$i18n.t('Fallback reviewer model')}>
+						<input
+							class={inputClass}
+							list="tool-permission-models"
+							placeholder="glm-5.3-flash"
+							bind:value={chatConfig.TOOL_PERMISSION_FALLBACK_MODEL}
+						/>
+					</AdminSettingField>
+					<datalist id="tool-permission-models">
+						{#each modelOptions as model}
+							<option value={model.id}>{model.name}</option>
+						{/each}
+					</datalist>
+				</div>
 
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.interface.contextCompaction.label')}

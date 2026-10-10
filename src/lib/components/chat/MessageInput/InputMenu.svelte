@@ -31,6 +31,8 @@
 
 	export let selectedModels: string[] = [];
 	export let fileUploadCapableModels: string[] = [];
+	// Mologate: no selected model reads images, so offering a screen or camera capture is pointless.
+	export let imagesHidden = false;
 
 	export let screenCaptureHandler: Function;
 	export let uploadFilesHandler: Function;
@@ -41,25 +43,15 @@
 
 	export let onUpload: Function;
 	export let onClose: Function;
-	export let toolApprovalMode = 'full';
-	export let onToolApprovalModeChange: Function = () => {};
+	// Mologate: "Always allow in this chat" was chosen on a permission prompt; this menu turns
+	// the prompts back on.
+	export let alwaysAllowActions = false;
+	export let onAlwaysAllowActionsChange: Function = () => {};
 
 	let show = false;
 	let tab = '';
 
 	let showAttachWebpageModal = false;
-	const toolApprovalModes = [
-		{
-			value: 'full',
-			label: $i18n.t('Full access'),
-			description: $i18n.t('Run tools without asking for approval.')
-		},
-		{
-			value: 'ask',
-			label: $i18n.t('Ask for approval'),
-			description: $i18n.t('Stop before each tool call until you allow or deny it.')
-		}
-	];
 
 	let fileUploadEnabled = true;
 	$: fileUploadEnabled =
@@ -68,7 +60,6 @@
 
 	let webUploadEnabled = true;
 	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
-	$: toolPermissionsEnabled = $config?.features?.enable_tool_permissions ?? false;
 
 	$: if (!fileUploadEnabled && files.length > 0) {
 		files = [];
@@ -140,43 +131,39 @@
 					class="max-h-72 overflow-y-auto overflow-x-hidden scrollbar-thin"
 					in:fly={{ x: -20, duration: 150 }}
 				>
-					{#if toolPermissionsEnabled}
-						<button
-							class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
-							on:click={() => {
-								tab = 'tool_permissions';
-							}}
+					{#if alwaysAllowActions}
+						<Tooltip
+							content={$i18n.t(
+								'You chose "Always allow in this chat", so even critical actions run without asking. Click to be asked again.'
+							)}
+							className="w-full"
 						>
-							<svg
-								class="size-3.5 shrink-0"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
+							<button
+								class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
+								type="button"
+								on:click={() => {
+									onAlwaysAllowActionsChange(false);
+									show = false;
+								}}
 							>
-								<path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" />
-							</svg>
+								<svg
+									class="size-3.5 shrink-0"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.5"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" />
+								</svg>
 
-							<div class="flex items-center w-full justify-between min-w-0">
-								<div class="line-clamp-1">
-									{$i18n.t('Tool Permissions')}
+								<div class="flex items-center w-full justify-between min-w-0">
+									<div class="line-clamp-1">{$i18n.t('Ask before critical actions')}</div>
+									<div class="text-xs text-gray-500 shrink-0">{$i18n.t('Off')}</div>
 								</div>
-
-								<div class="flex items-center gap-2 min-w-0">
-									<div class="text-xs text-gray-500 truncate">
-										{$i18n.t(
-											toolApprovalModes.find((mode) => mode.value === toolApprovalMode)?.label ??
-												'Full access'
-										)}
-									</div>
-									<div class="text-gray-500">
-										<ChevronRight />
-									</div>
-								</div>
-							</div>
-						</button>
+							</button>
+						</Tooltip>
 
 						<div class="h-px mx-1 my-1 bg-gray-100 dark:bg-gray-800"></div>
 					{/if}
@@ -207,38 +194,40 @@
 						</button>
 					</Tooltip>
 
-					<Tooltip
-						content={fileUploadCapableModels.length !== selectedModels.length
-							? $i18n.t('Model(s) do not support file upload')
-							: !fileUploadEnabled
-								? $i18n.t('You do not have permission to upload files.')
-								: ''}
-						className="w-full"
-					>
-						<button
-							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
-								? 'opacity-50'
-								: ''}"
-							type="button"
-							on:click={() => {
-								if (fileUploadEnabled) {
-									if (!detectMobile()) {
-										screenCaptureHandler();
-									} else {
-										const cameraInputElement = document.getElementById('camera-input');
-
-										if (cameraInputElement) {
-											cameraInputElement.click();
-										}
-									}
-									show = false;
-								}
-							}}
+					{#if !imagesHidden}
+						<Tooltip
+							content={fileUploadCapableModels.length !== selectedModels.length
+								? $i18n.t('Model(s) do not support file upload')
+								: !fileUploadEnabled
+									? $i18n.t('You do not have permission to upload files.')
+									: ''}
+							className="w-full"
 						>
-							<Camera />
-							<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
-						</button>
-					</Tooltip>
+							<button
+								class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
+									? 'opacity-50'
+									: ''}"
+								type="button"
+								on:click={() => {
+									if (fileUploadEnabled) {
+										if (!detectMobile()) {
+											screenCaptureHandler();
+										} else {
+											const cameraInputElement = document.getElementById('camera-input');
+
+											if (cameraInputElement) {
+												cameraInputElement.click();
+											}
+										}
+										show = false;
+									}
+								}}
+							>
+								<Camera />
+								<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
+							</button>
+						</Tooltip>
+					{/if}
 
 					<Tooltip
 						content={!webUploadEnabled
@@ -508,55 +497,6 @@
 							</button>
 						{/if}
 					{/if}
-				</div>
-			{:else if tab === 'tool_permissions'}
-				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
-					<button
-						class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal select-none cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-						on:click={() => {
-							tab = '';
-						}}
-					>
-						<ChevronLeft />
-
-						<div class="flex items-center w-full justify-between">
-							<div>
-								{$i18n.t('Tool Permissions')}
-							</div>
-						</div>
-					</button>
-
-					<div class="mt-1 space-y-1">
-						{#each toolApprovalModes as mode}
-							<Tooltip content={$i18n.t(mode.description)} className="w-full">
-								<button
-									class="flex gap-2 w-full items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
-									on:click={() => {
-										toolApprovalMode = mode.value;
-										onToolApprovalModeChange(mode.value);
-										tab = '';
-									}}
-								>
-									<div class="flex items-center w-full justify-between min-w-0">
-										<div class="line-clamp-1">{$i18n.t(mode.label)}</div>
-										{#if toolApprovalMode === mode.value}
-											<svg
-												class="size-3 shrink-0 text-gray-500"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2.5"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-											>
-												<polyline points="20 6 9 17 4 12" />
-											</svg>
-										{/if}
-									</div>
-								</button>
-							</Tooltip>
-						{/each}
-					</div>
 				</div>
 			{:else if tab === 'notes'}
 				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>

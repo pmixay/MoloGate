@@ -13,6 +13,7 @@
 	import CheckCircle from '$lib/components/icons/CheckCircle.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
+	import PermissionPromptButtons from '../PermissionPromptButtons.svelte';
 
 	import { settings } from '$lib/stores';
 
@@ -31,6 +32,7 @@
 			duration?: string;
 			embeds?: string;
 			arguments?: string;
+			permission_reason?: string;
 		};
 	}> = [];
 
@@ -39,7 +41,7 @@
 	export let compactPreview = false;
 	export let resolvable = false;
 	export let resolvingCallId = '';
-	export let onResolve: (callId: string, approved: boolean) => void = () => {};
+	export let onResolve: (callId: string, approved: boolean, always?: boolean) => void = () => {};
 
 	let open = $settings?.expandDetails ?? false;
 
@@ -231,69 +233,36 @@
 					{/if}
 				</div>
 
-				{#if resolvable && pendingToolTokens.length === 1 && pendingToolTokens[0]?.attributes?.name !== 'ask_user'}
-					{@const pendingCallId = pendingToolTokens[0]?.attributes?.id ?? ''}
-					<span class="flex gap-1 shrink-0">
-						<button
-							type="button"
-							class="tool-call-allow-button text-[0.6875rem] px-2.5 py-0.5 rounded-md text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-white/8 hover:bg-gray-200 dark:hover:bg-white/12 transition-colors duration-100 disabled:opacity-50"
-							disabled={!pendingCallId || resolvingCallId === pendingCallId}
-							on:click|stopPropagation={() => onResolve(pendingCallId, true)}
-						>
-							{$i18n.t('Allow')}
-						</button>
-						<button
-							type="button"
-							class="tool-call-deny-button text-[0.6875rem] px-2 py-0.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 disabled:opacity-50"
-							disabled={!pendingCallId || resolvingCallId === pendingCallId}
-							on:click|stopPropagation={() => onResolve(pendingCallId, false)}
-						>
-							{$i18n.t('Deny')}
-						</button>
-					</span>
-				{:else}
-					<!-- Chevron -->
-					<div class="flex shrink-0 self-center text-gray-400 dark:text-gray-500">
-						{#if open}
-							<ChevronUp strokeWidth="3.5" className="size-3" />
-						{:else}
-							<ChevronDown strokeWidth="3.5" className="size-3" />
-						{/if}
-					</div>
-				{/if}
+				<!-- Chevron -->
+				<div class="flex shrink-0 self-center text-gray-400 dark:text-gray-500">
+					{#if open}
+						<ChevronUp strokeWidth="3.5" className="size-3" />
+					{:else}
+						<ChevronDown strokeWidth="3.5" className="size-3" />
+					{/if}
+				</div>
 			</div>
 		</div>
 	</div>
 
-	{#if !open && resolvable && pendingToolTokens.length > 1}
+	{#if !open && resolvable && pendingToolTokens.length > 0}
+		<!-- Mologate: permission prompts, only for calls the review flagged. -->
 		<div class="mt-1 space-y-0.5">
 			{#each pendingToolTokens as token}
 				{@const pendingCallId = token?.attributes?.id ?? ''}
-				<div class="flex items-center gap-2 py-1 px-1">
-					<span class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-0 line-clamp-1">
-						{token?.attributes?.name ?? $i18n.t('tool')}
-					</span>
-					{#if token?.attributes?.name !== 'ask_user'}
-						<span class="flex gap-1 shrink-0">
-							<button
-								type="button"
-								class="tool-call-allow-button text-[0.6875rem] px-2.5 py-0.5 rounded-md text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-white/8 hover:bg-gray-200 dark:hover:bg-white/12 transition-colors duration-100 disabled:opacity-50"
-								disabled={!pendingCallId || resolvingCallId === pendingCallId}
-								on:click={() => onResolve(pendingCallId, true)}
-							>
-								{$i18n.t('Allow')}
-							</button>
-							<button
-								type="button"
-								class="tool-call-deny-button text-[0.6875rem] px-2 py-0.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 disabled:opacity-50"
-								disabled={!pendingCallId || resolvingCallId === pendingCallId}
-								on:click={() => onResolve(pendingCallId, false)}
-							>
-								{$i18n.t('Deny')}
-							</button>
+				{#if token?.attributes?.name !== 'ask_user'}
+					<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1 px-1">
+						<span class="min-w-0 text-xs text-gray-500 dark:text-gray-400">
+							<span class="text-gray-700 dark:text-gray-300"
+								>{token?.attributes?.name ?? $i18n.t('tool')}</span
+							>{#if token?.attributes?.permission_reason}: {token.attributes.permission_reason}{/if}
 						</span>
-					{/if}
-				</div>
+						<PermissionPromptButtons
+							disabled={!pendingCallId || resolvingCallId === pendingCallId}
+							onResolve={(approved, always) => onResolve(pendingCallId, approved, always)}
+						/>
+					</div>
+				{/if}
 			{/each}
 		</div>
 	{/if}

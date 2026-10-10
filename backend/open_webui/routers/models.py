@@ -48,6 +48,7 @@ from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_variables import get_chat_variables_schema
 from open_webui.utils.models import get_all_models
+from open_webui.utils.provider_limits import get_provider_limits
 from open_webui.utils.validate import BACKGROUND_IMAGE_MAX_BYTES, validate_background_image
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -765,6 +766,30 @@ async def get_model_by_id(id: str, user=Depends(get_verified_user), db: AsyncSes
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
+
+
+###########################
+# GetModelLimits
+###########################
+
+
+@router.get('/model/limits')
+async def get_model_limits(request: Request, id: str, user=Depends(get_verified_user)):
+    """Mologate: the usage limits the model's provider account last reported, if it reports any.
+
+    Limits belong to the connection (a shared account or key), so a custom model shows its base
+    model's. Answers ``{'windows': []}`` when nothing is known.
+    """
+    model = request.app.state.MODELS.get(id)
+    if not model:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    base_model_id = (model.get('info') or {}).get('base_model_id')
+    base_model = request.app.state.MODELS.get(base_model_id) if base_model_id else None
+    url_idx = (base_model or model).get('urlIdx')
+
+    snapshot = await get_provider_limits(request.app.state.redis, url_idx) if url_idx is not None else None
+    return snapshot or {'windows': [], 'updated_at': None}
 
 
 ###########################

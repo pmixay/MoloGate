@@ -2198,7 +2198,10 @@ CONTEXT_COMPACTION_MODEL = os.getenv('CONTEXT_COMPACTION_MODEL', '')
 
 ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'False').lower() == 'true'
 
-ENABLE_TOOL_PERMISSIONS = os.getenv('ENABLE_TOOL_PERMISSIONS', 'False').lower() == 'true'
+# Mologate: permission prompts. Tool calls run without asking; this model (then the fallback)
+# flags the critical or very dangerous ones for the user to confirm. See utils/tool_permissions.py.
+TOOL_PERMISSION_MODEL = os.getenv('TOOL_PERMISSION_MODEL', 'codex-auto-approve')
+TOOL_PERMISSION_FALLBACK_MODEL = os.getenv('TOOL_PERMISSION_FALLBACK_MODEL', 'glm-5.3-flash')
 
 CONTEXT_COMPACTION_TOKEN_THRESHOLD = int(os.getenv('CONTEXT_COMPACTION_TOKEN_THRESHOLD', '80000'))
 
@@ -3140,7 +3143,8 @@ DEFAULT_CONFIG = {
     'chat.context_compaction.token_cap': CONTEXT_COMPACTION_TOKEN_CAP,
     'chat.context_compaction.retention_percentage': CONTEXT_COMPACTION_RETENTION_PERCENTAGE,
     'chat.context_compaction.prompt_template': CONTEXT_COMPACTION_PROMPT_TEMPLATE,
-    'chat.tool_permissions.enable': ENABLE_TOOL_PERMISSIONS,
+    'chat.tool_permissions.model': TOOL_PERMISSION_MODEL,
+    'chat.tool_permissions.fallback_model': TOOL_PERMISSION_FALLBACK_MODEL,
     'task.title.prompt_template': TITLE_GENERATION_PROMPT_TEMPLATE,
     'task.tags.prompt_template': TAGS_GENERATION_PROMPT_TEMPLATE,
     'task.image.prompt_template': IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE,

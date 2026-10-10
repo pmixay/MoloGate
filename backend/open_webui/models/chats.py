@@ -11,7 +11,7 @@ from typing import Any, Literal
 # local imports
 from open_webui.env import ENABLE_ADMIN_CHAT_ACCESS
 from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.access_grants import AccessGrants
+from open_webui.models.access_grants import WILDCARD_PRINCIPAL_ID, AccessGrant, AccessGrants
 from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
 from open_webui.models.folders import Folders
@@ -1588,6 +1588,45 @@ class ChatTable:
                     }
                 )
                 for chat in all_chats
+            ]
+
+    async def get_team_chat_list(
+        self,
+        user_id: str,
+        skip: int = 0,
+        limit: int = 50,
+        db: AsyncSession | None = None,
+    ) -> list[dict]:
+        """Mologate: other people's chats that are open to the whole team (a user:* read grant)."""
+        async with get_async_db_context(db) as session:
+            open_chat_ids = select(AccessGrant.resource_id).where(
+                AccessGrant.resource_type == 'shared_chat',
+                AccessGrant.principal_type == 'user',
+                AccessGrant.principal_id == WILDCARD_PRINCIPAL_ID,
+                AccessGrant.permission == 'read',
+            )
+            stmt = (
+                select(Chat.id, Chat.title, Chat.user_id, Chat.updated_at, Chat.created_at)
+                .where(Chat.id.in_(open_chat_ids), Chat.user_id != user_id)
+                .filter_by(archived=False)
+                .where(Chat.meta['internal'].as_boolean().is_not(True))
+                .order_by(Chat.updated_at.desc())
+            )
+            if skip:
+                stmt = stmt.offset(skip)
+            if limit:
+                stmt = stmt.limit(limit)
+
+            result = await session.execute(stmt)
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'user_id': row[2],
+                    'updated_at': row[3],
+                    'created_at': row[4],
+                }
+                for row in result.all()
             ]
 
     async def get_chat_list_by_chat_ids(

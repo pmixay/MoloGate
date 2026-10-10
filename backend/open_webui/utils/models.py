@@ -25,6 +25,8 @@ from open_webui.utils.plugin import (
     get_functions_cache,
     get_function_module_from_cache,
 )
+from open_webui.utils.context_window import apply_context_windows
+from open_webui.utils.image_input import apply_image_input_support
 from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
@@ -269,6 +271,10 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     # Mologate: effort levels for the chat effort selector (admin override, then provider metadata).
     apply_reasoning_effort_options(models)
+    # Mologate: whether each model reads images, so the composer can hide image attachments.
+    apply_image_input_support(models)
+    # Mologate: context window sizes for the composer's context indicator.
+    apply_context_windows(models)
 
     # Process action_ids to get the actions
     def get_action_items_from_module(function, module):

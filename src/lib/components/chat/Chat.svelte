@@ -63,7 +63,9 @@
 		getCodeBlockContents,
 		displayFileHandler,
 		getUsageTokenCount,
-		isRasterImageContentType
+		isImageAttachment,
+		isRasterImageContentType,
+		modelReadsImages
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
@@ -84,12 +86,7 @@
 	} from '$lib/apis/chats';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 	import { processUrl, processWebSearch } from '$lib/apis/retrieval';
-	import {
-		getAndUpdateUserLocation,
-		getUserInfoById,
-		getUserSettings,
-		updateUserSettings
-	} from '$lib/apis/users';
+	import { getAndUpdateUserLocation, getUserInfoById, getUserSettings } from '$lib/apis/users';
 	import {
 		generateQueries,
 		chatAction,
@@ -461,81 +458,21 @@
 	let loadedChatIdProp = '';
 	let currentDraftKey = '';
 
-	$: toolApprovalMode =
-		(params?.tool_approval_mode ?? $settings?.params?.tool_approval_mode) === 'ask'
-			? 'ask'
-			: 'full';
+	// Mologate: tool calls run without asking; the server's permission review stops only critical
+	// or very dangerous ones. "Always allow in this chat" stops even those (backend
+	// utils/tool_permissions.py); it lives in the chat's params so it travels with the chat.
+	$: alwaysAllowActions = params?.tool_approval_always_allow === true;
 
-	// Mologate: persist=false when restoring a draft; it can run before loadChat() fills
-	// params, and saving then would overwrite the chat's params (e.g. reasoning_effort).
-	const handleToolApprovalModeChange = async (mode: string, persist = true) => {
-		const tool_approval_mode = mode === 'ask' ? 'ask' : 'full';
-		params = {
-			...params,
-			tool_approval_mode
-		};
+	const setAlwaysAllowActions = async (value: boolean) => {
+		const { tool_approval_always_allow, ...rest } = params ?? {};
+		params = value ? { ...rest, tool_approval_always_allow: true } : rest;
 
-		if (persist) {
-			settings.set({
-				...$settings,
-				params: {
-					...($settings?.params ?? {}),
-					tool_approval_mode
-				}
+		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
+			const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
+				console.error('[permission prompts]', err);
+				return null;
 			});
-			await updateUserSettings(localStorage.token, { ui: { params: $settings.params } }).catch(
-				(err) => {
-					console.error('[tool permissions settings]', err);
-				}
-			);
-
-			if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
-				const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
-					console.error('[tool permissions chat]', err);
-					return null;
-				});
-				if (res) chat = res;
-			}
-		}
-
-		if (tool_approval_mode === 'full') {
-			const messages = [...Object.values(history?.messages ?? {})].reverse() as any[];
-			for (const message of messages) {
-				const output = (Array.isArray(message?.output) ? message.output : []) as any[];
-				const resultCallIds = new Set(
-					output
-						.filter((item: any) => item?.type === 'function_call_output' && item?.call_id)
-						.map((item: any) => item.call_id)
-				);
-				const pendingCall = output.find((item: any) => {
-					const callId = item?.call_id ?? item?.id;
-					return (
-						item?.type === 'function_call' &&
-						item?.name !== 'ask_user' &&
-						(item?.status === 'pending' || item?.status === 'requires_approval') &&
-						callId &&
-						!resultCallIds.has(callId)
-					);
-				});
-				const callId = pendingCall?.call_id ?? pendingCall?.id;
-				if (!message?.id || !callId) {
-					continue;
-				}
-
-				const res = await resolveChatMessageToolCall(
-					localStorage.token,
-					$chatId,
-					message.id,
-					callId,
-					'approve'
-				).catch(async (error) => {
-					toast.error(`${error}`);
-					await loadChat();
-					return null;
-				});
-				if (res) onToolCallResolved(res);
-				break;
-			}
+			if (res) chat = res;
 		}
 	};
 
@@ -763,6 +700,10 @@
 	};
 
 	const onToolCallResolved = (res) => {
+		// The server already saved "Always allow in this chat"; keep the local params in step.
+		if (res?.always_allow && !alwaysAllowActions) {
+			params = { ...params, tool_approval_always_allow: true };
+		}
 		const newTaskIds = res?.task_ids ?? (res?.task_id ? [res.task_id] : []);
 		if (newTaskIds.length > 0) {
 			taskIds = [...(taskIds ?? []), ...newTaskIds];
@@ -802,9 +743,6 @@
 			selectedToolIds = input.selectedToolIds ?? [];
 			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
-			if (input.toolApprovalMode) {
-				await handleToolApprovalModeChange(input.toolApprovalMode, false); // Mologate: restore only
-			}
 			return true;
 		} catch (e) {
 			return false;
@@ -2706,7 +2644,18 @@
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
-		const { id, done, choices, content, output, sources, selected_model_id, error, usage } = data;
+		const {
+			id,
+			done,
+			choices,
+			content,
+			output,
+			sources,
+			selected_model_id,
+			error,
+			usage,
+			context_breakdown
+		} = data;
 
 		// Store raw OR-aligned output items from backend
 		if (output) {
@@ -2764,6 +2713,11 @@
 
 		if (usage) {
 			message.usage = usage;
+		}
+
+		// Mologate: what the turn's prompt held, for the context indicator.
+		if (context_breakdown) {
+			message.context_breakdown = context_breakdown;
 		}
 
 		history.messages[message.id] = message;
@@ -3011,6 +2965,13 @@
 			selectedModels = _selectedModels;
 		}
 
+		// Mologate: while no selected model reads images, the composer hides image attachments
+		// and they aren't sent.
+		const imagesReadable = selectedModelIds.some((id) =>
+			modelReadsImages($models.find((m) => m.id === id))
+		);
+		const sendableFiles = imagesReadable ? files : files.filter((file) => !isImageAttachment(file));
+
 		if (String(userPrompt).trim() === '/compact') {
 			clearCommandInput();
 			await handleManualCompact();
@@ -3038,7 +2999,7 @@
 			toast.warning($i18n.t('Please connect all required integrations before sending a message'));
 			return;
 		}
-		if (userPrompt === '' && files.length === 0) {
+		if (userPrompt === '' && sendableFiles.length === 0) {
 			toast.error($i18n.t('Please enter a prompt'));
 			return;
 		}
@@ -3059,7 +3020,7 @@
 
 		if (
 			($config?.file?.max_count ?? null) !== null &&
-			files.length + chatFiles.length > $config?.file?.max_count
+			sendableFiles.length + chatFiles.length > $config?.file?.max_count
 		) {
 			toast.error(
 				$i18n.t(`You can only chat with a maximum of {{maxCount}} file(s) at a time.`, {
@@ -3083,11 +3044,14 @@
 			($chatRequestQueues[$chatId] ?? []).some((m) =>
 				(m.files ?? []).some((file) => ['uploading', 'error'].includes(file.status))
 			) ||
-			(files.length > 0 && files.some((file) => ['uploading', 'error'].includes(file.status)))
+			sendableFiles.some((file) => ['uploading', 'error'].includes(file.status))
 		) {
 			chatRequestQueues.update((q) => ({
 				...q,
-				[$chatId]: [...(q[$chatId] ?? []), { id: uuidv4(), prompt: userPrompt, files }]
+				[$chatId]: [
+					...(q[$chatId] ?? []),
+					{ id: uuidv4(), prompt: userPrompt, files: sendableFiles }
+				]
 			}));
 			messageInput?.setText('');
 			prompt = '';
@@ -3103,7 +3067,7 @@
 		if (isGenerating) {
 			if ($settings?.enableMessageQueue ?? true) {
 				// Enqueue the request
-				const _files = structuredClone(files);
+				const _files = structuredClone(sendableFiles);
 				chatRequestQueues.update((q) => ({
 					...q,
 					[$chatId]: [...(q[$chatId] ?? []), { id: uuidv4(), prompt: userPrompt, files: _files }]
@@ -3123,7 +3087,7 @@
 		// Clear input and submit
 		messageInput?.setText('');
 		prompt = '';
-		const _files = structuredClone(files);
+		const _files = structuredClone(sendableFiles);
 		files = [];
 		messageInput?.setText('');
 
@@ -3240,29 +3204,8 @@
 		// Re-clone history so sendMessageSocket gets the response messages we just added
 		_history = structuredClone(history);
 
-		// Vision capability check
-		for (const mid of selectedModelIds) {
-			const model = $models.filter((m) => m.id === mid).at(0);
-			if (model) {
-				const hasImages = createMessagesList(_history, parentId).some((message) =>
-					message.files?.some(
-						(file) => file.type === 'image' || isRasterImageContentType(file?.content_type)
-					)
-				);
-
-				if (
-					hasImages &&
-					!(model.info?.meta?.capabilities?.vision ?? true) &&
-					!imageGenerationActive
-				) {
-					toast.error(
-						$i18n.t('Model {{modelName}} is not vision capable', {
-							modelName: model.name ?? model.id
-						})
-					);
-				}
-			}
-		}
+		// Mologate: no vision check here. Images earlier in the chat are replaced with a note on
+		// the server for models that can't read them (utils/image_input.py).
 
 		// Single request — backend fans out to all models
 		const primaryModelId = selectedModelIds[0];
@@ -3941,8 +3884,7 @@
 			})),
 		selectedToolIds,
 		selectedSkillIds,
-		selectedFilterIds,
-		toolApprovalMode
+		selectedFilterIds
 	});
 
 	const saveDraft = async (draft: any, chatId: string | null = null, debounce = true) => {
@@ -4356,8 +4298,8 @@
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
-										{toolApprovalMode}
-										onToolApprovalModeChange={handleToolApprovalModeChange}
+										{alwaysAllowActions}
+										onAlwaysAllowActionsChange={setAlwaysAllowActions}
 										{generating}
 										{stopResponse}
 										{createMessagePair}
@@ -4446,8 +4388,8 @@
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
-										{toolApprovalMode}
-										onToolApprovalModeChange={handleToolApprovalModeChange}
+										{alwaysAllowActions}
+										onAlwaysAllowActionsChange={setAlwaysAllowActions}
 										{generating}
 										{stopResponse}
 										{createMessagePair}
@@ -4495,8 +4437,8 @@
 									bind:atSelectedModel
 									bind:showCommands
 									bind:dragged
-									{toolApprovalMode}
-									onToolApprovalModeChange={handleToolApprovalModeChange}
+									{alwaysAllowActions}
+									onAlwaysAllowActionsChange={setAlwaysAllowActions}
 									{pendingOAuthTools}
 									{oauthRedirectHandler}
 									{stopResponse}

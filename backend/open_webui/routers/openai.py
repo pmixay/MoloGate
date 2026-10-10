@@ -50,6 +50,7 @@ from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
     apply_system_prompt_to_body,
 )
+from open_webui.utils.provider_limits import record_provider_limits
 from open_webui.utils.session_pool import (
     cleanup_response,
     get_client_timeout,
@@ -1673,6 +1674,8 @@ async def generate_chat_completion(
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
             timeout=get_client_timeout(stream=is_streaming_request),
         )
+        # Mologate: the account's usage limits, where the provider reports them in headers.
+        await record_provider_limits(request.app.state.redis, idx, r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):

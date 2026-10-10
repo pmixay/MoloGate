@@ -19,10 +19,17 @@ are not in priority order. Tick an item off when it ships.
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
     weekly limits.
+  - Started: the context indicator's panel shows the selected model's limits when its provider reports
+    them in response headers (Codex's 5-hour and weekly windows, or OpenAI-style request and token
+    limits). They are kept per connection, so every model on a shared account shows the same ones.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
 - [ ] **Fair use:** wide per-person limits on the shared accounts, so one person can't use up the
       quota for everyone. Proposed defaults under [Proposed limits](#proposed-limits).
+- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
+      time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
+      and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
+      defaults under [Proposed limits](#proposed-limits).
 
 ## Tools, containers and capabilities
 
@@ -143,15 +150,18 @@ are not in priority order. Tick an item off when it ships.
 
 ## Security
 
-- [ ] **Permission prompts:**
+- [x] **Permission prompts:**
   - Auto-approve is the default and only mode, with low sensitivity.
   - The user is asked for permission only when an action is critical or very dangerous.
   - Every such prompt includes "Always allow in this chat". Once chosen, even these prompts stop
     appearing in that chat.
-- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
-      time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
-      and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
-      defaults under [Proposed limits](#proposed-limits).
+  - Done: before a batch of tool calls runs, `codex-auto-approve` reviews it (GLM-5.3 Flash if that
+    fails or is missing; admins can pick both models under Settings → Interface). Only flagged calls
+    stop, with the reviewer's reason and Allow / Always allow in this chat / Deny; the rest run without
+    asking. Read-only built-in tools skip the review. With no reviewer available, built-in rules still
+    catch the most destructive commands (wiping disks, force-pushing, dropping databases, tearing down
+    infrastructure). "Always allow" is saved on the chat and can be turned off from the "+" menu.
+    Automations, channels and sub-agent runs aren't reviewed, since nobody is there to answer.
 
 ## Deployment
 
@@ -183,7 +193,7 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
-- [ ] **Personal chats:** chats outside a workspace are private to their creator by default. They can
+- [x] **Personal chats:** chats outside a workspace are private to their creator by default. They can
       be opened to the team with the share feature (see [Interface](#interface)).
 
 ## General
@@ -197,12 +207,30 @@ are not in priority order. Tick an item off when it ships.
   - Done: levels come from an admin override on the model, else from what the provider reports
     (Codex-style `supported_reasoning_levels`, a plain level list, or OpenRouter-style
     `supported_parameters`); the dropdown hides when a model has none. The choice is saved per chat.
-- [ ] Hide image attachments automatically when the selected model can't read images.
-- [ ] **Context indicator:**
+- [x] Hide image attachments automatically when the selected model can't read images, and filter
+      them out of what the model receives.
+  - Done: a model can't read images when an admin turned its Vision capability off or its provider
+    lists input modalities without images (Codex `input_modalities`, OpenRouter `architecture`). While
+    no selected model reads images, image attachments stay attached but hidden behind an "N images
+    hidden" chip, Capture leaves the "+" menu, and sending leaves them out; picking a model that reads
+    images shows them again. The server also swaps every image in the request (earlier messages, tool
+    results) for a short note, so such a model never receives one.
+- [x] **Context indicator:**
   - A ring indicator to the right of the effort dropdown.
-  - Opening it shows a breakdown of what is filling the context window, plus the provider limits
-    described under [Limits](#limits).
-- [ ] Share a chat with the team, by opening it to the team or with a link.
+  - Opening it shows a breakdown of what is filling the context window, with percents, plus the
+    provider limits described under [Limits](#limits).
+  - Done: each turn records an estimate of its prompt by category (system instructions, tool
+    definitions, summary of earlier messages, messages, tool calls and results, images), calibrated
+    against the prompt tokens the provider reports. The panel shows each category and the free space
+    as a share of the window. The window size comes from an admin override in the model editor, else
+    from provider metadata (`context_window`, `context_length`, ...), else the compaction threshold.
+    Provider limits: see Per-model limits above.
+- [x] Share a chat with the team, by opening it to the team or with a link. Both need a Mologate
+      account.
+  - Done: "Open to the team" lets everyone signed in find the chat under Team in the sidebar and read
+    its current state, read-only. A share link is a snapshot any signed-in user with the URL can open;
+    signed-out visitors are sent to sign in, and no-auth ("anyone") access can no longer be granted.
+    Deleting the link keeps the chat open to the team.
 
 ### Models and providers
 
