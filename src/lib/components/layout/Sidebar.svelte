@@ -86,7 +86,8 @@
 	import SearchIcon from './Sidebar/icons/Search.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
 	import WorkspaceIcon from './Sidebar/icons/Workspace.svelte';
-	import HotkeyHint from '../common/HotkeyHint.svelte';
+	import ChevronUpDown from '../icons/ChevronUpDown.svelte';
+	import { formatChord, keybindings, Shortcut } from '$lib/shortcuts';
 	import Dropdown from '../common/Dropdown.svelte';
 	import DropdownMenu from '../common/DropdownMenu.svelte';
 	import CheckIcon from '../icons/Check.svelte';
@@ -832,6 +833,25 @@
 	};
 
 	const isWindows = /Windows/i.test(navigator.userAgent);
+
+	// Keyboard hints shown as <kbd> chips next to the primary actions.
+	$: showShortcutHints = $settings?.keyboardShortcuts !== false;
+	$: newChatChord = formatChord($keybindings[Shortcut.NEW_CHAT] ?? '');
+	$: searchChord = formatChord($keybindings[Shortcut.SEARCH] ?? '');
+
+	$: userRoleLabel =
+		$user?.role === 'admin'
+			? $i18n.t('Admin')
+			: $user?.role === 'pending'
+				? $i18n.t('Pending')
+				: $i18n.t('User');
+
+	const kbdClass =
+		'hidden md:inline-flex shrink-0 items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[0.65625rem] leading-[1.2] text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-500';
+
+	// Nocturne: the current item sits on a raised ink surface with a hairline edge.
+	const activeRowClass =
+		'bg-white text-gray-900 ring-1 ring-inset ring-gray-200 dark:bg-[#1a1b25] dark:text-gray-100 dark:ring-gray-700/60';
 </script>
 
 <ChannelModal
@@ -939,7 +959,7 @@
 
 	{#if !$mobile && !$showSidebar}
 		<div
-			class="w-[calc(42px*var(--app-text-scale,1))] shrink-0 py-[calc(0.25rem*var(--app-text-scale,1))] px-[calc(0.25rem*var(--app-text-scale,1))] flex flex-col justify-between text-gray-700 dark:text-gray-300 hover:bg-gray-50/30 dark:hover:bg-gray-800/30 h-full z-10 transition-all border-e-[0.5px] border-gray-50 dark:border-gray-850/30"
+			class="w-[calc(42px*var(--app-text-scale,1))] shrink-0 py-[calc(0.375rem*var(--app-text-scale,1))] px-[calc(0.25rem*var(--app-text-scale,1))] flex flex-col justify-between text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 hover:bg-gray-100/60 dark:hover:bg-[#0d0e14] h-full z-10 transition-colors border-e border-gray-200/70 dark:border-gray-800/70"
 			id="sidebar"
 			role="navigation"
 			aria-label={$i18n.t('Chat history')}
@@ -950,26 +970,26 @@
 					showSidebar.set(!$showSidebar);
 				}}
 			>
-				<div class="pb-1">
+				<div class="pb-2">
 					<Tooltip
 						content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 						placement="right"
 					>
 						<button
-							class="flex size-8.5 items-center justify-center transition group {isWindows
+							class="flex size-8.5 items-center justify-center transition group outline-none {isWindows
 								? 'cursor-pointer'
 								: 'cursor-[e-resize]'}"
 							aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 						>
 							<div
-								class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
+								class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 group-focus-visible:ring-2 group-focus-visible:ring-accent"
 							>
 								<!-- LICENSE covers this Open WebUI sidebar logo.
 							Do not alter, remove, obscure, or replace it except as LICENSE permits:
 							https://docs.openwebui.com/license. -->
 								<img
 									src="{WEBUI_BASE_URL}/static/favicon.png"
-									class="sidebar-new-chat-icon size-5 rounded-full group-hover:hidden"
+									class="sidebar-new-chat-icon size-[calc(26px*var(--app-text-scale,1))] rounded-[7px] group-hover:hidden"
 									alt=""
 								/>
 
@@ -979,11 +999,11 @@
 					</Tooltip>
 				</div>
 
-				<div class="-gap-0.5">
+				<div class="flex flex-col gap-0.5">
 					<div class="">
 						<Tooltip content={$i18n.t('New Chat')} placement="right">
 							<a
-								class=" cursor-pointer flex size-8 items-center justify-center transition group"
+								class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
 								href="/"
 								draggable="false"
 								on:click={async (e) => {
@@ -996,7 +1016,7 @@
 								aria-label={$i18n.t('New Chat')}
 							>
 								<div
-									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
+									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition text-gray-800 dark:text-gray-100 ring-1 ring-inset ring-gray-200 bg-white dark:bg-gray-850 dark:ring-gray-700/70 group-hover:bg-gray-100 dark:group-hover:bg-[#1a1b25] group-focus-visible:ring-2 group-focus-visible:ring-accent"
 								>
 									<EditPencilIcon className="size-4" strokeWidth="1.5" />
 								</div>
@@ -1007,7 +1027,7 @@
 					<div>
 						<Tooltip content={$i18n.t('Search')} placement="right">
 							<button
-								class=" cursor-pointer flex size-8 items-center justify-center transition group"
+								class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
 								on:click={(e) => {
 									e.stopImmediatePropagation();
 									e.preventDefault();
@@ -1018,7 +1038,7 @@
 								aria-label={$i18n.t('Search')}
 							>
 								<div
-									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
+									class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100 group-focus-visible:ring-2 group-focus-visible:ring-accent"
 								>
 									<SearchIcon className="size-4" strokeWidth="1.5" />
 								</div>
@@ -1032,7 +1052,7 @@
 							<div class="">
 								<Tooltip content={$i18n.t(meta.label)} placement="right">
 									<a
-										class=" cursor-pointer flex size-8 items-center justify-center transition group"
+										class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
 										href={meta.href}
 										on:click={async (e) => {
 											e.stopImmediatePropagation();
@@ -1042,14 +1062,13 @@
 										}}
 										draggable="false"
 										aria-label={$i18n.t(meta.label)}
+										aria-current={itemId === activeMenuItemId ? 'page' : undefined}
 									>
 										<div
-											class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition {itemId ===
+											class="self-center flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-focus-visible:ring-2 group-focus-visible:ring-accent {itemId ===
 											activeMenuItemId
-												? ($settings?.highContrastMode ?? false)
-													? 'bg-black/[0.035] dark:bg-white/[0.06]'
-													: 'bg-black/[0.035] dark:bg-white/[0.045]'
-												: 'group-hover:bg-gray-100 dark:group-hover:bg-gray-900'}"
+												? activeRowClass
+												: 'group-hover:bg-gray-100 group-hover:text-gray-900 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100'}"
 										>
 											{#if itemId === 'notes'}
 												<NotesIcon className="size-4" strokeWidth="1.5" />
@@ -1078,26 +1097,26 @@
 							<UserMenu role={$user?.role} profile={$config?.features?.enable_user_status ?? true}>
 								<button
 									type="button"
-									class=" cursor-pointer flex size-8.5 items-center justify-center transition group"
+									class=" cursor-pointer flex size-8.5 items-center justify-center transition group outline-none"
 									aria-label={$i18n.t('User menu')}
 								>
 									<div
-										class="self-center relative flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
+										class="self-center relative flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900 group-focus-visible:ring-2 group-focus-visible:ring-accent"
 									>
 										<img
 											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
-											class="size-5.5 object-cover rounded-full"
+											class="size-[calc(24px*var(--app-text-scale,1))] object-cover rounded-md"
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}
 										/>
 
 										{#if $config?.features?.enable_user_status}
-											<div class="absolute -bottom-0.5 -right-0.5">
+											<div class="absolute bottom-0 right-0">
 												<span class="relative flex size-2.5">
 													<span
 														class="relative inline-flex size-2.5 rounded-full {true
 															? 'bg-green-500'
-															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-gray-50 dark:border-gray-950"
 													></span>
 												</span>
 											</div>
@@ -1131,7 +1150,7 @@
 				? `ml-[4.5rem] md:ml-0 `
 				: $mobile
 					? ''
-					: ''} shrink-0 text-gray-700 dark:text-gray-300 text-[0.8125rem] leading-5 fixed top-0 left-0 overflow-x-hidden
+					: ''} shrink-0 text-gray-700 dark:text-gray-400 text-[0.8125rem] leading-5 fixed top-0 left-0 overflow-x-hidden
         "
 			style={$mobile
 				? panelStyle
@@ -1139,13 +1158,13 @@
 			data-state={$showSidebar}
 		>
 			<div
-				class=" my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[var(--sidebar-width)] overflow-x-hidden scrollbar-hidden z-50 border-e border-gray-50 dark:border-gray-850/30"
+				class=" my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[var(--sidebar-width)] overflow-x-hidden scrollbar-hidden z-50 border-e border-gray-200/70 dark:border-gray-800/70"
 			>
 				<div
-					class="sidebar px-1 pt-1.5 pb-1 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-2"
+					class="sidebar px-2 pt-3 pb-1 flex items-center gap-2 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-1"
 				>
 					<a
-						class="flex items-center rounded-xl size-8.5 h-full justify-center hover:bg-gray-100 dark:hover:bg-gray-900 transition no-drag-region"
+						class="group flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-0.5 pl-1.5 pr-1 no-drag-region outline-none focus-visible:ring-2 focus-visible:ring-accent"
 						href="/"
 						draggable="false"
 						on:click={newChatHandler}
@@ -1156,28 +1175,33 @@
 						<img
 							crossorigin="anonymous"
 							src="{WEBUI_BASE_URL}/static/favicon.png"
-							class="sidebar-new-chat-icon size-5 rounded-full"
+							class="sidebar-new-chat-icon size-[calc(30px*var(--app-text-scale,1))] shrink-0 rounded-lg"
 							alt=""
 						/>
-					</a>
 
-					<a href="/" class="flex flex-1 px-0.5" on:click={newChatHandler}>
 						<!-- LICENSE covers this Open WebUI sidebar name.
 					Do not alter, remove, obscure, or replace it except as LICENSE permits:
 					https://docs.openwebui.com/license. -->
-						<div
-							id="sidebar-webui-name"
-							class=" self-center font-normal text-gray-700 dark:text-gray-200"
-						>
-							{$WEBUI_NAME}
-						</div>
+						<span class="flex min-w-0 flex-col leading-[1.1]">
+							<span
+								id="sidebar-webui-name"
+								class="truncate text-[0.96875rem] font-semibold tracking-[-0.02em] text-gray-900 dark:text-gray-100"
+							>
+								{$WEBUI_NAME}
+							</span>
+							<span
+								class="mt-[3px] truncate font-mono text-[0.65625rem] tracking-[0.02em] text-gray-600 dark:text-gray-500"
+							>
+								{$i18n.t('by Molotok')}
+							</span>
+						</span>
 					</a>
 					<Tooltip
 						content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 						placement="bottom"
 					>
 						<button
-							class="flex size-[1.875rem] justify-center items-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition {isWindows
+							class="flex size-8 shrink-0 justify-center items-center rounded-[7px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition outline-none focus-visible:ring-2 focus-visible:ring-accent {isWindows
 								? 'cursor-pointer'
 								: 'cursor-[w-resize]'}"
 							on:click={() => {
@@ -1186,7 +1210,7 @@
 							aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 						>
 							<div class=" self-center">
-								<Sidebar className="size-4" />
+								<Sidebar className="size-[1.125rem]" />
 							</div>
 						</button>
 					</Tooltip>
@@ -1199,7 +1223,7 @@
 				</div>
 
 				<div
-					class="relative flex flex-col flex-1 overflow-y-auto scrollbar-hidden space-y-1.5 pt-2.5 pb-2.5"
+					class="relative flex flex-col flex-1 overflow-y-auto scrollbar-hidden space-y-2 pt-3 pb-3"
 					on:scroll={(e) => {
 						if (e.target.scrollTop === 0) {
 							scrollTop = 0;
@@ -1208,71 +1232,69 @@
 						}
 					}}
 				>
-					<div class="pb-1">
-						<div class="px-1 flex justify-center text-gray-700 dark:text-gray-300">
-							<a
-								id="sidebar-new-chat-button"
-								class="group grow flex items-center space-x-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
-								href="/"
-								draggable="false"
-								on:click={newChatHandler}
-								aria-label={$i18n.t('New Chat')}
-							>
-								<div class="self-center flex size-4 shrink-0 items-center justify-center">
-									<EditPencilIcon className=" size-4" strokeWidth="1.5" />
-								</div>
+					<div class="px-2 pb-1">
+						<a
+							id="sidebar-new-chat-button"
+							class="group flex h-11 w-full items-center gap-2.5 rounded-[10px] bg-white pl-3 pr-2.5 text-gray-900 ring-1 ring-inset ring-gray-200 transition hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-700/70 dark:hover:bg-[#1a1b25] dark:hover:ring-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent"
+							href="/"
+							draggable="false"
+							on:click={newChatHandler}
+							aria-label={$i18n.t('New Chat')}
+						>
+							<EditPencilIcon className="size-[1.0625rem] shrink-0" strokeWidth="1.6" />
 
-								<div class="flex flex-1 self-center translate-y-[0.5px]">
-									<div class=" self-center text-[0.8125rem] leading-5">{$i18n.t('New Chat')}</div>
-								</div>
+							<span class="min-w-0 flex-1 truncate text-[0.84375rem] font-medium leading-5">
+								{$i18n.t('New Chat')}
+							</span>
 
-								<HotkeyHint name="newChat" className=" hover-reveal " />
-							</a>
-						</div>
+							{#if showShortcutHints && newChatChord}
+								<kbd class={kbdClass}>{newChatChord}</kbd>
+							{/if}
+						</a>
 
-						<div class="px-1 flex justify-center text-gray-700 dark:text-gray-300">
-							<button
-								id="sidebar-search-button"
-								class="group grow flex items-center space-x-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none"
-								on:click={() => {
-									showSearch.set(true);
-								}}
-								draggable="false"
-								aria-label={$i18n.t('Search')}
-							>
-								<div class="self-center flex size-4 shrink-0 items-center justify-center">
-									<SearchIcon strokeWidth="1.5" className="size-4" />
-								</div>
+						<button
+							id="sidebar-search-button"
+							class="group mt-1.5 flex h-9 w-full items-center gap-2.5 rounded-[9px] pl-3 pr-2.5 text-left text-gray-600 ring-1 ring-inset ring-gray-200 transition hover:bg-white hover:text-gray-900 dark:text-gray-500 dark:ring-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-300 outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent"
+							on:click={() => {
+								showSearch.set(true);
+							}}
+							draggable="false"
+							aria-label={$i18n.t('Search')}
+						>
+							<SearchIcon strokeWidth="1.6" className="size-4 shrink-0" />
 
-								<div class="flex flex-1 self-center translate-y-[0.5px]">
-									<div class=" self-center text-[0.8125rem] leading-5">{$i18n.t('Search')}</div>
-								</div>
-								<HotkeyHint name="search" className=" hover-reveal " />
-							</button>
-						</div>
+							<span class="min-w-0 flex-1 truncate text-[0.84375rem] leading-5">
+								{$i18n.t('Search')}
+							</span>
 
-						<div id="pinned-menu-items-list">
+							{#if showShortcutHints && searchChord}
+								<kbd class={kbdClass}>{searchChord}</kbd>
+							{/if}
+						</button>
+
+						<div id="pinned-menu-items-list" class="mt-1.5 flex flex-col gap-px">
 							{#each pinnedItems as itemId (itemId)}
 								{@const meta = getMenuItemMeta(itemId)}
 								{#if meta && isMenuItemVisible(itemId)}
-									<div
-										class="px-1 flex justify-center text-gray-700 dark:text-gray-300"
-										data-id={itemId}
-									>
+									<div class="flex" data-id={itemId}>
 										<a
 											id="sidebar-{itemId}-button"
-											class="grow flex items-center space-x-2 rounded-xl px-2 py-1.5 transition {itemId ===
+											class="group flex h-8 grow items-center gap-2.5 rounded-lg pl-3 pr-2.5 transition outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent {itemId ===
 											activeMenuItemId
-												? ($settings?.highContrastMode ?? false)
-													? 'bg-black/[0.035] dark:bg-white/[0.06]'
-													: 'bg-black/[0.035] dark:bg-white/[0.045]'
-												: 'hover:bg-gray-100 dark:hover:bg-gray-900'}"
+												? activeRowClass
+												: 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-100'}"
 											href={meta.href}
 											on:click={itemClickHandler}
 											draggable="false"
 											aria-label={$i18n.t(meta.label)}
+											aria-current={itemId === activeMenuItemId ? 'page' : undefined}
 										>
-											<div class="self-center flex size-4 shrink-0 items-center justify-center">
+											<span
+												class="flex size-4 shrink-0 items-center justify-center {itemId ===
+												activeMenuItemId
+													? ''
+													: 'text-gray-500 group-hover:text-current'}"
+											>
 												{#if itemId === 'notes'}
 													<NotesIcon className="size-4" strokeWidth="1.5" />
 												{:else if itemId === 'workspace'}
@@ -1284,13 +1306,11 @@
 												{:else if itemId === 'playground'}
 													<CodeIcon className="size-4" strokeWidth="1.5" />
 												{/if}
-											</div>
+											</span>
 
-											<div class="flex self-center translate-y-[0.5px]">
-												<div class=" self-center text-[0.8125rem] leading-5">
-													{$i18n.t(meta.label)}
-												</div>
-											</div>
+											<span class="min-w-0 truncate text-[0.8125rem] leading-5">
+												{$i18n.t(meta.label)}
+											</span>
 										</a>
 									</div>
 								{/if}
@@ -1353,7 +1373,7 @@
 								/>
 
 								{#if channelIdx < $channels.length - 1 && channel.type !== $channels[channelIdx + 1]?.type}<hr
-										class=" border-gray-100/40 dark:border-gray-800/10 my-1.5 w-full"
+										class=" border-gray-200/70 dark:border-gray-800/70 my-1.5 mx-2.5"
 									/>
 								{/if}
 							{/each}
@@ -1495,7 +1515,7 @@
 								<Tooltip content={$i18n.t('More')}>
 									<button
 										type="button"
-										class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-300 hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-400 transition-colors duration-100"
+										class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 										aria-label={$i18n.t('More')}
 									>
 										<MoreHorizontalIcon className="size-3.5" strokeWidth="2" />
@@ -1521,7 +1541,7 @@
 								<div class="flex flex-col space-y-1 rounded-xl">
 									<Folder
 										id="sidebar-pinned-chats"
-										buttonClassName=" text-gray-500"
+										buttonClassName=" text-gray-600 dark:text-gray-500 hover:text-gray-900 dark:hover:text-gray-300 [&>button]:pl-[0.6875rem] [&>button]:py-0 [&>button]:h-[1.375rem] [&>button]:text-[0.71875rem] [&>button]:font-medium"
 										on:import={(e) => {
 											importChatHandler(e.detail, true);
 										}}
@@ -1577,7 +1597,7 @@
 										name={$i18n.t('Pinned')}
 									>
 										<div
-											class="ml-3 pl-1 mt-[0.0625rem] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900 text-gray-700 dark:text-gray-300"
+											class="ml-[0.9375rem] pl-1 mt-px flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-200/70 dark:border-gray-800/70"
 										>
 											{#each $pinnedChats as chat, idx (`pinned-chat-${chat?.id ?? idx}`)}
 												<ChatItem
@@ -1618,10 +1638,10 @@
 									{#each $chats as chat, idx (`chat-${chat?.id ?? idx}`)}
 										{#if idx === 0 || (idx > 0 && chat.time_range !== $chats[idx - 1].time_range)}
 											<div
-												class="w-full pl-2.5 text-xs text-gray-500 dark:text-gray-500 font-normal {idx ===
+												class="w-full pl-[0.6875rem] h-[1.375rem] leading-[1.375rem] text-[0.71875rem] font-medium text-gray-600 dark:text-gray-500 {idx ===
 												0
 													? ''
-													: 'pt-4'} pb-1"
+													: 'mt-2'}"
 											>
 												{$i18n.t(chat.time_range)}
 												<!-- localisation keys for time_range to be recognized from the i18next parser (so they don't get automatically removed):
@@ -1701,10 +1721,9 @@
 					</SidebarSection>
 				</div>
 
-				<div class="px-1 pt-1 pb-1.5 sticky bottom-0 z-10 -mt-2 sidebar">
-					<div
-						class=" sidebar-bg-gradient-to-t bg-linear-to-t from-gray-50 dark:from-gray-950 to-transparent from-50% pointer-events-none absolute inset-0 -z-10 -mt-6"
-					></div>
+				<div
+					class="px-2 pt-2 pb-2.5 sticky bottom-0 z-10 sidebar bg-gray-50 dark:bg-gray-950 border-t border-gray-200/70 dark:border-gray-800/70"
+				>
 					<div class="flex flex-col">
 						{#if $user !== undefined && $user !== null}
 							<UserMenu
@@ -1714,13 +1733,13 @@
 							>
 								<button
 									type="button"
-									class=" flex items-center rounded-xl py-1.5 px-1.5 w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+									class="group flex h-11 w-full items-center gap-2.5 rounded-[9px] px-2 text-left transition hover:bg-gray-100 dark:hover:bg-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 									aria-label={$i18n.t('User menu')}
 								>
-									<div class=" self-center mr-3 relative flex-shrink-0">
+									<div class="relative shrink-0 self-center">
 										<img
 											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
-											class="size-5.5 object-cover rounded-full"
+											class="size-[calc(30px*var(--app-text-scale,1))] rounded-lg object-cover ring-1 ring-gray-200 dark:ring-gray-700/60"
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}
 										/>
@@ -1731,16 +1750,37 @@
 													<span
 														class="relative inline-flex size-2.5 rounded-full {true
 															? 'bg-green-500'
-															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-gray-50 dark:border-gray-950"
 													></span>
 												</span>
 											</div>
 										{/if}
 									</div>
-									<div class=" self-center font-normal truncate">{$user?.name}</div>
+
+									<div class="flex min-w-0 flex-1 flex-col leading-tight">
+										<span
+											class="truncate text-[0.84375rem] font-medium text-gray-900 dark:text-gray-100"
+										>
+											{$user?.name}
+										</span>
+										<span class="truncate text-[0.71875rem] text-gray-600 dark:text-gray-500">
+											{userRoleLabel}
+										</span>
+									</div>
+
+									<ChevronUpDown
+										className="size-[0.9375rem] shrink-0 text-gray-500 group-hover:text-gray-900 dark:group-hover:text-gray-300"
+										strokeWidth="1.8"
+									/>
 								</button>
 							</UserMenu>
 						{/if}
+
+						<p
+							class="mx-2 mt-1 truncate font-mono text-[0.65625rem] leading-[0.875rem] text-gray-600 dark:text-gray-500"
+						>
+							{$i18n.t('Built on Open WebUI')}
+						</p>
 					</div>
 				</div>
 			</div>
@@ -1748,7 +1788,7 @@
 
 		{#if !$mobile && visible}
 			<div
-				class="relative flex items-center justify-center group border-r border-gray-50 dark:border-gray-850/30 hover:border-gray-200 dark:hover:border-gray-800 transition z-20 bg-transparent p-0 appearance-none"
+				class="relative flex items-center justify-center group border-r border-transparent hover:border-gray-300 dark:hover:border-gray-700 transition z-20 bg-transparent p-0 appearance-none"
 				id="sidebar-resizer"
 				on:pointerdown={resizeStartHandler}
 				role="separator"

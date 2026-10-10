@@ -744,10 +744,10 @@
 		<div class="w-full group">
 			<div
 				id="folder-{folderId}-button"
-				class="relative w-full py-1 px-1.5 rounded-xl flex items-center gap-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition {$selectedFolder?.id ===
+				class="relative w-full py-1 px-1.5 rounded-[7px] flex items-center gap-1.5 transition outline-none focus-visible:ring-2 focus-visible:ring-accent {$selectedFolder?.id ===
 				folderId
-					? 'bg-gray-100/80 dark:bg-gray-850/50 selected'
-					: ''}"
+					? 'bg-white text-gray-900 ring-1 ring-inset ring-gray-200 dark:bg-[#1a1b25] dark:text-gray-100 dark:ring-gray-700/60 selected'
+					: 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-100'}"
 				on:dblclick={(e) => {
 					if (!isWritable) return;
 					if (clickTimer) {
@@ -780,7 +780,7 @@
 				}}
 			>
 				<button
-					class="text-gray-600 dark:text-gray-400 transition-all p-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg"
+					class="text-gray-500 transition-all p-1 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 rounded-[5px]"
 					on:click={(e) => {
 						e.stopPropagation();
 						e.stopImmediatePropagation();
@@ -849,7 +849,7 @@
 
 						{#if !folders[folderId]?.shared && (folders[folderId]?.unread_count ?? 0) > 0}
 							<div
-								class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-md bg-sky-500/10 px-1 text-[0.625rem] font-semibold leading-4 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300"
+								class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] bg-gray-200 px-1 font-mono text-[0.625rem] font-medium leading-4 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
 								title={$i18n.t('Unread')}
 							>
 								{formatUnreadCount(folders[folderId].unread_count)}
@@ -860,7 +860,7 @@
 
 				{#if isWritable}
 					<button
-						class="absolute z-10 right-2 hover-reveal self-center flex items-center dark:text-gray-300"
+						class="absolute z-10 right-2 hover-reveal self-center flex items-center text-gray-500"
 					>
 						<FolderMenu
 							onEdit={() => {
@@ -882,7 +882,7 @@
 							onMarkAllRead={markAllReadHandler}
 						>
 							<div
-								class="flex size-5 items-center justify-center self-center dark:hover:text-white transition m-0 touch-auto"
+								class="flex size-5 items-center justify-center self-center hover:text-gray-900 dark:hover:text-gray-100 transition m-0 touch-auto"
 							>
 								<MoreHorizontal className="size-3.5" strokeWidth="2" />
 							</div>
@@ -895,7 +895,7 @@
 		<div slot="content" class="w-full">
 			{#if (folders[folderId]?.childrenIds ?? []).length > 0 || chats !== null || hasMoreChats || chatsLoading}
 				<div
-					class="ml-3 pl-1 mt-[0.0625rem] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
+					class="ml-[1.0625rem] pl-1 mt-px flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-200/70 dark:border-gray-800/70"
 				>
 					{#if folders[folderId]?.childrenIds}
 						{@const children = folders[folderId]?.childrenIds
@@ -943,7 +943,7 @@
 					{/if}
 
 					{#if chats !== null && chats.length === 0 && !chatsLoading}
-						<div class="px-2 py-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+						<div class="px-2 py-0.5 text-[0.6875rem] text-gray-500">
 							{$i18n.t('No chats')}
 						</div>
 					{/if}
@@ -969,7 +969,7 @@
 
 					{#if hasMoreChats}
 						<button
-							class="w-full px-2 py-0.5 text-left text-[0.6875rem] text-gray-400 transition hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-600 dark:hover:text-gray-300"
+							class="w-full px-2 py-0.5 text-left text-[0.6875rem] text-gray-500 transition hover:text-gray-900 disabled:cursor-not-allowed dark:hover:text-gray-100"
 							disabled={chatsLoading}
 							on:click={() => setFolderItems(true)}
 						>

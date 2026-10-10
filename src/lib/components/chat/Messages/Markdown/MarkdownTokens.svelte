@@ -131,6 +131,11 @@
 		compactPreview ? 'text-xs' : 'text-[0.9375rem]'
 	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition`;
 
+	// Reasoning / analysis / generic <details> toggles render as quiet bordered chips
+	$: detailChipClassName = `w-fit max-w-full my-0.5 px-2.5 py-1 rounded-[7px] border border-gray-200 dark:border-gray-800 ${
+		compactPreview ? 'text-xs' : 'text-[12.5px] leading-[18px]'
+	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-700 transition`;
+
 	$: displayTokens = getDisplayTokens(tokens);
 	$: singlePlainBlock =
 		displayTokens.length === 1 &&
@@ -369,7 +374,11 @@
 		{:else}
 			<ul dir="auto" class="">
 				{#each token.items as item, itemIdx}
-					<li class="text-start {item?.task ? 'flex -translate-x-6.5 gap-3 ' : ''}">
+					<li
+						class="text-start {item?.task
+							? 'flex -translate-x-6.5 gap-3 '
+							: 'relative list-none before:absolute before:-start-[0.95em] before:top-[0.66em] before:size-[5px] before:rounded-[1px] before:bg-gray-400 dark:before:bg-gray-600'}"
+					>
 						{#if item?.task}
 							<input
 								class="flex-shrink-0"
@@ -462,7 +471,7 @@
 							attributes={detailToken?.attributes}
 							messageDone={done}
 							className="w-full"
-							buttonClassName={detailButtonClassName}
+							buttonClassName={detailChipClassName}
 							dir="auto"
 						>
 							<div class="mb-1.5" slot="content">
@@ -492,7 +501,7 @@
 							attributes={detailToken?.attributes}
 							messageDone={done}
 							className="w-full"
-							buttonClassName={detailButtonClassName}
+							buttonClassName={detailChipClassName}
 							dir="auto"
 						/>
 					{/if}
@@ -523,7 +532,7 @@
 				attributes={token?.attributes}
 				messageDone={done}
 				className="w-full space-y-2"
-				buttonClassName={detailButtonClassName}
+				buttonClassName={detailChipClassName}
 				dir="auto"
 			>
 				<div class=" mb-1.5" slot="content">
@@ -553,7 +562,7 @@
 				attributes={token?.attributes}
 				messageDone={done}
 				className="w-full space-y-2"
-				buttonClassName={detailButtonClassName}
+				buttonClassName={detailChipClassName}
 				dir="auto"
 			/>
 		{/if}

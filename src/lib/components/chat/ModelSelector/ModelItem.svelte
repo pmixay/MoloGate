@@ -57,18 +57,18 @@
 	role="option"
 	aria-selected={isSelected}
 	aria-label={$i18n.t('Select {{modelName}} model', { modelName: item.label })}
-	class="focus-ring group/item flex h-8 w-full cursor-pointer select-none items-center rounded-xl px-2 text-left text-[0.8125rem] font-normal text-gray-700 outline-hidden transition-colors duration-75 dark:text-gray-100 {($settings?.highContrastMode ??
+	class="focus-ring group/item flex h-8 w-full cursor-pointer select-none items-center rounded-lg px-2 text-left font-mono text-[13px] font-normal text-gray-700 outline-hidden transition-colors duration-75 dark:text-gray-100 {($settings?.highContrastMode ??
 	false)
 		? 'hover:bg-gray-200 dark:hover:bg-gray-800'
-		: 'hover:bg-gray-50/40 dark:hover:bg-gray-800/40'} {index === selectedModelIdx &&
+		: 'hover:bg-gray-100 dark:hover:bg-gray-850'} {index === selectedModelIdx &&
 	!compareEnabled
 		? ($settings?.highContrastMode ?? false)
 			? 'bg-gray-200 dark:bg-gray-800'
-			: 'bg-gray-50/70 dark:bg-gray-800/60'
+			: 'bg-gray-100 dark:bg-[#1a1b25]'
 		: ''} {isSelected
 		? ($settings?.highContrastMode ?? false)
 			? 'bg-gray-200 dark:bg-gray-800'
-			: 'bg-gray-50/70 dark:bg-gray-800/60'
+			: 'bg-gray-100 dark:bg-[#1a1b25]'
 		: ''}"
 	data-arrow-selected={index === selectedModelIdx}
 	data-value={item.value}
@@ -135,8 +135,7 @@
 								}`}
 								className="self-end"
 							>
-								<span
-									class="line-clamp-1 text-[0.6875rem] font-normal text-gray-500 dark:text-gray-400"
+								<span class="line-clamp-1 text-[0.6875rem] font-normal text-gray-500"
 									>{item.model.ollama?.details?.parameter_size ?? ''}</span
 								>
 							</Tooltip>
@@ -154,9 +153,7 @@
 								content={`${quantization ? `${quantization} ` : ''}${formatSize(size)}`}
 								className="self-end"
 							>
-								<span
-									class="line-clamp-1 text-[0.6875rem] font-normal text-gray-500 dark:text-gray-400"
-								>
+								<span class="line-clamp-1 text-[0.6875rem] font-normal text-gray-500">
 									{parameterSize || quantization || formatSize(size)}
 								</span>
 							</Tooltip>
@@ -178,9 +175,9 @@
 							<div class=" flex items-center">
 								<span class="relative flex size-1.5">
 									<span
-										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
+										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-lime-400 opacity-75 dark:bg-accent"
 									/>
-									<span class="relative inline-flex size-1.5 rounded-full bg-green-500" />
+									<span class="relative inline-flex size-1.5 rounded-full bg-lime-500 dark:bg-accent" />
 								</span>
 							</div>
 						</Tooltip>
@@ -278,7 +275,7 @@
 		</div>
 	</div>
 
-	<div class="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+	<div class="ml-auto flex shrink-0 items-center gap-1.5 pl-2 text-gray-500 dark:text-gray-400">
 		{#if !selectionOnly && $user?.role === 'admin' && item.model.loaded}
 			<Tooltip
 				content={`${$i18n.t('Eject')}`}
@@ -323,8 +320,8 @@
 		{/if}
 
 		{#if isSelected}
-			<div>
-				<Check className="size-3" />
+			<div class="text-gray-900 dark:text-accent">
+				<Check className="size-3.5" strokeWidth="2.5" />
 			</div>
 		{/if}
 	</div>

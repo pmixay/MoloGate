@@ -21,6 +21,7 @@
 
 	import CodeEditor from '$lib/components/common/CodeEditor.svelte';
 	import DiffBlock from './DiffBlock.svelte';
+	import { nocturneCodeMirror } from './codeTheme';
 	import SvgPanZoom from '$lib/components/common/SVGPanZoom.svelte';
 
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
@@ -74,6 +75,9 @@
 
 	let copied = false;
 	let saved = false;
+
+	const headerButtonClassName =
+		'flex items-center gap-1.5 h-7 px-2 rounded-[6px] text-[12px] leading-none text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-850 transition focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent';
 
 	const collapseCodeBlock = () => {
 		collapsed = !collapsed;
@@ -435,7 +439,13 @@
 
 <div>
 	<div
-		class="relative {className} flex flex-col rounded-2xl border border-gray-100/30 dark:border-gray-850/30 my-0.5 overflow-clip"
+		class="code-block relative {className} flex flex-col rounded-[10px] border border-gray-100 dark:border-gray-800 my-0.5 overflow-clip {[
+			'mermaid',
+			'vega',
+			'vega-lite'
+		].includes(lang)
+			? ''
+			: 'bg-white dark:bg-gray-950'}"
 		dir="ltr"
 	>
 		{#if ['mermaid', 'vega', 'vega-lite'].includes(lang)}
@@ -459,9 +469,9 @@
 			{/if}
 		{:else}
 			<div
-				class="sticky {stickyButtonsClassName} left-0 right-0 py-1.5 px-3.5 gap-2 flex items-center justify-end w-full z-10 text-xs text-black dark:text-white bg-white dark:bg-black"
+				class="code-block-header sticky {stickyButtonsClassName} left-0 right-0 h-9 ps-3.5 pe-1.5 gap-2 flex items-center justify-end w-full z-10 border-b border-gray-100 dark:border-gray-800/70 bg-gray-50 dark:bg-[#12131a]"
 			>
-				<div class="flex-1 truncate">
+				<div class="flex-1 truncate font-mono text-[11.5px] text-gray-700 dark:text-gray-100">
 					<Tooltip content={lang} placement="top-start">
 						<span class=" truncate text-ellipsis">
 							{lang}
@@ -469,106 +479,159 @@
 					</Tooltip>
 				</div>
 
-				<div class="flex items-center gap-0.5 shrink-0">
+				<div class="flex items-center gap-0.5 shrink-0 text-xs">
 					{#if isDiff && edit}
 						<button
-							class="bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							class={headerButtonClassName}
 							aria-pressed={editingDiff}
 							on:click={() => {
 								editingDiff = !editingDiff;
 								collapsed = false;
 							}}
 						>
-							{editingDiff ? $i18n.t('Done') : $i18n.t('Edit')}
+							<svg
+								class="size-3.5"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.7"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+								><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="m14.5 7.5 3 3" /></svg
+							>
+							<span>{editingDiff ? $i18n.t('Done') : $i18n.t('Edit')}</span>
 						</button>
 					{/if}
-					<button
-						class="flex gap-1 items-center bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
-						on:click={collapseCodeBlock}
-					>
-						<div class=" -translate-y-[0.5px]">
-							<ChevronUpDown className="size-3" />
-						</div>
-
-						<div>
+					<button class={headerButtonClassName} on:click={collapseCodeBlock}>
+						<ChevronUpDown className="size-3.5" strokeWidth="1.7" />
+						<span>
 							{collapsed ? $i18n.t('Expand') : $i18n.t('Collapse')}
-						</div>
+						</span>
 					</button>
 
 					{#if ($config?.features?.enable_code_execution ?? true) && (lang.toLowerCase() === 'python' || lang.toLowerCase() === 'py' || (lang === '' && checkPythonCode(code)))}
 						{#if executing}
-							<div
-								class="run-code-button bg-none border-none p-0.5 cursor-not-allowed bg-white dark:bg-black"
-							>
+							<div class="run-code-button {headerButtonClassName} cursor-not-allowed">
 								{$i18n.t('Running')}
 							</div>
 						{:else if run}
 							<button
-								class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+								class="run-code-button {headerButtonClassName}"
 								on:click={async () => {
 									code = _code;
 									await tick();
 									executePython(code);
 								}}
 							>
-								<div>
+								<svg
+									class="size-3.5"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.7"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"><path d="M7 5.5v13l11-6.5z" /></svg
+								>
+								<span>
 									{$i18n.t('Run')}
-								</div>
+								</span>
 							</button>
 						{/if}
 					{/if}
 
 					{#if save}
-						<button
-							class="save-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
-							on:click={saveCode}
-						>
-							{saved ? $i18n.t('Saved') : $i18n.t('Save')}
+						<button class="save-code-button {headerButtonClassName}" on:click={saveCode}>
+							<svg
+								class="size-3.5"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.7"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								{#if saved}
+									<path d="m5 12.5 4.5 4.5L19 7.5" />
+								{:else}
+									<path d="M5 5.5A1.5 1.5 0 0 1 6.5 4h9L20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 5 17.5z" />
+									<path d="M8.5 4v4.5h6V4" /><path d="M8.5 19v-5h7v5" />
+								{/if}
+							</svg>
+							<span>{saved ? $i18n.t('Saved') : $i18n.t('Save')}</span>
 						</button>
 					{/if}
 
-					<button
-						class="copy-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
-						on:click={copyCode}>{copied ? $i18n.t('Copied') : $i18n.t('Copy')}</button
-					>
+					<button class="copy-code-button {headerButtonClassName}" on:click={copyCode}>
+						<svg
+							class="size-3.5"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.7"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							{#if copied}
+								<path d="m5 12.5 4.5 4.5L19 7.5" />
+							{:else}
+								<rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+								<path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
+							{/if}
+						</svg>
+						<span>{copied ? $i18n.t('Copied') : $i18n.t('Copy')}</span>
+					</button>
 
 					{#if preview && ['html', 'svg'].includes(lang)}
-						<button
-							class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
-							on:click={previewCode}
-						>
-							<div>
+						<button class="run-code-button {headerButtonClassName}" on:click={previewCode}>
+							<svg
+								class="size-3.5"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.7"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+								><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle
+									cx="12"
+									cy="12"
+									r="2.75"
+								/></svg
+							>
+							<span>
 								{$i18n.t('Preview')}
-							</div>
+							</span>
 						</button>
 					{/if}
 				</div>
 			</div>
 
 			<div
-				class="language-{lang} rounded-t-2xl -mt-8 {editorClassName
+				class="code-block-body language-{lang} {editorClassName
 					? editorClassName
-					: executing || stdout || stderr || result
-						? ''
-						: 'rounded-b-2xl'} overflow-hidden"
+					: ''} overflow-hidden"
 			>
-				<div class=" pt-6.5 bg-white dark:bg-black"></div>
-
 				{#if !collapsed}
 					{#if isDiff && !(edit && editingDiff)}
 						<DiffBlock code={_code} />
 					{:else if edit}
-						<CodeEditor
-							value={_code}
-							{id}
-							{lang}
-							onSave={() => {
-								saveCode();
-							}}
-							onChange={(value) => {
-								_code = value;
-							}}
-						/>
+						<div class="py-2" use:nocturneCodeMirror>
+							<CodeEditor
+								value={_code}
+								{id}
+								{lang}
+								onSave={() => {
+									saveCode();
+								}}
+								onChange={(value) => {
+									_code = value;
+								}}
+							/>
+						</div>
 					{:else}
 						<pre
 							class=" hljs p-4 px-5 overflow-x-auto"
@@ -577,7 +640,7 @@
 								stderr ||
 								result) &&
 								'border-bottom-left-radius: 0px; border-bottom-right-radius: 0px;'}"><code
-								class="language-{lang} rounded-t-none whitespace-pre text-sm"
+								class="language-{lang} rounded-t-none whitespace-pre text-[13px]"
 								>{#if lang && hljs.getLanguage(lang)}{@html hljs.highlight(code, {
 										language: lang,
 										ignoreIllegals: true
@@ -585,10 +648,8 @@
 							></pre>
 					{/if}
 				{:else}
-					<div
-						class="bg-white dark:bg-black dark:text-white rounded-b-2xl! pt-1 pb-2 px-4 flex flex-col gap-2 text-xs"
-					>
-						<span class="text-gray-500 italic">
+					<div class="py-2 px-3.5 flex flex-col gap-2 font-mono text-[11.5px]">
+						<span class="text-gray-500">
 							{$i18n.t('{{COUNT}} hidden lines', {
 								COUNT: (isDiff ? _code : code).split('\n').length
 							})}
@@ -600,24 +661,28 @@
 			{#if !collapsed}
 				<div
 					id="plt-canvas-{id}"
-					class="bg-gray-50 dark:bg-black dark:text-white max-w-full overflow-x-auto scrollbar-hidden"
+					class="bg-gray-50 dark:bg-gray-950 dark:text-gray-100 max-w-full overflow-x-auto scrollbar-hidden"
 				/>
 
 				{#if executing || stdout || stderr || result || files}
 					<div
-						class="bg-gray-50 dark:bg-black dark:text-white rounded-b-2xl! pt-2 pb-3 px-3.5 flex flex-col gap-2"
+						class="bg-gray-50 dark:bg-gray-950 dark:text-gray-100 border-t border-gray-100 dark:border-gray-800 pt-2 pb-3 px-3.5 flex flex-col gap-2"
 					>
 						{#if executing}
 							<div class=" ">
-								<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
+								<div class=" text-gray-500 font-mono text-[11px] uppercase tracking-wider mb-1">
+									{$i18n.t('STDOUT/STDERR')}
+								</div>
 								<div class="text-sm">{$i18n.t('Running...')}</div>
 							</div>
 						{:else}
 							{#if stdout || stderr}
 								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">{$i18n.t('STDOUT/STDERR')}</div>
+									<div class=" text-gray-500 font-mono text-[11px] uppercase tracking-wider mb-1">
+										{$i18n.t('STDOUT/STDERR')}
+									</div>
 									<div
-										class="text-sm font-mono whitespace-pre-wrap {stdout?.split('\n')?.length > 100
+										class="text-[13px] font-mono whitespace-pre-wrap {stdout?.split('\n')?.length > 100
 											? `max-h-96`
 											: ''}  overflow-y-auto"
 									>
@@ -627,7 +692,9 @@
 							{/if}
 							{#if result || files}
 								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">{$i18n.t('RESULT')}</div>
+									<div class=" text-gray-500 font-mono text-[11px] uppercase tracking-wider mb-1">
+										{$i18n.t('RESULT')}
+									</div>
 									{#if result}
 										<div class="text-sm">{`${JSON.stringify(result)}`}</div>
 									{/if}
@@ -649,3 +716,171 @@
 		{/if}
 	</div>
 </div>
+
+<style>
+	/* CodeMirror inside chat code blocks: let the container colour show through */
+	.code-block-body :global(.cm-editor),
+	.code-block-body :global(.cm-gutters) {
+		background-color: transparent !important;
+		border: none !important;
+	}
+	.code-block-body :global(.cm-scroller) {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		line-height: 20px;
+	}
+	.code-block-body :global(.cm-lineNumbers .cm-gutterElement) {
+		min-width: 2.25rem;
+		padding: 0 0.5rem 0 0.75rem;
+		color: var(--color-gray-500);
+	}
+	:global(.dark) .code-block-body :global(.cm-lineNumbers .cm-gutterElement) {
+		color: #7d8094;
+	}
+	/* No bright active-line highlight; a faint one only while editing */
+	.code-block-body :global(.cm-activeLine),
+	.code-block-body :global(.cm-activeLineGutter) {
+		background-color: transparent;
+	}
+	.code-block-body :global(.cm-focused .cm-activeLine) {
+		background-color: rgb(0 0 0 / 0.025);
+	}
+	:global(.dark) .code-block-body :global(.cm-focused .cm-activeLine) {
+		background-color: rgb(255 255 255 / 0.025);
+	}
+	/* Fold markers stay available but only show on hover */
+	.code-block-body :global(.cm-foldGutter .cm-gutterElement) {
+		opacity: 0;
+		transition: opacity 120ms;
+	}
+	.code-block-body :global(.cm-gutters:hover .cm-foldGutter .cm-gutterElement) {
+		opacity: 1;
+	}
+
+	/* Nocturne syntax palette (dark only; classes come from ./codeTheme.ts) */
+	:global(.dark) .code-block-body :global(.cm-content) {
+		color: #eceef5;
+		caret-color: var(--color-accent);
+	}
+	:global(.dark) .code-block-body :global(.cm-cursor) {
+		border-left-color: var(--color-accent);
+	}
+	:global(.dark) .code-block-body :global(.cm-selectionBackground),
+	:global(.dark) .code-block-body :global(.cm-focused .cm-selectionBackground) {
+		background-color: rgb(169 177 214 / 0.18) !important;
+	}
+	:global(.dark) .code-block-body :global(.nt-text) {
+		color: #eceef5;
+	}
+	:global(.dark) .code-block-body :global(.nt-key) {
+		color: #a9b1d6;
+	}
+	:global(.dark) .code-block-body :global(.nt-fn) {
+		color: #dde1f7;
+	}
+	:global(.dark) .code-block-body :global(.nt-string),
+	:global(.dark) .code-block-body.language-yaml :global(.nt-content),
+	:global(.dark) .code-block-body.language-yml :global(.nt-content) {
+		color: #c5d88f;
+	}
+	:global(.dark) .code-block-body :global(.nt-keyword) {
+		color: #b4b7c7;
+		font-style: italic;
+	}
+	:global(.dark) .code-block-body :global(.nt-number) {
+		color: #d4b8ff;
+	}
+	:global(.dark) .code-block-body :global(.nt-comment) {
+		color: #7d8094;
+		font-style: italic;
+	}
+	:global(.dark) .code-block-body :global(.nt-punct) {
+		color: #8b8ea3;
+	}
+	:global(.dark) .code-block-body :global(.nt-meta) {
+		color: #8b8ea3;
+	}
+	:global(.dark) .code-block-body :global(.nt-content) {
+		color: #eceef5;
+	}
+	:global(.dark) .code-block-body :global(.nt-heading),
+	:global(.dark) .code-block-body :global(.nt-strong) {
+		color: #eceef5;
+		font-weight: 600;
+	}
+	:global(.dark) .code-block-body :global(.nt-em) {
+		font-style: italic;
+	}
+	:global(.dark) .code-block-body :global(.nt-strike) {
+		text-decoration: line-through;
+	}
+	:global(.dark) .code-block-body :global(.nt-link) {
+		color: #a9b1d6;
+		text-decoration: underline;
+	}
+	:global(.dark) .code-block-body :global(.nt-inserted) {
+		color: #c5d88f;
+	}
+	:global(.dark) .code-block-body :global(.nt-deleted) {
+		color: #f0a3a3;
+	}
+	:global(.dark) .code-block-body :global(.nt-invalid) {
+		color: #f0a3a3;
+	}
+
+	/* Read-only (highlight.js) blocks get the same palette in dark mode */
+	.code-block-body :global(pre.hljs) {
+		font-family: var(--font-mono);
+		line-height: 20px;
+	}
+	:global(.dark) .code-block-body :global(pre.hljs) {
+		background: transparent;
+		color: #eceef5;
+	}
+	:global(.dark) .code-block-body :global(.hljs-attr),
+	:global(.dark) .code-block-body :global(.hljs-attribute),
+	:global(.dark) .code-block-body :global(.hljs-property),
+	:global(.dark) .code-block-body :global(.hljs-name),
+	:global(.dark) .code-block-body :global(.hljs-tag),
+	:global(.dark) .code-block-body :global(.hljs-type),
+	:global(.dark) .code-block-body :global(.hljs-title),
+	:global(.dark) .code-block-body :global(.hljs-section),
+	:global(.dark) .code-block-body :global(.hljs-selector-id),
+	:global(.dark) .code-block-body :global(.hljs-selector-class),
+	:global(.dark) .code-block-body :global(.hljs-variable),
+	:global(.dark) .code-block-body :global(.hljs-template-variable) {
+		color: #a9b1d6;
+	}
+	:global(.dark) .code-block-body :global(.hljs-string),
+	:global(.dark) .code-block-body :global(.hljs-symbol),
+	:global(.dark) .code-block-body :global(.hljs-bullet),
+	:global(.dark) .code-block-body :global(.hljs-regexp),
+	:global(.dark) .code-block-body :global(.hljs-link),
+	:global(.dark) .code-block-body :global(.hljs-addition) {
+		color: #c5d88f;
+	}
+	:global(.dark) .code-block-body :global(.hljs-keyword),
+	:global(.dark) .code-block-body :global(.hljs-selector-tag),
+	:global(.dark) .code-block-body :global(.hljs-built_in),
+	:global(.dark) .code-block-body :global(.hljs-builtin-name) {
+		color: #b4b7c7;
+	}
+	:global(.dark) .code-block-body :global(.hljs-number),
+	:global(.dark) .code-block-body :global(.hljs-literal),
+	:global(.dark) .code-block-body :global(.hljs-params) {
+		color: #d4b8ff;
+	}
+	:global(.dark) .code-block-body :global(.hljs-comment),
+	:global(.dark) .code-block-body :global(.hljs-quote) {
+		color: #7d8094;
+		font-style: italic;
+	}
+	:global(.dark) .code-block-body :global(.hljs-meta),
+	:global(.dark) .code-block-body :global(.hljs-punctuation),
+	:global(.dark) .code-block-body :global(.hljs-operator) {
+		color: #8b8ea3;
+	}
+	:global(.dark) .code-block-body :global(.hljs-deletion) {
+		color: #f0a3a3;
+	}
+</style>

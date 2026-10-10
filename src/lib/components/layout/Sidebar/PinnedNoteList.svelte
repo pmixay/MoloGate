@@ -59,15 +59,15 @@
 	});
 </script>
 
-<div class="mt-0.5 pb-1.5" id="pinned-notes-list">
+<div class="mt-0.5 pb-1 flex flex-col gap-px" id="pinned-notes-list">
 	{#each sortedPinnedNotes as note (note.id)}
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div
-			class="flex items-center text-gray-800 dark:text-gray-200 cursor-grab relative group rounded-xl px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition"
+			class="flex h-7.5 items-center text-gray-700 dark:text-gray-400 cursor-grab relative group rounded-[7px] pl-[0.6875rem] pr-1.5 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition"
 			data-id={note.id}
 		>
 			<a
-				class="grow flex items-center gap-2.5 text-[0.8125rem] leading-5"
+				class="grow flex min-w-0 items-center gap-2.5 rounded-[5px] text-[0.8125rem] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 				href={`/notes/${note.id}`}
 				on:click={() => {
 					selectedChatId = null;
@@ -78,7 +78,7 @@
 				}}
 				draggable="false"
 			>
-				<div class="self-center">
+				<div class="self-center text-gray-500">
 					<NotesIcon className="size-3.5" strokeWidth="1.5" />
 				</div>
 				<div class="flex-1 text-ellipsis line-clamp-1">
@@ -86,7 +86,7 @@
 				</div>
 			</a>
 			<button
-				class="hover-reveal self-center p-0.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition"
+				class="hover-reveal self-center p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 rounded-[5px] transition outline-none focus-visible:ring-2 focus-visible:ring-accent"
 				on:click|preventDefault|stopPropagation={async () => {
 					await toggleNotePinnedStatusById(localStorage.token, note.id);
 					const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(() => []);

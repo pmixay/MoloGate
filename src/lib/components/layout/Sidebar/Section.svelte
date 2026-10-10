@@ -15,7 +15,7 @@
 	export let collapsible = true;
 	export let className = '';
 	export let buttonClassName = '';
-	export let contentClassName = 'px-1.5';
+	export let contentClassName = 'px-2';
 	export let onAddLabel = '';
 	export let onAdd: null | AddHandler = null;
 	export let dragAndDrop = true;
@@ -119,20 +119,20 @@
 	{#if loaded}
 		{#if draggedOver}
 			<div
-				class="absolute inset-0 z-50 rounded-md bg-gray-100/50 pointer-events-none touch-none dark:bg-gray-700/20"
+				class="absolute inset-0 z-50 rounded-lg bg-gray-100/50 ring-1 ring-inset ring-gray-300 pointer-events-none touch-none dark:bg-gray-900/40 dark:ring-gray-700/70"
 			></div>
 		{/if}
 
 		{#if collapsible}
 			<Collapsible bind:open className="w-full" buttonClassName="w-full" onChange={setOpen}>
-				<div class="flex items-center justify-between h-6 w-full pl-3.5 pr-1.5 shrink-0">
+				<div class="flex items-center justify-between h-[1.375rem] w-full pl-[1.1875rem] pr-2.5 shrink-0">
 					<button
 						type="button"
-						class="group flex flex-1 h-full items-center gap-1 text-left text-xs text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-gray-400 transition-colors duration-100 {buttonClassName}"
+						class="group flex flex-1 h-full min-w-0 items-center gap-1 text-left font-mono text-[0.65625rem] font-medium uppercase tracking-[0.08em] text-gray-600 hover:text-gray-900 dark:text-gray-500 dark:hover:text-gray-300 transition-colors duration-100 rounded-[5px] outline-none focus-visible:ring-2 focus-visible:ring-accent {buttonClassName}"
 						aria-expanded={open}
 						aria-controls="{id}-content"
 					>
-						<span>{name}</span>
+						<span class="truncate">{name}</span>
 						<span
 							class="flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-100"
 							style="transform: rotate({open ? '90deg' : '0deg'})"
@@ -149,7 +149,7 @@
 					{#if onAdd}
 						<button
 							type="button"
-							class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-300 hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-400 transition-colors duration-100"
+							class="flex items-center justify-center size-[1.375rem] rounded-[5px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100 transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 							aria-label={onAddLabel}
 							on:click={(e) => {
 								e.stopPropagation();

@@ -62,9 +62,11 @@
 	}
 </script>
 
-<div class="mb-1 flex gap-1 text-xs font-normal items-center text-gray-600 dark:text-gray-400">
+<div
+	class="mb-2 flex gap-1.5 px-0.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] items-center text-gray-500"
+>
 	{#if filteredPrompts.length > 0}
-		<Bolt />
+		<Bolt className="size-3" />
 		{$i18n.t('Suggested')}
 	{:else}
 		<!-- Keine Vorschläge -->
@@ -72,7 +74,7 @@
 		<div
 			class="flex w-full {$settings?.landingPageMode === 'chat'
 				? ' -mt-1'
-				: 'text-center items-center justify-center'}  self-start text-gray-600 dark:text-gray-400"
+				: 'text-center items-center justify-center'} self-start normal-case tracking-normal text-[11px] font-normal text-gray-500"
 		>
 			<!-- LICENSE covers this Open WebUI footer identifier.
 			Do not alter, remove, obscure, or replace it except as LICENSE permits:
@@ -84,37 +86,41 @@
 
 <div class="h-36 w-full">
 	{#if filteredPrompts.length > 0}
-		<div role="list" class="max-h-36 overflow-auto scrollbar-none items-start {className}">
+		<div
+			role="list"
+			class="grid max-h-36 grid-cols-1 gap-1.5 overflow-auto scrollbar-none items-start p-0.5 @xl:grid-cols-3 {className}"
+		>
 			{#each filteredPrompts as prompt, idx (prompt.id || `${prompt.content}-${idx}`)}
 				<!-- svelte-ignore a11y-no-interactive-element-to-noninteractive-role -->
 				<button
 					role="listitem"
 					class="waterfall flex flex-col flex-1 shrink-0 w-full justify-between
-				       px-2.5 py-1.5 rounded-lg bg-transparent transition-colors
-				       hover:text-gray-950 dark:hover:text-white group"
+				       px-3 py-2.5 rounded-[10px] border border-gray-200 bg-transparent transition-colors
+				       hover:bg-gray-50 hover:border-gray-300 dark:border-gray-800 dark:hover:bg-gray-850 dark:hover:border-gray-700
+				       outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent group"
 					style="animation-delay: {idx * 45}ms"
 					on:click={() => onSelect({ type: 'prompt', data: prompt.content })}
 				>
 					<div class="flex flex-col text-left leading-snug">
 						{#if prompt.title && prompt.title[0] !== ''}
 							<div
-								class="text-sm font-normal group-hover:text-gray-950 dark:text-gray-300 dark:group-hover:text-white transition line-clamp-1"
+								class="text-[13.5px] font-medium text-gray-800 group-hover:text-gray-950 dark:text-gray-100 dark:group-hover:text-white transition line-clamp-1"
 							>
 								{prompt.title[0]}
 							</div>
 							<div
-								class="text-xs text-gray-600 group-hover:text-gray-900 dark:text-gray-400 dark:group-hover:text-gray-100 font-normal line-clamp-1"
+								class="mt-0.5 text-xs text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300 font-normal line-clamp-1"
 							>
 								{prompt.title[1]}
 							</div>
 						{:else}
 							<div
-								class="text-sm font-normal group-hover:text-gray-950 dark:text-gray-300 dark:group-hover:text-white transition line-clamp-1"
+								class="text-[13.5px] font-medium text-gray-800 group-hover:text-gray-950 dark:text-gray-100 dark:group-hover:text-white transition line-clamp-1"
 							>
 								{prompt.content}
 							</div>
 							<div
-								class="text-xs text-gray-600 group-hover:text-gray-900 dark:text-gray-400 dark:group-hover:text-gray-100 font-normal line-clamp-1"
+								class="mt-0.5 text-xs text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300 font-normal line-clamp-1"
 							>
 								{$i18n.t('Prompt')}
 							</div>

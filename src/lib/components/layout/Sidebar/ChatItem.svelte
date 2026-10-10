@@ -136,19 +136,23 @@
 		(effectiveReadAt === null || (updatedAt !== null && updatedAt > effectiveReadAt));
 	$: showInlineActions =
 		id === $chatId || confirmEdit || mouseOver || focusWithin || menuOpen || selected;
-	$: chatItemClass = ` w-full flex justify-between rounded-xl px-2 py-1.5 ${
+	// Nocturne row states. The current chat sits on a raised ink surface with a hairline
+	// edge (an inset ring, so the row keeps its height) and a lime marker; see chatItemContent.
+	const currentRowClass =
+		'bg-white text-gray-900 ring-1 ring-inset ring-gray-200 dark:bg-[#1a1b25] dark:text-gray-100 dark:ring-gray-700/60 selected';
+	const selectedRowClass = 'bg-gray-100 text-gray-900 dark:bg-gray-900 dark:text-gray-100 selected';
+	const idleRowClass =
+		'text-gray-700 hover:bg-gray-100 hover:text-gray-900 group-hover:bg-gray-100 group-hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-100 dark:group-hover:bg-gray-900 dark:group-hover:text-gray-100';
+
+	$: chatItemClass = ` w-full flex justify-between items-center rounded-[7px] px-2 py-1.5 ${
 		id === $chatId || confirmEdit
-			? ($settings?.highContrastMode ?? false)
-				? 'bg-black/[0.035] dark:bg-white/[0.06] selected'
-				: 'bg-black/[0.035] dark:bg-white/[0.045] selected'
+			? currentRowClass
 			: selected
-				? ($settings?.highContrastMode ?? false)
-					? 'bg-black/[0.035] dark:bg-white/[0.055] selected'
-					: 'bg-black/[0.035] dark:bg-white/[0.045] selected'
+				? selectedRowClass
 				: $mobile
-					? ''
-					: ' hover:bg-gray-100 dark:hover:bg-gray-900 group-hover:bg-gray-100 dark:group-hover:bg-gray-900'
-	}  whitespace-nowrap text-ellipsis transition`;
+					? 'text-gray-700 dark:text-gray-400'
+					: idleRowClass
+	}  whitespace-nowrap text-ellipsis transition outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent`;
 
 	const selectChatHandler = (event?: MouseEvent) => {
 		openPreview = false;
@@ -514,6 +518,17 @@
 </script>
 
 {#snippet chatItemContent()}
+	<!-- Marker slot: lime square for the current chat, a dot for unread chats -->
+	<span class="mr-2 flex w-1.5 shrink-0 items-center justify-center self-center" aria-hidden="true">
+		{#if id === $chatId}
+			<span class="size-1.5 rounded-[1.5px] bg-accent"></span>
+		{:else if unread}
+			<span
+				class="size-1.5 rounded-full bg-gray-900 dark:bg-gray-100 transition-opacity duration-300"
+			></span>
+		{/if}
+	</span>
+
 	{#if ownerUserId}
 		<Tooltip content={ownerName || 'Unknown'}>
 			<img
@@ -537,24 +552,22 @@
 	{/if}
 
 	<div class="flex self-center flex-1 w-full min-w-0">
-		{#if unread}
-			<div class="shrink-0 self-center pr-2.5 flex transition-opacity duration-300">
-				<div class="size-1.5 bg-sky-500 rounded-full"></div>
-			</div>
-		{/if}
 		<div
 			dir="auto"
 			class="text-left self-center overflow-hidden w-full h-5 truncate {unread
-				? 'font-normal text-gray-800 dark:text-gray-200'
+				? 'font-medium text-gray-900 dark:text-gray-100'
 				: ''} {($mobile || showInlineActions) && !readonly ? 'pr-12' : ''}"
 		>
 			{title}
 		</div>
+		{#if unread}
+			<span class="sr-only">{$i18n.t('Unread')}</span>
+		{/if}
 	</div>
 
 	<!-- Time ago indicator -->
 	{#if (updatedAt ?? createdAt) && !showInlineActions && !($mobile && !readonly)}
-		<div class="shrink-0 self-center text-[0.625rem] text-gray-400 dark:text-gray-500 pl-2">
+		<div class="shrink-0 self-center font-mono text-[0.65625rem] text-gray-500 pl-2">
 			{formatTimeAgo((updatedAt ?? createdAt) as number)}
 		</div>
 	{/if}
@@ -609,15 +622,11 @@
 	{#if confirmEdit}
 		<div
 			id="sidebar-chat-item"
-			class=" w-full flex justify-between rounded-xl px-2 py-1.5 {id === $chatId || confirmEdit
-				? ($settings?.highContrastMode ?? false)
-					? 'bg-black/[0.035] dark:bg-white/[0.06] selected'
-					: 'bg-black/[0.035] dark:bg-white/[0.045] selected'
+			class=" w-full flex justify-between rounded-[7px] px-2 py-1.5 {id === $chatId || confirmEdit
+				? currentRowClass
 				: selected
-					? ($settings?.highContrastMode ?? false)
-						? 'bg-black/[0.035] dark:bg-white/[0.055] selected'
-						: 'bg-black/[0.035] dark:bg-white/[0.045] selected'
-					: 'hover:bg-gray-100 dark:hover:bg-gray-900 group-hover:bg-gray-100 dark:group-hover:bg-gray-900'}  whitespace-nowrap text-ellipsis relative transition {generating
+					? selectedRowClass
+					: idleRowClass}  whitespace-nowrap text-ellipsis relative transition {generating
 				? 'cursor-not-allowed'
 				: ''}"
 		>
@@ -702,7 +711,7 @@
 				>
 					<Tooltip content={$i18n.t('Generate')}>
 						<button
-							class="flex size-5 items-center justify-center self-center dark:hover:text-white transition disabled:cursor-not-allowed"
+							class="flex size-5 items-center justify-center self-center text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition disabled:cursor-not-allowed"
 							id="generate-title-button"
 							disabled={generating}
 							on:click={() => {
@@ -717,7 +726,7 @@
 				<div class=" flex items-center self-center space-x-1.5">
 					<Tooltip content={$i18n.t('Archive')} className="flex items-center">
 						<button
-							class="flex size-5 items-center justify-center self-center dark:hover:text-white transition disabled:cursor-not-allowed"
+							class="flex size-5 items-center justify-center self-center text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition disabled:cursor-not-allowed"
 							disabled={archiving}
 							on:click={() => {
 								archiveChatHandler(id);
@@ -731,7 +740,7 @@
 					{#if $user?.role === 'admin' || ($user?.permissions?.chat?.delete ?? true)}
 						<Tooltip content={$i18n.t('Delete')}>
 							<button
-								class=" self-center dark:hover:text-white transition disabled:cursor-not-allowed"
+								class=" self-center text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition disabled:cursor-not-allowed"
 								disabled={deleting}
 								on:click={() => {
 									deleteChatHandler(id);
@@ -777,7 +786,7 @@
 						<button
 							type="button"
 							aria-label={$i18n.t('Chat Menu')}
-							class="flex size-5 items-center justify-center self-center dark:hover:text-white transition m-0"
+							class="flex size-[1.375rem] items-center justify-center self-center rounded-[5px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 transition m-0 outline-none focus-visible:ring-2 focus-visible:ring-accent"
 						>
 							<MoreHorizontalIcon className="size-3.5" strokeWidth="2" />
 						</button>

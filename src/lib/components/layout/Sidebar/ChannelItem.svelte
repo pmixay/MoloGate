@@ -80,15 +80,18 @@
 <div
 	id="sidebar-channel-item"
 	bind:this={itemElement}
-	class=" w-full {className} rounded-xl flex relative group hover:bg-gray-100 dark:hover:bg-gray-900 {$page
-		.url.pathname === `/channels/${channel.id}`
-		? 'bg-gray-100 dark:bg-gray-900 selected'
-		: ''} {channel?.type === 'dm' ? 'px-1 py-[0.1875rem]' : 'p-1'}  {channel?.unread_count > 0
-		? 'font-normal dark:text-white text-black'
-		: ' dark:text-gray-400 text-gray-600'} cursor-pointer select-none"
+	class=" w-full {className} rounded-[7px] flex relative group transition {$page.url.pathname ===
+	`/channels/${channel.id}`
+		? 'bg-white text-gray-900 ring-1 ring-inset ring-gray-200 dark:bg-[#1a1b25] dark:text-gray-100 dark:ring-gray-700/60 selected'
+		: 'hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-900 dark:hover:text-gray-100'} {channel?.type ===
+	'dm'
+		? 'px-1 py-[0.1875rem]'
+		: 'p-1'}  {channel?.unread_count > 0
+		? 'font-medium text-gray-900 dark:text-gray-100'
+		: ' text-gray-700 dark:text-gray-400'} cursor-pointer select-none"
 >
 	<a
-		class="min-w-0 flex flex-1"
+		class="min-w-0 flex flex-1 rounded-[5px] outline-none focus-visible:ring-2 focus-visible:ring-accent"
 		href="/channels/{channel.id}"
 		on:click={() => {
 			console.log(channel);
@@ -120,7 +123,7 @@
 								<img
 									src={`${WEBUI_API_BASE_URL}/users/${u.id}/profile/image`}
 									alt={u.name}
-									class=" size-5.5 rounded-full border-2 border-white dark:border-gray-900 {index ===
+									class=" size-5.5 rounded-full border-2 border-gray-50 dark:border-gray-950 {index ===
 									1
 										? '-ml-2.5'
 										: ''}"
@@ -138,17 +141,17 @@
 										<span
 											class="relative inline-flex size-2 rounded-full {channelMembers[0]?.is_active
 												? 'bg-green-500'
-												: 'bg-gray-300 dark:bg-gray-700'} border-[1.5px] border-white dark:border-gray-900"
+												: 'bg-gray-300 dark:bg-gray-700'} border-[1.5px] border-gray-50 dark:border-gray-950"
 										></span>
 									</span>
 								</div>
 							{/if}
 						</div>
 					{:else}
-						<UserIcon className="size-4 ml-1 mr-0.5" strokeWidth="1.5" />
+						<UserIcon className="size-4 ml-1 mr-0.5 text-gray-500" strokeWidth="1.5" />
 					{/if}
 				{:else}
-					<div class=" size-4 justify-center flex items-center ml-1">
+					<div class=" size-4 justify-center flex items-center ml-1 mr-1 text-gray-500">
 						{#if isPublicChannel(channel)}
 							<HashtagIcon className="size-3" strokeWidth="1.8" />
 						{:else}
@@ -192,7 +195,7 @@
 
 				{#if channel?.unread_count > 0}
 					<div
-						class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-md bg-sky-500/10 px-1 text-[0.625rem] font-semibold leading-4 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300"
+						class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] bg-gray-200 px-1 font-mono text-[0.625rem] font-medium leading-4 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
 						title={$i18n.t('Unread')}
 					>
 						{formatUnreadCount(channel.unread_count)}
@@ -203,10 +206,10 @@
 	</a>
 
 	{#if ['dm'].includes(channel?.type)}
-		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center dark:text-gray-300">
+		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center text-gray-500">
 			<button
 				type="button"
-				class="p-0.5 dark:hover:bg-gray-850 rounded-lg touch-auto"
+				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto outline-none focus-visible:ring-2 focus-visible:ring-accent"
 				on:click={async (e) => {
 					e.stopImmediatePropagation();
 					e.stopPropagation();
@@ -228,10 +231,10 @@
 			</button>
 		</div>
 	{:else if $user?.role === 'admin' || channel.user_id === $user?.id}
-		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center dark:text-gray-300">
+		<div class="ml-0.5 mr-1 hover-reveal self-center flex shrink-0 items-center text-gray-500">
 			<button
 				type="button"
-				class="p-0.5 dark:hover:bg-gray-850 rounded-lg touch-auto"
+				class="p-0.5 rounded-[5px] hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100 touch-auto outline-none focus-visible:ring-2 focus-visible:ring-accent"
 				on:click={(e) => {
 					e.stopImmediatePropagation();
 					e.stopPropagation();

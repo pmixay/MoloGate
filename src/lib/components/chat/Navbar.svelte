@@ -81,14 +81,14 @@
 <nav
 	class="sticky top-0 z-30 w-full {$mobile
 		? 'pt-1.5'
-		: 'pt-0.5'} pb-1 -mb-12 flex flex-col items-center drag-region"
+		: 'pt-2'} pb-2 -mb-12 flex flex-col items-center drag-region"
 >
-	<div class="flex items-center w-full {$mobile ? 'px-2.5' : 'pl-1.5 pr-1'}">
+	<div class="flex items-center w-full {$mobile ? 'px-2.5' : 'pl-2 pr-2.5'}">
 		<div
 			id="navbar-bg-gradient-to-b"
 			class="{chat?.id
 				? 'visible'
-				: 'invisible'} bg-linear-to-b via-40% to-97% from-white/90 via-white/50 to-transparent dark:from-gray-900/90 dark:via-gray-900/50 dark:to-transparent pointer-events-none absolute inset-0 -bottom-10 z-[-1]"
+				: 'invisible'} border-b border-gray-100 bg-white/90 backdrop-blur-md dark:border-gray-800 dark:bg-gray-900/90 pointer-events-none absolute inset-0 z-[-1]"
 		></div>
 
 		<div class=" flex max-w-full w-full mx-auto bg-transparent">
@@ -98,14 +98,14 @@
 						<Tooltip content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}>
 							<button
 								id="sidebar-toggle-button"
-								class="flex cursor-pointer rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+								class="flex size-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 								on:click={() => {
 									showSidebar.set(!$showSidebar);
 								}}
 								aria-label={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 							>
-								<div class="self-center p-1.5">
-									<Sidebar className="size-4" />
+								<div class="self-center">
+									<Sidebar className="size-[18px]" />
 								</div>
 							</button>
 						</Tooltip>
@@ -113,12 +113,12 @@
 				{/if}
 
 				<div
-					class="flex-1 overflow-hidden max-w-full mt-0.5 py-0.5 pl-1 {$showSidebar ? 'ml-1' : ''}"
+					class="flex-1 overflow-hidden max-w-full py-0.5 pl-1 {$showSidebar ? 'ml-1' : ''}"
 				>
 					{#if chat?.id}
-						<div class="flex max-w-full min-w-0 items-center gap-2 mr-2">
+						<div class="flex max-w-full min-w-0 items-center gap-1.5 mr-2">
 							<div
-								class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
+								class="min-w-0 truncate py-1 text-left text-[13.5px] font-medium text-gray-600 dark:text-gray-400"
 							>
 								{title || chat?.chat?.title || $i18n.t('New Chat')}
 							</div>
@@ -141,7 +141,7 @@
 									{moveChatHandler}
 								>
 									<button
-										class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+										class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 										id="chat-context-menu-button"
 										aria-label={$i18n.t('Chat actions')}
 									>
@@ -166,7 +166,7 @@
 					{:else}
 						<div class="pointer-events-none invisible flex max-w-full min-w-0 items-center gap-2">
 							<div
-								class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
+								class="min-w-0 truncate py-1 text-left text-[13.5px] font-medium text-gray-600 dark:text-gray-400"
 							>
 								{$i18n.t('New Chat')}
 							</div>
@@ -174,14 +174,14 @@
 					{/if}
 				</div>
 
-				<div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
+				<div class="flex flex-none items-center gap-1 self-center">
 					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}
 							<Tooltip content={$i18n.t(`Temporary Chat`)}>
 								<button
-									class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									class="flex size-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 									id="temporary-chat-button"
 									on:click={async () => {
 										if (($settings?.temporaryChatByDefault ?? false) && $temporaryChatEnabled) {
@@ -205,23 +205,23 @@
 									aria-label={$i18n.t(`Temporary Chat`)}
 								>
 									{#if $temporaryChatEnabled}
-										<ChatBubbleDottedChecked className="size-4.5" strokeWidth="1.5" />
+										<ChatBubbleDottedChecked className="size-[18px]" strokeWidth="1.5" />
 									{:else}
-										<ChatBubbleDotted className="size-4.5" strokeWidth="1.5" />
+										<ChatBubbleDotted className="size-[18px]" strokeWidth="1.5" />
 									{/if}
 								</button>
 							</Tooltip>
 						{:else if $temporaryChatEnabled}
 							<Tooltip content={$i18n.t(`Save Chat`)}>
 								<button
-									class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									class="flex size-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 									id="save-temporary-chat-button"
 									on:click={async () => {
 										onSaveTempChat();
 									}}
 									aria-label={$i18n.t(`Save Chat`)}
 								>
-									<ChatCheck className="size-4.5" strokeWidth="1.5" />
+									<ChatCheck className="size-[18px]" strokeWidth="1.5" />
 								</button>
 							</Tooltip>
 						{/if}
@@ -230,15 +230,15 @@
 					{#if $mobile && !$temporaryChatEnabled && chat && chat.id}
 						<Tooltip content={$i18n.t('New Chat')}>
 							<button
-								class="flex size-6 {$showSidebar
+								class="flex size-9 {$showSidebar
 									? 'md:hidden'
-									: ''} cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+									: ''} cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 								on:click={() => {
 									initNewChat();
 								}}
 								aria-label={$i18n.t('New Chat')}
 							>
-								<ChatPlus className="size-4.5" strokeWidth="1.5" />
+								<ChatPlus className="size-[18px]" strokeWidth="1.5" />
 							</button>
 						</Tooltip>
 					{/if}
@@ -246,7 +246,7 @@
 					{#if $user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true)}
 						<Tooltip content={$i18n.t('Controls')}>
 							<button
-								class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+								class="flex size-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
 								on:click={async () => {
 									await showControls.set(!$showControls);
 								}}
@@ -263,7 +263,9 @@
 
 	{#if $temporaryChatEnabled && isTemporaryChatId($chatId)}
 		<div class=" w-full z-30 text-center">
-			<div class="text-xs text-gray-500">{$i18n.t('Temporary Chat')}</div>
+			<div class="pt-1 font-mono text-[10.5px] tracking-wide text-gray-500">
+				{$i18n.t('Temporary Chat')}
+			</div>
 		</div>
 	{/if}
 

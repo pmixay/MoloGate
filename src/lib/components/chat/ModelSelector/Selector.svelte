@@ -82,6 +82,8 @@
 	export let align: 'start' | 'end' = 'start';
 	export let showSetDefault = false;
 	export let onSetDefault: () => Promise<void> | void = () => {};
+	// Nocturne: small lime status dot before the selected model's name in the trigger.
+	export let showStatusDot = false;
 
 	export let pinModelHandler: (modelId: string) => void = () => {};
 
@@ -906,9 +908,9 @@
 <div class="relative w-full">
 	<button
 		bind:this={triggerElement}
-		class="focus-ring relative w-full {($settings?.highContrastMode ?? false)
-			? ''
-			: 'outline-hidden focus:outline-hidden'}"
+		class="relative w-full rounded-[9px] {($settings?.highContrastMode ?? false)
+			? 'focus-ring'
+			: 'outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent'}"
 		aria-label={selectedModel
 			? $i18n.t('Selected model: {{modelName}}', { modelName: triggerLabel })
 			: placeholder}
@@ -933,8 +935,17 @@
 				);
 			}}
 		>
+			{#if showStatusDot && selectedModel}
+				<span
+					aria-hidden="true"
+					class="size-[7px] shrink-0 self-center rounded-full bg-lime-500 dark:bg-accent"
+				></span>
+			{/if}
 			<span class="min-w-0 flex-1 truncate">{triggerLabel}</span>
-			<ChevronDown className="ml-1 size-2.5 shrink-0 self-center" strokeWidth="2.5" />
+			<ChevronDown
+				className="ml-0.5 size-3 shrink-0 self-center text-gray-500"
+				strokeWidth="2.25"
+			/>
 		</div>
 	</button>
 
@@ -946,18 +957,20 @@
 		>
 			<div
 				class="z-40 {className ??
-					'w-[20rem]'} max-w-[calc(100vw-1rem)] justify-start rounded-xl border border-gray-100 bg-white p-0.5 shadow-lg outline-hidden dark:border-gray-800 dark:bg-gray-850 dark:text-white flex flex-col overflow-hidden"
+					'w-[20rem]'} max-w-[calc(100vw-1rem)] justify-start rounded-xl border border-gray-200 bg-white p-1 shadow-lg outline-hidden dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
 				transition:flyAndScale
 			>
 				<slot>
 					{#if searchEnabled}
-						<div class="my-0.5 flex ml-2 mr-0.5 h-[1.6875rem] shrink-0 items-center gap-2">
-							<Search className=" size-3.5 shrink-0" strokeWidth="2" />
+						<div
+							class="mb-1 flex h-9 shrink-0 items-center gap-2 rounded-[10px] border border-gray-200 bg-gray-50 pl-2.5 pr-1 transition-[border-color,box-shadow] duration-150 focus-within:border-gray-300 focus-within:ring-[3px] focus-within:ring-gray-200/70 dark:border-gray-800 dark:bg-gray-850 dark:focus-within:border-accent/55 dark:focus-within:ring-accent/12"
+						>
+							<Search className=" size-3.5 shrink-0 text-gray-500" strokeWidth="2" />
 
 							<input
 								id="model-search-input"
 								bind:value={searchValue}
-								class="w-full bg-transparent text-[0.8125rem] font-normal outline-hidden placeholder:text-gray-400 dark:placeholder:text-gray-500"
+								class="w-full bg-transparent text-[0.8125rem] font-normal outline-hidden placeholder:text-gray-500 dark:placeholder:text-gray-500"
 								placeholder={searchPlaceholder}
 								autocomplete="off"
 								aria-label={$i18n.t('Search In Models')}
@@ -1261,10 +1274,12 @@
 					</div>
 
 					{#if showSetDefault}
-						<div class="flex shrink-0 items-center justify-end px-2 py-1 leading-none">
+						<div
+							class="mt-1 flex shrink-0 items-center justify-end border-t border-gray-100 px-2 pt-2 pb-1 leading-none dark:border-gray-800"
+						>
 							<button
 								type="button"
-								class="focus-ring text-[0.65rem] font-normal leading-none text-gray-500 underline-offset-2 transition-colors duration-100 hover:text-gray-700 hover:underline dark:text-gray-500 dark:hover:text-gray-300"
+								class="focus-ring text-[11px] font-normal leading-none text-gray-500 underline-offset-2 transition-colors duration-100 hover:text-gray-700 hover:underline dark:text-gray-500 dark:hover:text-gray-100"
 								on:click|stopPropagation={setDefaultHandler}
 							>
 								{$i18n.t('Set as default')}

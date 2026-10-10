@@ -673,22 +673,42 @@
 		dir={$settings.chatDirection}
 		style="scroll-margin-top: 3rem;"
 	>
-		<div class={`shrink-0 ltr:mr-2 rtl:ml-2 hidden @lg:flex mt-0.5 `}>
+		<div class={`shrink-0 ltr:mr-2 rtl:ml-2 hidden @lg:flex`}>
 			<ProfileImage
 				src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id}&lang=${$i18n.language}`}
-				className={'size-7 assistant-message-profile-image'}
+				className={'size-[26px] !rounded-[7px] border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 assistant-message-profile-image'}
 			/>
 		</div>
 
 		<div class="flex-auto w-0 pl-1 relative">
 			{#if !compactPreview}
-				<Name>
-					<Tooltip content={localizedModelName} placement="top-start">
-						<span id="response-message-model-name" class="line-clamp-1 text-black dark:text-white">
-							{localizedModelName}
-						</span>
-					</Tooltip>
-				</Name>
+				<div class="flex items-center gap-2.5 min-w-0 h-[26px]">
+					<Name>
+						<Tooltip content={localizedModelName} placement="top-start">
+							<span
+								id="response-message-model-name"
+								class="line-clamp-1 font-mono text-[13px] font-medium text-gray-900 dark:text-gray-100"
+							>
+								{localizedModelName}
+							</span>
+						</Tooltip>
+					</Name>
+
+					{#if message.timestamp}
+						<Tooltip
+							className="flex shrink-0"
+							content={formatMessageTimestampFull(message.timestamp * 1000)}
+							placement="bottom"
+						>
+							<time
+								datetime={new Date(message.timestamp * 1000).toISOString()}
+								class="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-gray-500 select-none translate-y-px"
+							>
+								{formatMessageTimestamp(message.timestamp * 1000)}
+							</time>
+						</Tooltip>
+					{/if}
+				</div>
 			{/if}
 
 			<div>
@@ -743,7 +763,7 @@
 
 						{#if edit === true}
 							<div
-								class="w-full bg-gray-50 dark:bg-gray-800 rounded-3xl px-3 py-3 my-2 {($settings?.highContrastMode ??
+								class="w-full bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800 rounded-[14px] px-3 py-3 my-2 {($settings?.highContrastMode ??
 								false)
 									? 'focus-within:outline focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-blue-500'
 									: ''}"
@@ -792,7 +812,7 @@
 									<div>
 										<button
 											id="save-new-message-button"
-											class="px-2.5 py-1 bg-gray-50 hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700 border border-gray-100 dark:border-gray-700 text-gray-700 dark:text-gray-200 transition rounded-3xl"
+											class="px-2.5 py-1 bg-gray-50 hover:bg-gray-100 dark:bg-transparent dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 transition rounded-[8px]"
 											on:click={() => {
 												saveAsCopyHandler();
 											}}
@@ -804,7 +824,7 @@
 									<div class="flex space-x-1.5">
 										<button
 											id="close-edit-message-button"
-											class="px-2.5 py-1 bg-white dark:bg-gray-900 hover:bg-gray-100 text-gray-800 dark:text-gray-100 transition rounded-3xl"
+											class="px-2.5 py-1 bg-white dark:bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-300 dark:hover:text-gray-100 transition rounded-[8px]"
 											on:click={() => {
 												cancelEditMessage();
 											}}
@@ -814,7 +834,7 @@
 
 										<button
 											id="confirm-edit-message-button"
-											class="px-2.5 py-1 bg-gray-900 dark:bg-white hover:bg-gray-850 text-gray-100 dark:text-gray-800 transition rounded-3xl"
+											class="px-2.5 py-1 bg-gray-900 dark:bg-gray-100 hover:bg-gray-850 dark:hover:bg-white text-gray-100 dark:text-gray-900 font-medium transition rounded-[8px]"
 											on:click={() => {
 												editMessageConfirmHandler();
 											}}
@@ -828,7 +848,7 @@
 
 						<div
 							bind:this={contentContainerElement}
-							class="w-full flex flex-col relative {edit ? 'hidden' : ''}"
+							class="response-content w-full flex flex-col relative {edit ? 'hidden' : ''}"
 							id="response-content-container"
 						>
 							{#if hasResponseContent && message.error !== true}
@@ -932,7 +952,7 @@
 						>
 							<time
 								datetime={new Date(message.timestamp * 1000).toISOString()}
-								class="ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
+								class="ml-1 shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-gray-500 select-none"
 							>
 								{formatMessageTimestamp(message.timestamp * 1000)}
 							</time>
@@ -941,7 +961,7 @@
 				{:else if !edit}
 					<div
 						bind:this={buttonsContainerElement}
-						class="flex items-center justify-start overflow-x-auto whitespace-nowrap buttons text-gray-600 dark:text-gray-500 mt-0.5 [&>*]:shrink-0"
+						class="flex items-center justify-start overflow-x-auto whitespace-nowrap buttons text-gray-600 dark:text-gray-500 mt-2 -ms-2 gap-0.5 [&>*]:shrink-0"
 					>
 						{#if message.done || siblings.length > 1}
 							{#if message.done && onInsertToNote && visibleResponseContent}
@@ -950,7 +970,7 @@
 										aria-label={$i18n.t('Insert into note')}
 										class="{isLastMessage || ($settings?.highContrastMode ?? false)
 											? 'visible'
-											: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+											: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 										on:click={() => {
 											onInsertToNote?.(visibleResponseContent);
 										}}
@@ -964,7 +984,7 @@
 								<div class="flex self-center min-w-fit" dir="ltr">
 									<button
 										aria-label={$i18n.t('Previous message')}
-										class="self-center p-1 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-white hover:text-black rounded-md transition"
+										class="self-center size-7 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 										on:click={() => {
 											showPreviousMessage(message);
 										}}
@@ -988,7 +1008,7 @@
 
 									{#if messageIndexEdit}
 										<div
-											class="text-sm flex justify-center font-normal self-center dark:text-gray-100 min-w-fit"
+											class="font-mono text-[12px] tabular-nums flex justify-center font-normal self-center text-gray-700 dark:text-gray-300 min-w-fit"
 										>
 											<input
 												id="message-index-input-{message.id}"
@@ -1015,7 +1035,7 @@
 									{:else}
 										<!-- svelte-ignore a11y-no-static-element-interactions -->
 										<div
-											class="text-sm tracking-widest font-normal self-center dark:text-gray-100 min-w-fit"
+											class="font-mono text-[12px] tabular-nums font-normal self-center px-0.5 text-gray-700 dark:text-gray-400 min-w-fit"
 											on:dblclick={async () => {
 												messageIndexEdit = true;
 
@@ -1032,7 +1052,7 @@
 									{/if}
 
 									<button
-										class="self-center p-1 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-white hover:text-black rounded-md transition"
+										class="self-center size-7 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 										on:click={() => {
 											showNextMessage(message);
 										}}
@@ -1065,7 +1085,7 @@
 												aria-label={$i18n.t('Edit')}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+													: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 												on:click={() => {
 													editMessageHandler();
 												}}
@@ -1074,7 +1094,7 @@
 													xmlns="http://www.w3.org/2000/svg"
 													fill="none"
 													viewBox="0 0 24 24"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													aria-hidden="true"
 													stroke="currentColor"
 													class="w-4 h-4"
@@ -1095,7 +1115,7 @@
 										aria-label={$i18n.t('Copy')}
 										class="{isLastMessage || ($settings?.highContrastMode ?? false)
 											? 'visible'
-											: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition copy-response-button"
+											: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition copy-response-button"
 										on:click={() => {
 											copyToClipboard(visibleResponseContent);
 										}}
@@ -1105,7 +1125,7 @@
 											fill="none"
 											aria-hidden="true"
 											viewBox="0 0 24 24"
-											stroke-width="2.3"
+											stroke-width="1.8"
 											stroke="currentColor"
 											class="w-4 h-4"
 										>
@@ -1125,7 +1145,7 @@
 											id="speak-button-{message.id}"
 											class="{isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
-												: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+												: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 											on:click={() => {
 												if (!loadingSpeech) {
 													if (speaking) {
@@ -1175,7 +1195,7 @@
 													fill="none"
 													viewBox="0 0 24 24"
 													aria-hidden="true"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													stroke="currentColor"
 													class="w-4 h-4"
 												>
@@ -1191,7 +1211,7 @@
 													fill="none"
 													viewBox="0 0 24 24"
 													aria-hidden="true"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													stroke="currentColor"
 													class="w-4 h-4"
 												>
@@ -1225,7 +1245,7 @@
 											aria-hidden="true"
 											class=" {isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
-												: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition whitespace-pre-wrap"
+												: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition whitespace-pre-wrap"
 											on:click={() => {
 												console.log(message);
 											}}
@@ -1236,7 +1256,7 @@
 												xmlns="http://www.w3.org/2000/svg"
 												fill="none"
 												viewBox="0 0 24 24"
-												stroke-width="2.3"
+												stroke-width="1.8"
 												stroke="currentColor"
 												class="w-4 h-4"
 											>
@@ -1252,6 +1272,13 @@
 
 								{#if !readOnly}
 									{#if !$temporaryChatEnabled && ($config?.features.enable_message_rating ?? true) && ($user?.role === 'admin' || ($user?.permissions?.chat?.rate_response ?? true))}
+										<span
+											aria-hidden="true"
+											class="{isLastMessage || ($settings?.highContrastMode ?? false)
+												? 'visible'
+												: 'hover-reveal'} self-center w-px h-4 mx-1.5 bg-gray-200 dark:bg-gray-800"
+										></span>
+
 										<Tooltip content={$i18n.t('Good Response')} placement="bottom">
 											<button
 												aria-label={$i18n.t('Good Response')}
@@ -1276,7 +1303,7 @@
 													aria-hidden="true"
 													stroke="currentColor"
 													fill="none"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													viewBox="0 0 24 24"
 													stroke-linecap="round"
 													stroke-linejoin="round"
@@ -1314,7 +1341,7 @@
 													aria-hidden="true"
 													stroke="currentColor"
 													fill="none"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													viewBox="0 0 24 24"
 													stroke-linecap="round"
 													stroke-linejoin="round"
@@ -1329,6 +1356,15 @@
 										</Tooltip>
 									{/if}
 
+									{#if (isLastMessage && ($user?.role === 'admin' || ($user?.permissions?.chat?.continue_response ?? true))) || $user?.role === 'admin' || ($user?.permissions?.chat?.regenerate_response ?? true)}
+										<span
+										aria-hidden="true"
+										class="{isLastMessage || ($settings?.highContrastMode ?? false)
+											? 'visible'
+											: 'hover-reveal'} self-center w-px h-4 mx-1.5 bg-gray-200 dark:bg-gray-800"
+									></span>
+									{/if}
+
 									{#if isLastMessage && ($user?.role === 'admin' || ($user?.permissions?.chat?.continue_response ?? true))}
 										<Tooltip content={$i18n.t('Continue Response')} placement="bottom">
 											<button
@@ -1337,7 +1373,7 @@
 												id="continue-response-button"
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+													: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 												on:click={() => {
 													continueResponse();
 												}}
@@ -1347,7 +1383,7 @@
 													xmlns="http://www.w3.org/2000/svg"
 													fill="none"
 													viewBox="0 0 24 24"
-													stroke-width="2.3"
+													stroke-width="1.8"
 													stroke="currentColor"
 													class="w-4 h-4"
 												>
@@ -1413,13 +1449,13 @@
 														aria-label={$i18n.t('Regenerate')}
 														class="{isLastMessage || ($settings?.highContrastMode ?? false)
 															? 'visible'
-															: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+															: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 													>
 														<svg
 															xmlns="http://www.w3.org/2000/svg"
 															fill="none"
 															viewBox="0 0 24 24"
-															stroke-width="2.3"
+															stroke-width="1.8"
 															aria-hidden="true"
 															stroke="currentColor"
 															class="w-4 h-4"
@@ -1440,7 +1476,7 @@
 													aria-label={$i18n.t('Regenerate')}
 													class="{isLastMessage || ($settings?.highContrastMode ?? false)
 														? 'visible'
-														: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition regenerate-response-button"
+														: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition regenerate-response-button"
 													on:click={() => {
 														showRateComment = false;
 														regenerateResponse(message);
@@ -1462,7 +1498,7 @@
 														xmlns="http://www.w3.org/2000/svg"
 														fill="none"
 														viewBox="0 0 24 24"
-														stroke-width="2.3"
+														stroke-width="1.8"
 														aria-hidden="true"
 														stroke="currentColor"
 														class="w-4 h-4"
@@ -1496,7 +1532,7 @@
 												)}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+													: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 												on:click={() => {
 													actionMessage(action.id, message);
 												}}
@@ -1530,7 +1566,7 @@
 												aria-label={$i18n.t('Fork chat')}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+													: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 												on:click={() => {
 													forkHandler?.(message.id);
 												}}
@@ -1564,7 +1600,7 @@
 													id="delete-response-button"
 													class="{isLastMessage || ($settings?.highContrastMode ?? false)
 														? 'visible'
-														: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition disabled:opacity-50 disabled:hover:bg-transparent"
+														: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition disabled:opacity-50 disabled:hover:bg-transparent"
 													disabled={!allowDelete}
 													on:click={(e) => {
 														if (!allowDelete) {
@@ -1597,20 +1633,6 @@
 										{/if}
 									{/if}
 
-									{#if message.timestamp}
-										<Tooltip
-											className="flex self-center"
-											content={formatMessageTimestampFull(message.timestamp * 1000)}
-											placement="bottom"
-										>
-											<time
-												datetime={new Date(message.timestamp * 1000).toISOString()}
-												class="hover-reveal ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
-											>
-												{formatMessageTimestamp(message.timestamp * 1000)}
-											</time>
-										</Tooltip>
-									{/if}
 								{/if}
 							{/if}
 						{/if}
@@ -1653,6 +1675,11 @@
 {/key}
 
 <style>
+	/* Nocturne body copy: slightly softer than primary text in dark mode */
+	:global(.dark) .response-content :global(.markdown-prose) {
+		color: var(--color-gray-200, #dfe1ea);
+	}
+
 	.buttons::-webkit-scrollbar {
 		display: none; /* for Chrome, Safari and Opera */
 	}

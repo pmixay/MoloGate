@@ -17,6 +17,7 @@
 	export let className = undefined;
 	export let placement: 'top' | 'bottom' | 'auto' = 'bottom';
 	export let align: 'start' | 'end' = 'start';
+	export let showStatusDot = false;
 
 	let compareModels = selectedModels.length > 1;
 	let selector;
@@ -79,6 +80,7 @@
 					{placement}
 					{align}
 					{showSetDefault}
+					{showStatusDot}
 					onSetDefault={saveDefaultModel}
 					multipleEnabled={$user?.role === 'admin' ||
 						($user?.permissions?.chat?.multiple_models ?? true)}

@@ -119,7 +119,9 @@
 			className="w-full flex justify-center mb-0.5"
 			placement="top"
 		>
-			<div class="flex items-center gap-1.5 text-gray-500 text-xs my-1 w-fit">
+			<div
+				class="flex items-center gap-1.5 rounded-md border border-dashed border-gray-300 px-2 py-0.5 font-mono text-[11px] text-gray-500 my-1 w-fit dark:border-gray-700"
+			>
 				<EyeSlash strokeWidth="2" className="size-3.5" />{$i18n.t('Temporary Chat')}
 			</div>
 		</Tooltip>
@@ -141,7 +143,7 @@
 					}}
 				/>
 			{:else}
-				<div class="flex flex-row justify-center gap-2.5 @sm:gap-3 w-fit px-5 max-w-xl">
+				<div class="flex flex-row justify-center items-center gap-3 @sm:gap-3.5 w-fit px-5 max-w-xl">
 					<div class="flex shrink-0 justify-center">
 						<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 100 }}>
 							{#each models as model, modelIdx}
@@ -162,7 +164,7 @@
 									>
 										<img
 											src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id}&lang=${$i18n.language}`}
-											class=" size-9 @sm:size-10 rounded-2xl"
+											class=" size-9 @sm:size-10 rounded-[10px] ring-1 ring-gray-200 dark:ring-gray-800"
 											aria-hidden="true"
 											draggable="false"
 											on:error={(e) => {
@@ -179,12 +181,12 @@
 					</div>
 
 					<div
-						class=" text-2xl @sm:text-2xl line-clamp-1 flex items-center"
+						class=" text-2xl @sm:text-[1.625rem] tracking-tight line-clamp-1 flex items-center text-gray-900 dark:text-gray-100"
 						in:fade={{ duration: 100 }}
 					>
 						{#if selectedModelName}
 							<Tooltip content={selectedModelName} placement="top" className=" flex items-center ">
-								<span class="line-clamp-1">
+								<span class="line-clamp-1 font-mono font-medium tracking-[-0.03em]">
 									{selectedModelName}
 								</span>
 							</Tooltip>
@@ -194,7 +196,7 @@
 					</div>
 				</div>
 
-				<div class="flex mt-1 mb-2">
+				<div class="flex mt-1.5 mb-2">
 					<div in:fade={{ duration: 100, delay: 50 }}>
 						{#if selectedModelDescription}
 							<Tooltip
@@ -207,7 +209,7 @@
 								placement="top"
 							>
 								<div
-									class="mt-0.5 px-2 text-sm font-normal text-gray-500 dark:text-gray-400 line-clamp-2 max-w-xl markdown"
+									class="mt-0.5 px-2 text-[13.5px] font-normal text-gray-500 dark:text-gray-400 line-clamp-2 max-w-xl markdown"
 								>
 									{@html DOMPurify.sanitize(
 										marked.parse(
@@ -218,7 +220,7 @@
 							</Tooltip>
 
 							{#if models[selectedModelIdx]?.info?.meta?.user}
-								<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
+								<div class="mt-0.5 text-[12.5px] font-normal text-gray-500">
 									{$i18n.t('By')}
 									{#if models[selectedModelIdx]?.info?.meta?.user.community}
 										<a
@@ -238,7 +240,7 @@
 				</div>
 			{/if}
 
-			<div class="text-base font-normal @md:max-w-3xl w-full py-3 {atSelectedModel ? 'mt-2' : ''}">
+			<div class="text-base font-normal @md:max-w-3xl w-full pt-4 pb-3 {atSelectedModel ? 'mt-2' : ''}">
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
 						bind:this={messageInput}
