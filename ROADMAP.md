@@ -97,6 +97,20 @@ are not in priority order. Tick an item off when it ships.
     option is chosen automatically.
   - A crossed-out-timer button turns the timer off, for when the user is still thinking.
 
+### Browser
+
+- [ ] **Micro browser for agents:**
+  - Agents get a small built-in browser they can control: open pages, take screenshots and perform
+    actions such as clicking and typing.
+  - The user can watch the same browser live in a preview panel on the right side of the screen, for
+    example to see the product the agent is building.
+
+### Image generation
+
+- [ ] **Image generation tool:**
+  - Codex has its own image-generation tool. Inspect how it works.
+  - Offer the same tool to agents in Mologate, running through the shared Codex (ChatGPT) accounts.
+
 ### GitHub
 
 - [ ] **GitHub integration:**
@@ -172,6 +186,12 @@ are not in priority order. Tick an item off when it ships.
       latest ChatGPT Luna model (currently Luna 6), and follow it automatically as new versions ship.
       If it's unavailable, they fall back to GLM-5.3 Flash.
 - [ ] **AI lab logos:** upload logos for each lab and group models by lab in the model dropdown.
+- [ ] **Personal API keys:**
+  - Each user gets a personal OpenAI-compatible API key.
+  - With it they can use Mologate's features and every model in the interface from other apps and
+    tools.
+  - Open WebUI already has per-user API keys (off by default) and an OpenAI-compatible
+    `/api/chat/completions` endpoint to build on.
 - [ ] **codex-lb integration for ChatGPT accounts:**
   - Cut codex-lb down to the minimum it needs: accounts and their limits.
   - Show everything inside Mologate instead of the codex-lb interface.
