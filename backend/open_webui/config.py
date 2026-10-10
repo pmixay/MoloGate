@@ -423,7 +423,8 @@ CODE_EXECUTION_JUPYTER_TIMEOUT = int(os.getenv('CODE_EXECUTION_JUPYTER_TIMEOUT',
 
 ENABLE_CODE_INTERPRETER = os.getenv('ENABLE_CODE_INTERPRETER', 'True').lower() == 'true'
 
-ENABLE_MEMORIES = os.getenv('ENABLE_MEMORIES', 'True').lower() == 'true'
+# Mologate: memories are off by default. Admins can turn them back on in Admin Settings → General.
+ENABLE_MEMORIES = os.getenv('ENABLE_MEMORIES', 'False').lower() == 'true'
 ENABLE_MEMORY_SYSTEM_CONTEXT = os.getenv('ENABLE_MEMORY_SYSTEM_CONTEXT', 'True').lower() == 'true'
 ENABLE_MEMORY_BACKGROUND_REVIEW = os.getenv('ENABLE_MEMORY_BACKGROUND_REVIEW', 'False').lower() == 'true'
 MEMORIES_REVIEW_INTERVAL_TURNS = int(os.getenv('MEMORIES_REVIEW_INTERVAL_TURNS', '10'))
@@ -2050,9 +2051,11 @@ AUTOMATION_AUTH_TOKEN_EXPIRES_IN = os.getenv('AUTOMATION_AUTH_TOKEN_EXPIRES_IN',
 # Mologate: Notes is off by default. Admins can turn it back on in Admin Settings → General.
 ENABLE_NOTES = os.getenv('ENABLE_NOTES', 'False').lower() == 'true'
 
-ENABLE_USER_STATUS = os.getenv('ENABLE_USER_STATUS', 'True').lower() == 'true'
+# Mologate: user status is off by default (the status UI is removed from the interface).
+ENABLE_USER_STATUS = os.getenv('ENABLE_USER_STATUS', 'False').lower() == 'true'
 
-ENABLE_EVALUATION_ARENA_MODELS = os.getenv('ENABLE_EVALUATION_ARENA_MODELS', 'True').lower() == 'true'
+# Mologate: arena models are off by default. Admins can turn them back on in Admin Settings → Evaluations.
+ENABLE_EVALUATION_ARENA_MODELS = os.getenv('ENABLE_EVALUATION_ARENA_MODELS', 'False').lower() == 'true'
 try:
     evaluation_arena_models = JSONCodec.loads(os.getenv('EVALUATION_ARENA_MODELS', '[]'))
     if not isinstance(evaluation_arena_models, list) or not all(
@@ -2096,7 +2099,8 @@ ENABLE_ADMIN_ANALYTICS = os.getenv('ENABLE_ADMIN_ANALYTICS', 'True').lower() == 
 
 ENABLE_COMMUNITY_SHARING = os.getenv('ENABLE_COMMUNITY_SHARING', 'True').lower() == 'true'
 
-ENABLE_MESSAGE_RATING = os.getenv('ENABLE_MESSAGE_RATING', 'True').lower() == 'true'
+# Mologate: message rating (thumbs up/down) is off by default (the rating buttons are removed from the interface).
+ENABLE_MESSAGE_RATING = os.getenv('ENABLE_MESSAGE_RATING', 'False').lower() == 'true'
 
 ENABLE_USER_WEBHOOKS = os.getenv('ENABLE_USER_WEBHOOKS', 'False').lower() == 'true'
 

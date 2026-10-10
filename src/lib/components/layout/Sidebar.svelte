@@ -80,12 +80,10 @@
 	import PinnedNoteList from './Sidebar/PinnedNoteList.svelte';
 	import CalendarIcon from './Sidebar/icons/Calendar.svelte';
 	import ClockIcon from './Sidebar/icons/Clock.svelte';
-	import CodeIcon from './Sidebar/icons/Code.svelte';
 	import EditPencilIcon from './Sidebar/icons/EditPencil.svelte';
 	import NotesIcon from './Sidebar/icons/Notes.svelte';
 	import SearchIcon from './Sidebar/icons/Search.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
-	import WorkspaceIcon from './Sidebar/icons/Workspace.svelte';
 	import ChevronUpDown from '../icons/ChevronUpDown.svelte';
 	import { formatChord, keybindings, Shortcut } from '$lib/shortcuts';
 	import Dropdown from '../common/Dropdown.svelte';
@@ -95,7 +93,7 @@
 	import MobileSwipePanel from '../common/MobileSwipePanel.svelte';
 
 	const BREAKPOINT = 768;
-	const DEFAULT_PINNED_ITEMS = ['notes', 'workspace'];
+	const DEFAULT_PINNED_ITEMS = ['notes'];
 
 	let scrollTop = 0;
 
@@ -162,15 +160,6 @@
 					($config?.features?.enable_notes ?? false) &&
 					($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))
 				);
-			case 'workspace':
-				return (
-					$user?.role === 'admin' ||
-					$user?.permissions?.workspace?.models ||
-					$user?.permissions?.workspace?.knowledge ||
-					$user?.permissions?.workspace?.prompts ||
-					$user?.permissions?.workspace?.tools ||
-					$user?.permissions?.workspace?.skills
-				);
 			case 'automations':
 				return (
 					$config?.features?.enable_automations &&
@@ -181,8 +170,6 @@
 					$config?.features?.enable_calendar &&
 					($user?.role === 'admin' || $user?.permissions?.features?.calendar)
 				);
-			case 'playground':
-				return $user?.role === 'admin';
 			default:
 				return false;
 		}
@@ -191,20 +178,16 @@
 	const getMenuItemMeta = (id) => {
 		const items = {
 			notes: { label: $i18n.t('Notes'), href: '/notes', iconType: 'note' },
-			workspace: { label: $i18n.t('Workspace'), href: '/workspace', iconType: 'workspace' },
 			automations: { label: $i18n.t('Automations'), href: '/automations', iconType: 'automations' },
-			calendar: { label: $i18n.t('Calendar'), href: '/calendar', iconType: 'calendar' },
-			playground: { label: $i18n.t('Playground'), href: '/playground', iconType: 'playground' }
+			calendar: { label: $i18n.t('Calendar'), href: '/calendar', iconType: 'calendar' }
 		};
 		return items[id];
 	};
 
 	const menuItemPathPrefixes = {
 		notes: '/notes',
-		workspace: '/workspace',
 		calendar: '/calendar',
-		automations: '/automations',
-		playground: '/playground'
+		automations: '/automations'
 	};
 
 	const getActiveMenuItemId = (pathname) => {
@@ -218,6 +201,11 @@
 	};
 
 	$: activeMenuItemId = getActiveMenuItemId($page.url.pathname);
+
+	// Mologate: no top margin when no pinned item is visible, so the nav has no empty gap.
+	$: hasVisiblePinnedItems = pinnedItems.some(
+		(id) => $config && $user && getMenuItemMeta(id) && isMenuItemVisible(id)
+	);
 
 	const initPinnedMenuSortable = () => {
 		const el = document.getElementById('pinned-menu-items-list');
@@ -1073,14 +1061,10 @@
 										>
 											{#if itemId === 'notes'}
 												<NotesIcon className="size-4" strokeWidth="1.5" />
-											{:else if itemId === 'workspace'}
-												<WorkspaceIcon className="size-4" strokeWidth="1.5" />
 											{:else if itemId === 'automations'}
 												<ClockIcon className="size-4" strokeWidth="1.5" />
 											{:else if itemId === 'calendar'}
 												<CalendarIcon className="size-4" strokeWidth="1.5" />
-											{:else if itemId === 'playground'}
-												<CodeIcon className="size-4" strokeWidth="1.5" />
 											{/if}
 										</div>
 									</a>
@@ -1095,7 +1079,7 @@
 				<div>
 					<div class=" flex justify-center items-center">
 						{#if $user !== undefined && $user !== null}
-							<UserMenu role={$user?.role} profile={$config?.features?.enable_user_status ?? true}>
+							<UserMenu role={$user?.role}>
 								<button
 									type="button"
 									class=" cursor-pointer flex size-8.5 items-center justify-center rounded-lg transition group"
@@ -1110,18 +1094,6 @@
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}
 										/>
-
-										{#if $config?.features?.enable_user_status}
-											<div class="absolute bottom-0 right-0">
-												<span class="relative flex size-2.5">
-													<span
-														class="relative inline-flex size-2.5 rounded-full {true
-															? 'bg-green-500'
-															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-gray-50 dark:border-gray-950"
-													></span>
-												</span>
-											</div>
-										{/if}
 									</div>
 								</button>
 							</UserMenu>
@@ -1273,7 +1245,10 @@
 							{/if}
 						</button>
 
-						<div id="pinned-menu-items-list" class="mt-1.5 flex flex-col gap-px">
+						<div
+							id="pinned-menu-items-list"
+							class="flex flex-col gap-px {hasVisiblePinnedItems ? 'mt-1.5' : ''}"
+						>
 							{#each pinnedItems as itemId (itemId)}
 								{@const meta = getMenuItemMeta(itemId)}
 								{#if meta && isMenuItemVisible(itemId)}
@@ -1298,14 +1273,10 @@
 											>
 												{#if itemId === 'notes'}
 													<NotesIcon className="size-4" strokeWidth="1.5" />
-												{:else if itemId === 'workspace'}
-													<WorkspaceIcon className="size-4" strokeWidth="1.5" />
 												{:else if itemId === 'automations'}
 													<ClockIcon className="size-4" strokeWidth="1.5" />
 												{:else if itemId === 'calendar'}
 													<CalendarIcon className="size-4" strokeWidth="1.5" />
-												{:else if itemId === 'playground'}
-													<CodeIcon className="size-4" strokeWidth="1.5" />
 												{/if}
 											</span>
 
@@ -1727,11 +1698,7 @@
 				>
 					<div class="flex flex-col">
 						{#if $user !== undefined && $user !== null}
-							<UserMenu
-								role={$user?.role}
-								profile={$config?.features?.enable_user_status ?? true}
-								className="w-[calc(var(--sidebar-width)-1rem)]"
-							>
+							<UserMenu role={$user?.role} className="w-[calc(var(--sidebar-width)-1rem)]">
 								<button
 									type="button"
 									class="group flex h-11 w-full items-center gap-2.5 rounded-[9px] px-2 text-left transition hover:bg-gray-100 dark:hover:bg-gray-900"
@@ -1744,18 +1711,6 @@
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}
 										/>
-
-										{#if $config?.features?.enable_user_status}
-											<div class="absolute -bottom-0.5 -right-0.5">
-												<span class="relative flex size-2.5">
-													<span
-														class="relative inline-flex size-2.5 rounded-full {true
-															? 'bg-green-500'
-															: 'bg-gray-300 dark:bg-gray-700'} border-2 border-gray-50 dark:border-gray-950"
-													></span>
-												</span>
-											</div>
-										{/if}
 									</div>
 
 									<div class="flex min-w-0 flex-1 flex-col leading-tight">
