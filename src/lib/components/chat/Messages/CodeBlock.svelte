@@ -556,7 +556,9 @@
 								{#if saved}
 									<path d="m5 12.5 4.5 4.5L19 7.5" />
 								{:else}
-									<path d="M5 5.5A1.5 1.5 0 0 1 6.5 4h9L20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 5 17.5z" />
+									<path
+										d="M5 5.5A1.5 1.5 0 0 1 6.5 4h9L20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 5 17.5z"
+									/>
 									<path d="M8.5 4v4.5h6V4" /><path d="M8.5 19v-5h7v5" />
 								{/if}
 							</svg>
@@ -596,11 +598,9 @@
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								aria-hidden="true"
-								><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle
-									cx="12"
-									cy="12"
-									r="2.75"
-								/></svg
+								><path
+									d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"
+								/><circle cx="12" cy="12" r="2.75" /></svg
 							>
 							<span>
 								{$i18n.t('Preview')}
@@ -662,7 +662,7 @@
 				<div
 					id="plt-canvas-{id}"
 					class="bg-gray-50 dark:bg-gray-950 dark:text-gray-100 max-w-full overflow-x-auto scrollbar-hidden"
-				/>
+				></div>
 
 				{#if executing || stdout || stderr || result || files}
 					<div
@@ -682,7 +682,8 @@
 										{$i18n.t('STDOUT/STDERR')}
 									</div>
 									<div
-										class="text-[13px] font-mono whitespace-pre-wrap {stdout?.split('\n')?.length > 100
+										class="text-[13px] font-mono whitespace-pre-wrap {stdout?.split('\n')?.length >
+										100
 											? `max-h-96`
 											: ''}  overflow-y-auto"
 									>

@@ -234,12 +234,12 @@
 			{#if $settings?.displayMultiModelResponsesInTabs ?? false}
 				<div class="w-full">
 					<div
-						class=" flex w-full mb-4.5 border-b border-gray-200 dark:border-gray-850 {compactPreview
+						class=" flex w-full mb-4.5 border-b border-gray-200 dark:border-gray-800 {compactPreview
 							? 'hidden'
 							: ''}"
 					>
 						<div
-							class="flex gap-2 scrollbar-none overflow-x-auto w-fit text-center font-normal bg-transparent pt-1 text-sm"
+							class="flex gap-2 scrollbar-none overflow-x-auto w-fit text-center font-normal bg-transparent pt-1 font-mono text-[13px]"
 							on:wheel|preventDefault={(e) => {
 								e.currentTarget.scrollLeft += e.deltaY;
 							}}
@@ -256,8 +256,8 @@
 
 									<button
 										class="min-w-fit {selectedModelIdx == modelIdx
-											? ' dark:border-gray-300 '
-											: ' opacity-35 border-transparent'} pb-1.5 px-2.5 transition border-b-2"
+											? ' border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100 '
+											: ' text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 border-transparent'} pb-1.5 px-2.5 transition border-b-2"
 										on:click={async () => {
 											if (selectedModelIdx != modelIdx) {
 												selectedModelIdx = modelIdx;
@@ -423,7 +423,7 @@
 										>
 											<time
 												datetime={new Date(message.timestamp * 1000).toISOString()}
-												class="hover-reveal ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
+												class="hover-reveal ml-1 shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-gray-500 select-none"
 											>
 												{formatMessageTimestamp(message.timestamp * 1000)}
 											</time>
@@ -442,12 +442,12 @@
 									id="merge-response-button"
 									class="{true
 										? 'visible'
-										: 'hover-reveal'} p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+										: 'hover-reveal'} size-8 inline-flex items-center justify-center rounded-[7px] hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-900 dark:hover:text-gray-100 transition"
 									on:click={() => {
 										mergeResponsesHandler();
 									}}
 								>
-									<Merge className=" size-5 " />
+									<Merge className=" size-[18px] " />
 								</button>
 							</Tooltip>
 						</div>

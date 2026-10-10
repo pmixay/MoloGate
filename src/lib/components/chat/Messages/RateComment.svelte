@@ -112,7 +112,7 @@
 {/if}
 
 <div
-	class=" my-2.5 rounded-xl px-4 py-3 border border-gray-100/30 dark:border-gray-850/30"
+	class=" my-2.5 rounded-[10px] px-4 py-3 border border-gray-100 dark:border-gray-800"
 	id="message-feedback-{message.id}"
 >
 	<div class="flex justify-between items-center">
@@ -137,10 +137,10 @@
 				{#each Array.from({ length: 10 }).map((_, i) => i + 1) as rating}
 					<button
 						aria-label={$i18n.t('Rate {{rating}} out of 10', { rating })}
-						class="aspect-square w-full text-sm border border-gray-100/30 dark:border-gray-850/30 hover:bg-gray-50 dark:hover:bg-gray-850 {detailedRating ===
+						class="aspect-square w-full font-mono text-[13px] tabular-nums border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-850 {detailedRating ===
 						rating
-							? 'bg-gray-100 dark:bg-gray-800'
-							: ''} transition rounded-full disabled:cursor-not-allowed disabled:text-gray-500 disabled:bg-white dark:disabled:bg-gray-900"
+							? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+							: ''} transition rounded-[7px] disabled:cursor-not-allowed disabled:text-gray-500 disabled:bg-white dark:disabled:bg-gray-900"
 						on:click={() => {
 							detailedRating = rating;
 						}}
@@ -170,10 +170,10 @@
 			<div class="flex flex-wrap gap-1.5 text-sm mt-1.5">
 				{#each reasons as reason}
 					<button
-						class="px-3 py-0.5 border border-gray-100/30 dark:border-gray-850/30 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedReason ===
+						class="px-2.5 py-0.5 border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-850 {selectedReason ===
 						reason
-							? 'bg-gray-100 dark:bg-gray-800'
-							: ''} transition rounded-xl"
+							? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+							: 'text-gray-600 dark:text-gray-400'} transition rounded-[7px]"
 						on:click={() => {
 							selectedReason = reason;
 						}}
@@ -244,7 +244,7 @@
 		</div>
 
 		<button
-			class="px-3.5 py-1.5 text-sm font-normal bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+			class="px-3.5 py-1.5 text-sm font-medium bg-gray-900 hover:bg-gray-850 text-white dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white transition rounded-[8px]"
 			on:click={() => {
 				saveHandler();
 			}}
@@ -254,11 +254,11 @@
 	</div>
 
 	{#if $config?.features.enable_community_sharing && message?.model}
-		<div class="mt-3 pt-3 border-t border-gray-100/30 dark:border-gray-850/30">
+		<div class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
 			<a
 				href={`https://openwebui.com/models?q=${encodeURIComponent(message.model)}`}
 				target="_blank"
-				class="flex cursor-pointer items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-850 w-full px-3 py-2 rounded-xl transition"
+				class="flex cursor-pointer items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-850 w-full px-3 py-2 rounded-[8px] transition"
 			>
 				<div class="self-center">
 					<div class="text-sm font-normal">

@@ -128,7 +128,7 @@
 	};
 
 	$: detailButtonClassName = `py-0.5 ${
-		compactPreview ? 'text-xs' : 'text-[0.9375rem]'
+		compactPreview ? 'text-xs' : 'text-[13px]'
 	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition`;
 
 	// Reasoning / analysis / generic <details> toggles render as quiet bordered chips
