@@ -20,6 +20,19 @@ export const canUseTemporaryChats = ({ user }: SettingsAccessContext) =>
 	user?.role === 'admin' || user?.permissions?.chat?.temporary;
 export const isSettingsAdmin = ({ user }: SettingsAccessContext) => user?.role === 'admin';
 
+// Mologate: settings removed from the interface, so search must not point at them.
+const REMOVED_SETTING_STEMS = new Set([
+	'settings.personal.general.sections.systemPrompt',
+	'settings.personal.account.bio',
+	'settings.personal.account.gender',
+	'settings.personal.account.birthDate',
+	'settings.personal.about.seeWhatSNew',
+	'settings.admin.general.seeWhatSNew',
+	'settings.personal.shortcuts.toggleDictation',
+	'settings.personal.shortcuts.toggleControls',
+	'settings.personal.shortcuts.toggleMute'
+]);
+
 /** Only permission-gated text needs an explicit rule. Provider/disclosure state is irrelevant. */
 export function canSearchSetting(
 	key: string,
@@ -27,6 +40,7 @@ export function canSearchSetting(
 	context: SettingsAccessContext
 ): boolean {
 	const stem = key.replace(/\.(label|description|title)$/, '');
+	if (REMOVED_SETTING_STEMS.has(stem)) return false;
 	if (stem === 'settings.personal.general.sections.systemPrompt')
 		return canEditSystemPrompt(context);
 	if (

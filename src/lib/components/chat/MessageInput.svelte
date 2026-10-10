@@ -2590,6 +2590,8 @@
 										/>
 									</div>
 
+									<!-- Effort selector (agent C): insert <EffortSelector /> on the line below. -->
+
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">
 											<button

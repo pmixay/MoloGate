@@ -22,6 +22,8 @@ export enum Shortcut {
 	NEW_TEMPORARY_CHAT = 'newTemporaryChat',
 	DELETE_CHAT = 'deleteChat',
 	OPEN_MODEL_SELECTOR = 'openModelSelector',
+	// Mologate: speech input is removed from the interface, so dictation has no binding and is
+	// not listed in Settings → Keyboard. The id stays so older references still compile.
 	TOGGLE_DICTATION = 'toggleDictation',
 	NAVIGATE_CHAT_UP = 'navigateChatUp',
 	NAVIGATE_CHAT_DOWN = 'navigateChatDown',
@@ -31,7 +33,6 @@ export enum Shortcut {
 	OPEN_SETTINGS = 'openSettings',
 	SHOW_SHORTCUTS = 'showShortcuts',
 	TOGGLE_SIDEBAR = 'toggleSidebar',
-	TOGGLE_CONTROLS = 'toggleControls',
 	CLOSE_MODAL = 'closeModal',
 
 	//Input
@@ -50,10 +51,7 @@ export enum Shortcut {
 	DENY_TOOL_CALL = 'denyToolCall',
 	COPY_LAST_CODE_BLOCK = 'copyLastCodeBlock',
 	COPY_LAST_RESPONSE = 'copyLastResponse',
-	STOP_GENERATING = 'stopGenerating',
-
-	//Voice
-	TOGGLE_MUTE = 'toggleMute'
+	STOP_GENERATING = 'stopGenerating'
 }
 
 export const CONFIGURABLE_SHORTCUTS = [
@@ -61,14 +59,12 @@ export const CONFIGURABLE_SHORTCUTS = [
 	Shortcut.NEW_TEMPORARY_CHAT,
 	Shortcut.DELETE_CHAT,
 	Shortcut.OPEN_MODEL_SELECTOR,
-	Shortcut.TOGGLE_DICTATION,
 	Shortcut.NAVIGATE_CHAT_UP,
 	Shortcut.NAVIGATE_CHAT_DOWN,
 	Shortcut.SEARCH,
 	Shortcut.OPEN_SETTINGS,
 	Shortcut.SHOW_SHORTCUTS,
 	Shortcut.TOGGLE_SIDEBAR,
-	Shortcut.TOGGLE_CONTROLS,
 	Shortcut.CLOSE_MODAL,
 	Shortcut.FOCUS_INPUT,
 	Shortcut.GENERATE_MESSAGE_PAIR,
@@ -87,14 +83,12 @@ export const DEFAULT_KEYBINDINGS: KeybindingsMap = {
 	[Shortcut.NEW_TEMPORARY_CHAT]: "Cmd+Shift+'",
 	[Shortcut.DELETE_CHAT]: 'Cmd+Shift+Backspace',
 	[Shortcut.OPEN_MODEL_SELECTOR]: 'Cmd+Shift+M',
-	[Shortcut.TOGGLE_DICTATION]: 'Cmd+Shift+L',
 	[Shortcut.NAVIGATE_CHAT_UP]: '',
 	[Shortcut.NAVIGATE_CHAT_DOWN]: '',
 	[Shortcut.SEARCH]: 'Cmd+K',
 	[Shortcut.OPEN_SETTINGS]: 'Cmd+.',
 	[Shortcut.SHOW_SHORTCUTS]: 'Cmd+/',
 	[Shortcut.TOGGLE_SIDEBAR]: 'Cmd+Shift+S',
-	[Shortcut.TOGGLE_CONTROLS]: '',
 	[Shortcut.CLOSE_MODAL]: 'Escape',
 	[Shortcut.FOCUS_INPUT]: 'Shift+Escape',
 	[Shortcut.GENERATE_MESSAGE_PAIR]: 'Cmd+Shift+Enter',
@@ -234,12 +228,6 @@ export const shortcuts: ShortcutRegistry = {
 		category: 'Chat',
 		configurable: true
 	},
-	[Shortcut.TOGGLE_DICTATION]: {
-		name: (t) => t('settings.personal.shortcuts.toggleDictation.label'),
-		keys: ['mod', 'shift', 'L'],
-		category: 'Chat',
-		configurable: true
-	},
 	[Shortcut.NAVIGATE_CHAT_UP]: {
 		name: (t) => t('settings.personal.shortcuts.navigateChatUp.label'),
 		keys: [],
@@ -275,12 +263,6 @@ export const shortcuts: ShortcutRegistry = {
 	[Shortcut.TOGGLE_SIDEBAR]: {
 		name: (t) => t('settings.personal.shortcuts.toggleSidebar.label'),
 		keys: ['mod', 'shift', 'S'],
-		category: 'Global',
-		configurable: true
-	},
-	[Shortcut.TOGGLE_CONTROLS]: {
-		name: (t) => t('settings.personal.shortcuts.toggleControls.label'),
-		keys: [],
 		category: 'Global',
 		configurable: true
 	},
@@ -376,13 +358,5 @@ export const shortcuts: ShortcutRegistry = {
 		keys: ['mod', 'shift', ';'],
 		category: 'Message',
 		configurable: true
-	},
-
-	//Voice
-	[Shortcut.TOGGLE_MUTE]: {
-		name: (t) => t('settings.personal.shortcuts.toggleMute.label'),
-		keys: ['M'],
-		category: 'Voice',
-		tooltip: 'Only active during Voice Mode.'
 	}
 };

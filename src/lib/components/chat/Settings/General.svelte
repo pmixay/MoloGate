@@ -1,8 +1,5 @@
 <script lang="ts">
-	import {
-		canEditSystemPrompt as allowSystemPrompt,
-		canEditParameters
-	} from '$lib/utils/settings-access';
+	import { canEditParameters } from '$lib/utils/settings-access';
 	import { createEventDispatcher, onMount, getContext } from 'svelte';
 	import { getLanguages, changeLanguage } from '$lib/i18n';
 	const dispatch = createEventDispatcher();
@@ -12,8 +9,6 @@
 	const i18n: any = getContext('i18n');
 
 	import AdvancedParams from './Advanced/AdvancedParams.svelte';
-	import Textarea from '$lib/components/common/Textarea.svelte';
-	import UserSettingField from './UserSettingField.svelte';
 	import UserSettingRow from './UserSettingRow.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
@@ -26,12 +21,9 @@
 
 	let languages: Awaited<ReturnType<typeof getLanguages>> = [];
 	let lang = $i18n.language;
-	let system = '';
 
 	let showAdvanced = false;
 
-	const systemPromptTextareaClass =
-		'w-full resize-y rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const actionButtonClass =
 		'text-xs text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white';
 
@@ -71,14 +63,10 @@
 		keep_alive: null
 	};
 
-	$: canEditSystemPrompt = allowSystemPrompt({ user: $user, config: $config });
 	$: canEditParams = canEditParameters({ user: $user, config: $config });
 
 	const saveHandler = async () => {
 		const updated: Record<string, any> = {};
-		if (canEditSystemPrompt) {
-			updated.system = system !== '' ? system : null;
-		}
 		if (canEditParams) {
 			updated.params = {
 				stream_response: params.stream_response !== null ? params.stream_response : undefined,
@@ -136,8 +124,6 @@
 		if (!$config?.features?.enable_easter_eggs) {
 			languages = languages.filter((l) => l.code !== 'dg-DG');
 		}
-
-		system = $settings.system ?? '';
 
 		params = { ...params, ...$settings.params };
 		params.stop = $settings?.params?.stop ? ($settings?.params?.stop ?? []).join(',') : null;
@@ -277,21 +263,6 @@
 				</div>
 			{/if}
 		</UserSettingSection>
-
-		{#if canEditSystemPrompt}
-			<UserSettingSection title={$i18n.t('settings.personal.general.sections.systemPrompt.title')}>
-				<UserSettingField
-					description={$i18n.t('settings.personal.general.sections.systemPrompt.description')}
-				>
-					<Textarea
-						bind:value={system}
-						className={systemPromptTextareaClass}
-						rows="4"
-						placeholder={$i18n.t('Enter system prompt here')}
-					/>
-				</UserSettingField>
-			</UserSettingSection>
-		{/if}
 
 		{#if canEditParams}
 			<UserSettingSection

@@ -21,7 +21,6 @@
 	import Interface from './Settings/Interface.svelte';
 	import Notifications from './Settings/Notifications.svelte';
 	import Shortcuts from './Settings/Shortcuts.svelte';
-	import Audio from './Settings/Audio.svelte';
 	import DataControls from './Settings/DataControls.svelte';
 	import Usage from './Settings/Usage.svelte';
 	import ArchivedChats from './Settings/ArchivedChats.svelte';
@@ -33,7 +32,6 @@
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
 	import Link from '../icons/Link.svelte';
 	import UserCircle from '../icons/UserCircle.svelte';
-	import SoundHigh from '../icons/SoundHigh.svelte';
 	import InfoCircle from '../icons/InfoCircle.svelte';
 	import WrenchAlt from '../icons/WrenchAlt.svelte';
 	import Face from '../icons/Face.svelte';
@@ -56,7 +54,6 @@
 	import AdminWebSearch from '$lib/components/admin/Settings/WebSearch.svelte';
 	import AdminCodeExecution from '$lib/components/admin/Settings/CodeExecution.svelte';
 	import AdminInterface from '$lib/components/admin/Settings/Interface.svelte';
-	import AdminAudio from '$lib/components/admin/Settings/Audio.svelte';
 	import AdminImages from '$lib/components/admin/Settings/Images.svelte';
 	import AdminPipelines from '$lib/components/admin/Settings/Pipelines.svelte';
 	import AdminDatabase from '$lib/components/admin/Settings/Database.svelte';
@@ -147,7 +144,6 @@
 		connections: $i18n.t('Services'),
 		tools: $i18n.t('Services'),
 		personalization: $i18n.t('Preferences'),
-		audio: $i18n.t('Preferences'),
 		data_controls: $i18n.t('Data'),
 		usage: $i18n.t('Data'),
 		archived_chats: $i18n.t('Data'),
@@ -168,7 +164,6 @@
 		'admin:code-execution': $i18n.t('Tools'),
 		'admin:pipelines': $i18n.t('Tools'),
 		'admin:interface': $i18n.t('Experience'),
-		'admin:audio': $i18n.t('Experience'),
 		'admin:images': $i18n.t('Experience'),
 		'admin:db': $i18n.t('Data')
 	};
@@ -225,12 +220,6 @@
 			titleKey: 'settings.personal.personalization.title',
 			title: $i18n.t('settings.personal.personalization.title'),
 			searchPrefixes: ['settings.personal.personalization.']
-		},
-		{
-			id: 'audio',
-			titleKey: 'settings.personal.audio.title',
-			title: $i18n.t('settings.personal.audio.title'),
-			searchPrefixes: ['settings.personal.audio.']
 		},
 		{
 			id: 'data_controls',
@@ -300,12 +289,6 @@
 			titleKey: 'settings.admin.interface.title',
 			title: $i18n.t('settings.admin.interface.title'),
 			searchPrefixes: ['settings.admin.interface.', 'settings.personal.general.parameters.']
-		},
-		{
-			id: 'admin:audio',
-			titleKey: 'settings.admin.audio.title',
-			title: $i18n.t('settings.admin.audio.title'),
-			searchPrefixes: ['settings.admin.audio.']
 		},
 		{
 			id: 'admin:images',
@@ -663,19 +646,6 @@
 							<Face className="size-3.5" strokeWidth="2" />
 							<span>{$i18n.t('settings.personal.personalization.title')}</span>
 						</button>
-					{:else if tabId === 'audio'}
-						<button
-							role="tab"
-							aria-controls="tab-audio"
-							aria-selected={selectedTab === 'audio'}
-							class={tabButtonClass(selectedTab === 'audio')}
-							on:click={() => {
-								selectTab('audio');
-							}}
-						>
-							<SoundHigh className="size-3.5" strokeWidth="2" />
-							<span>{$i18n.t('settings.personal.audio.title')}</span>
-						</button>
 					{:else if tabId === 'data_controls'}
 						<button
 							role="tab"
@@ -829,13 +799,6 @@
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}
 				/>
-			{:else if selectedTab === 'audio'}
-				<Audio
-					{saveSettings}
-					on:save={() => {
-						toast.success($i18n.t('Settings saved successfully!'));
-					}}
-				/>
 			{:else if selectedTab === 'data_controls'}
 				<DataControls {saveSettings} />
 			{:else if selectedTab === 'usage'}
@@ -879,12 +842,6 @@
 			{:else if selectedTab === 'admin:interface'}
 				<AdminInterface
 					on:save={() => {
-						toast.success($i18n.t('Settings saved successfully!'));
-					}}
-				/>
-			{:else if selectedTab === 'admin:audio'}
-				<AdminAudio
-					saveHandler={() => {
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}
 				/>

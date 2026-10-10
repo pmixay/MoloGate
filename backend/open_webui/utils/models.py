@@ -25,6 +25,7 @@ from open_webui.utils.plugin import (
     get_functions_cache,
     get_function_module_from_cache,
 )
+from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
@@ -265,6 +266,9 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
             model['filter_ids'] = filter_ids
 
             models.append(model)
+
+    # Mologate: effort levels for the chat effort selector (admin override, then provider metadata).
+    apply_reasoning_effort_options(models)
 
     # Process action_ids to get the actions
     def get_action_items_from_module(function, module):

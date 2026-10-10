@@ -27,7 +27,6 @@
 		tags,
 		banners,
 		showSettings,
-		showChangelog,
 		temporaryChatEnabled,
 		toolServers,
 		terminalServers,
@@ -42,7 +41,6 @@
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
-	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -286,10 +284,6 @@
 					console.log('Shortcut triggered: NAVIGATE_CHAT_DOWN');
 					event.preventDefault();
 					await navigateChat(1);
-				} else if (shortcut === Shortcut.TOGGLE_CONTROLS) {
-					console.log('Shortcut triggered: TOGGLE_CONTROLS');
-					event.preventDefault();
-					showControls.set(!$showControls);
 				} else if (shortcut === Shortcut.DELETE_CHAT) {
 					console.log('Shortcut triggered: DELETE_CHAT');
 					event.preventDefault();
@@ -352,9 +346,7 @@
 		};
 		setupKeyboardShortcuts();
 
-		if ($user?.role === 'admin' && ($settings?.showChangelog ?? true)) {
-			showChangelog.set($settings?.version !== $config.version);
-		}
+		// Mologate: the "What's new" changelog modal is removed; it never opens.
 
 		if ($user?.role === 'admin' || ($user?.permissions?.chat?.temporary ?? true)) {
 			if ($page.url.searchParams.get('temporary-chat') === 'true') {
@@ -423,7 +415,6 @@
 </script>
 
 <SettingsModal bind:show={$showSettings} />
-<ChangelogModal bind:show={$showChangelog} />
 
 {#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>

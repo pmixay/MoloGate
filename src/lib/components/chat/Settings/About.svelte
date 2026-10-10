@@ -2,7 +2,7 @@
 	import { getVersionUpdates } from '$lib/apis';
 	import { getOllamaVersion } from '$lib/apis/ollama';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { WEBUI_NAME, config, showChangelog } from '$lib/stores';
+	import { WEBUI_NAME, config } from '$lib/stores';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
 
@@ -85,15 +85,6 @@
 							{/if}
 						{/if}
 					</div>
-
-					<button
-						class="self-start {actionButtonClass}"
-						on:click={() => {
-							showChangelog.set(true);
-						}}
-					>
-						<div>{$i18n.t('settings.personal.about.seeWhatSNew.label')}</div>
-					</button>
 				</div>
 
 				{#if $config?.features?.enable_version_update_check}

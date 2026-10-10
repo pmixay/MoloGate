@@ -30,7 +30,6 @@
 	import UserProfileImage from './Account/UserProfileImage.svelte';
 	import UserSettingField from './UserSettingField.svelte';
 	import UserSettingRow from './UserSettingRow.svelte';
-	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
 
 	const i18n = getContext('i18n');
@@ -39,9 +38,10 @@
 
 	let profileImageUrl = '';
 	let name = '';
-	let bio = '';
 
-	let _gender = '';
+	// Mologate: Bio, Gender and Birth date are no longer shown here. The stored values are sent
+	// back unchanged so saving the profile doesn't clear them.
+	let bio = '';
 	let gender = '';
 	let dateOfBirth = '';
 
@@ -59,8 +59,6 @@
 	let variableFormKey = '';
 	let variableFormValue = '';
 
-	const textareaClass =
-		'w-full resize-y rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const inputClass =
 		'h-7 w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const variableValueClass =
@@ -209,10 +207,7 @@
 			name = user?.name ?? '';
 			profileImageUrl = user?.profile_image_url ?? '';
 			bio = user?.bio ?? '';
-
 			gender = user?.gender ?? '';
-			_gender = ['', 'male', 'female'].includes(gender) ? gender : 'custom';
-
 			dateOfBirth = user?.date_of_birth ?? '';
 		}
 
@@ -271,68 +266,6 @@
 					aria-label={$i18n.t('settings.personal.account.name.label')}
 					required
 					placeholder={$i18n.t('Enter your name')}
-				/>
-			</UserSettingField>
-
-			<UserSettingField
-				label={$i18n.t('settings.personal.account.bio.label')}
-				description={$i18n.t('settings.personal.account.bio.description')}
-			>
-				<Textarea
-					className={textareaClass}
-					minSize={60}
-					bind:value={bio}
-					ariaLabel={$i18n.t('settings.personal.account.bio.label')}
-					placeholder={$i18n.t('Share your background and interests')}
-				/>
-			</UserSettingField>
-
-			<UserSettingField
-				label={$i18n.t('settings.personal.account.gender.label')}
-				description={$i18n.t('settings.personal.account.gender.description')}
-			>
-				<SettingsSelect
-					bind:value={_gender}
-					className="w-full"
-					ariaLabel={$i18n.t('settings.personal.account.gender.label')}
-					on:change={() => {
-						console.log(_gender);
-
-						if (_gender === 'custom') {
-							// Handle custom gender input
-							gender = '';
-						} else {
-							gender = _gender;
-						}
-					}}
-				>
-					<option value="" selected>{$i18n.t('Prefer not to say')}</option>
-					<option value="male">{$i18n.t('Male')}</option>
-					<option value="female">{$i18n.t('Female')}</option>
-					<option value="custom">{$i18n.t('Custom')}</option>
-				</SettingsSelect>
-
-				{#if _gender === 'custom'}
-					<input
-						class="mt-1 {inputClass}"
-						type="text"
-						required
-						aria-label={$i18n.t('Custom Gender')}
-						placeholder={$i18n.t('Enter your gender')}
-						bind:value={gender}
-					/>
-				{/if}
-			</UserSettingField>
-
-			<UserSettingField
-				label={$i18n.t('settings.personal.account.birthDate.label')}
-				description={$i18n.t('settings.personal.account.birthDate.description')}
-			>
-				<input
-					class="{inputClass} dark:scheme-dark"
-					type="date"
-					aria-label={$i18n.t('settings.personal.account.birthDate.label')}
-					bind:value={dateOfBirth}
 				/>
 			</UserSettingField>
 		</UserSettingSection>
