@@ -21,6 +21,8 @@ are not in priority order. Tick an item off when it ships.
     weekly limits.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
+- [ ] **Fair use:** wide per-person limits on the shared accounts, so one person can't use up the
+      quota for everyone. Proposed defaults under [Proposed limits](#proposed-limits).
 
 ## Tools, containers and capabilities
 
@@ -61,9 +63,11 @@ are not in priority order. Tick an item off when it ships.
   - Users can open and read each subagent's conversation.
   - Preconfigured subagent profiles, such as "general purpose".
 - [ ] **Agent-swarm workflows.** Proposed design, to refine:
-  - **Definition:** a workflow is a reusable plan that runs a swarm of agents together in phases, for
-    example "plan → work in parallel → verify → merge results". It is a separate feature from team
-    [Workspaces](#workspaces): workflows coordinate agents, workspaces coordinate people.
+  - **Definition:** a workflow is an agent tool that starts a task in which many agents work together,
+    as in Claude Code. It runs a reusable plan in phases, for example "plan → work in parallel →
+    verify → merge results". It shows up in the task list like other background tasks. It is a
+    separate feature from team [Workspaces](#workspaces): workflows coordinate agents, workspaces
+    coordinate people.
   - **Agent steps:** each step names an agent profile, its instructions, its inputs, and the shape of
     the result it must return. The orchestrator can pass one step's results into the next.
   - **Patterns:**
@@ -99,6 +103,10 @@ are not in priority order. Tick an item off when it ships.
   - Agent tools for working with repositories.
   - Each user authorizes by linking their own GitHub token, and can unlink or replace it.
   - A "Create PR" button.
+- [ ] **Link a repository to a chat:** works in any chat, inside a workspace or not.
+  - By default a chat's container has no link to GitHub.
+  - The user can link a repository and branch to the chat. Mologate then clones it into the chat's
+    container, sets up git, and tells the agent to work in that repository.
 
 ## Security
 
@@ -127,9 +135,10 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Projects:** a workspace is a project that holds chats and shared files. Workspaces are for
       team work between people; they are a separate feature from
       [agent-swarm workflows](#agents-and-tasks).
-- [ ] **Repository:** a workspace starts without a linked repository by default. Its creator can pick
-      a repository and branch instead. Mologate then clones it automatically, git is set up, and the
-      agents are told to work in that repository.
+- [ ] **Shared files in chats:**
+  - When a chat is created in a workspace, the workspace's shared files appear in that chat's container.
+  - On creation, the chat's agent is given the current picture of the workspace.
+  - Changes to the shared files sync back, so every chat in the workspace sees them.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
@@ -235,10 +244,17 @@ use their own limits in this section.
 | Background tasks running, per user  | 5       | 15       |
 | Run time per background task        | 2 h     | 8 h      |
 
-## Open questions
+### Fair use of shared accounts
 
-- **Workspace files in chat containers:** each chat has its own container. Should a workspace's
-  shared files appear automatically in the container of every chat in that workspace, and should
-  changes made there sync back to the shared files?
-- **Fair use of shared accounts:** since accounts are shared by the team, should there be a per-user
-  share of each account's limits, so one person can't use up an account for everyone?
+Deliberately wide, so they only stop real overuse.
+
+| Limit                                                 | Default | Range   |
+| ----------------------------------------------------- | ------- | ------- |
+| Share of the team's combined 5-hour quota, per person | 70%     | 30–100% |
+| Share of the team's combined weekly quota, per person | 50%     | 20–100% |
+
+- **Warning:** a person sees a warning at 80% of their share.
+- **At the limit:** their new requests wait until the window moves on.
+- **Solo use:** the limit doesn't apply while nobody else on the team has used Mologate in the last
+  24 hours, so a person working alone is never blocked.
+- **Overrides:** any team member can lift the limit for someone temporarily.
