@@ -60,9 +60,10 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Subagents:**
   - Users can open and read each subagent's conversation.
   - Preconfigured subagent profiles, such as "general purpose".
-- [ ] **Multi-agent workflows.** Proposed design, to refine:
-  - **Definition:** a workflow is a reusable plan that runs several agents together in phases, for
-    example "plan → work in parallel → verify → merge results".
+- [ ] **Agent-swarm workflows.** Proposed design, to refine:
+  - **Definition:** a workflow is a reusable plan that runs a swarm of agents together in phases, for
+    example "plan → work in parallel → verify → merge results". It is a separate feature from team
+    [Workspaces](#workspaces): workflows coordinate agents, workspaces coordinate people.
   - **Agent steps:** each step names an agent profile, its instructions, its inputs, and the shape of
     the result it must return. The orchestrator can pass one step's results into the next.
   - **Patterns:**
@@ -72,9 +73,6 @@ are not in priority order. Tick an item off when it ships.
     - majority vote: several agents answer independently and the answers are compared.
   - **Live view:** each running workflow shows its phases, every agent's status and progress, and a
     link to each agent's conversation.
-  - **Repository:** a workflow starts without a linked repository by default. The user can pick a
-    repository and branch instead. Mologate then clones it automatically, git is set up, and the agents
-    are told to work in that repository.
   - **Limits:** each workflow has a maximum number of agents, a token or limit budget, and a wall-clock
     timeout. The user confirms before a large workflow starts. Proposed numbers are under
     [Proposed limits](#proposed-limits).
@@ -126,7 +124,12 @@ are not in priority order. Tick an item off when it ships.
 
 - [ ] **Team workspaces:** Mologate is first of all the team's own tool, so every workspace is visible
       to all users and anyone can work in it.
-- [ ] **Projects:** a workspace is a project that holds chats and shared files.
+- [ ] **Projects:** a workspace is a project that holds chats and shared files. Workspaces are for
+      team work between people; they are a separate feature from
+      [agent-swarm workflows](#agents-and-tasks).
+- [ ] **Repository:** a workspace starts without a linked repository by default. Its creator can pick
+      a repository and branch instead. Mologate then clones it automatically, git is set up, and the
+      agents are told to work in that repository.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
@@ -200,7 +203,7 @@ cap.
 - **Failures:** after 3 failed runs in a row, the schedule turns itself off and notifies its owner.
 - **Low limits:** a run is postponed when the provider account has less than 10% of its limit left.
 
-### Multi-agent workflows
+### Agent-swarm workflows
 
 | Limit                        | Default | Hard cap |
 | ---------------------------- | ------- | -------- |
