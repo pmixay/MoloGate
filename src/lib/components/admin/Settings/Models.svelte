@@ -7,14 +7,7 @@
 	import { onMount, onDestroy, getContext, tick } from 'svelte';
 	const i18n: any = getContext('i18n');
 
-	import {
-		config,
-		models as _models,
-		pinnedModels,
-		settings,
-		showSettings,
-		user
-	} from '$lib/stores';
+	import { config, models as _models, pinnedModels, settings, user } from '$lib/stores';
 	import {
 		createNewModel,
 		deleteAllModels,
@@ -59,8 +52,7 @@
 	import PinSlash from '$lib/components/icons/PinSlash.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
-	import { WEBUI_API_BASE_URL } from '$lib/constants';
-	import { goto } from '$app/navigation';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
@@ -93,6 +85,9 @@
 
 	let filteredModels = [];
 	let selectedModelId = null;
+	// Mologate: Workspace is removed, so custom (preset) models are edited and clones are created
+	// here instead of on the /workspace/models pages. `newModel` holds a clone being created.
+	let newModel = null;
 
 	let showManageModal = false;
 	let showResetModal = false;
@@ -624,26 +619,63 @@
 			? (await exportModels(localStorage.token, [model.id]))[0]
 			: getFullModel(model);
 
-	const openModelHandler = async (model: any) => {
-		if (isPresetModel(model)) {
-			showSettings.set(false);
-			await goto(`/workspace/models/edit?id=${encodeURIComponent(model.id)}`);
-			return;
-		}
-
+	const openModelHandler = (model: any) => {
 		selectedModelId = model.id;
 	};
 
 	const cloneHandler = async (model) => {
 		model = await getFullModel(model);
-		sessionStorage.model = JSON.stringify({
+		newModel = {
 			...model,
 			...(isPresetModel(model) ? {} : { base_model_id: model.id }),
 			id: `${model.id}-clone`,
 			name: `${model.name} (Clone)`
+		};
+	};
+
+	const createModelHandler = async (modelInfo) => {
+		if (modelInfo.id === '') {
+			toast.error($i18n.t('Error: Model ID cannot be empty. Please enter a valid ID to proceed.'));
+			return false;
+		}
+
+		if (models.find((m) => m.id === modelInfo.id)) {
+			toast.error(
+				$i18n.t(
+					"Error: A model with the ID '{{modelId}}' already exists. Please select a different ID to proceed.",
+					{ modelId: modelInfo.id }
+				)
+			);
+			return false;
+		}
+
+		const res = await createNewModel(localStorage.token, {
+			...modelInfo,
+			meta: {
+				...modelInfo.meta,
+				// LICENSE covers this Open WebUI fallback logo.
+				// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+				// https://docs.openwebui.com/license.
+				profile_image_url:
+					modelInfo.meta.profile_image_url ?? `${WEBUI_BASE_URL}/static/favicon.png`,
+				suggestion_prompts: modelInfo.meta.suggestion_prompts
+					? modelInfo.meta.suggestion_prompts.filter((prompt) => prompt.content !== '')
+					: null
+			},
+			params: { ...modelInfo.params }
+		}).catch((error) => {
+			toast.error(`${error}`);
+			return null;
 		});
-		showSettings.set(false);
-		await goto('/workspace/models/create');
+
+		if (!res) {
+			return false;
+		}
+
+		toast.success($i18n.t('Model created successfully!'));
+		newModel = null;
+		await init().catch((error) => toast.error(`${error}`));
+		return true;
 	};
 
 	const exportModelHandler = async (model) => {
@@ -722,7 +754,15 @@
 <ManageModelsModal bind:show={showManageModal} />
 
 {#if models !== null}
-	{#if selectedModelId === null}
+	{#if newModel !== null}
+		<ModelEditor
+			model={newModel}
+			onSubmit={createModelHandler}
+			onBack={() => {
+				newModel = null;
+			}}
+		/>
+	{:else if selectedModelId === null}
 		<div class="flex h-full min-h-0 flex-col text-sm">
 			<div class="mb-2 flex items-center justify-between">
 				<h2 class="text-sm font-medium text-gray-900 dark:text-white">
@@ -1282,7 +1322,7 @@
 		<ModelEditor
 			edit
 			model={models.find((m) => m.id === selectedModelId)}
-			preset={false}
+			preset={isPresetModel(models.find((m) => m.id === selectedModelId))}
 			onSubmit={async (model) => {
 				console.log(model);
 				if (!(await upsertModelHandler(model))) {

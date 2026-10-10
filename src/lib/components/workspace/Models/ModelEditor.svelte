@@ -23,6 +23,7 @@
 	import FiltersSelector from '$lib/components/workspace/Models/FiltersSelector.svelte';
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
+	import ReasoningEffortLevels from './ReasoningEffortLevels.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -124,6 +125,8 @@
 	let defaultFilterIds = [];
 
 	let capabilities = { ...DEFAULT_CAPABILITIES };
+	// Admin override for the chat effort selector; empty = use provider metadata.
+	let reasoningEffortLevels: string[] = [];
 	let defaultFeatureIds = [];
 	let builtinTools = {};
 
@@ -326,6 +329,12 @@
 
 		info.access_grants = accessGrants;
 		info.meta.capabilities = capabilities;
+
+		if (reasoningEffortLevels.length > 0) {
+			info.meta.reasoning_effort_levels = reasoningEffortLevels;
+		} else {
+			delete info.meta.reasoning_effort_levels;
+		}
 
 		if (enableDescription) {
 			info.meta.description =
@@ -567,6 +576,12 @@
 
 			// Per-model overrides take precedence over admin defaults
 			capabilities = { ...capabilities, ...(model?.meta?.capabilities ?? {}) };
+			const savedEffortLevels = model?.meta?.reasoning_effort_levels ?? [];
+			reasoningEffortLevels = (
+				typeof savedEffortLevels === 'string' ? savedEffortLevels.split(',') : savedEffortLevels
+			)
+				.map((level) => `${level}`.trim().toLowerCase())
+				.filter(Boolean);
 			defaultFeatureIds = model?.meta?.defaultFeatureIds ?? defaultFeatureIds;
 			builtinTools = model?.meta?.builtinTools ?? builtinTools;
 			terminalId = model?.meta?.terminalId ?? '';
@@ -1245,6 +1260,14 @@
 
 						<div class="my-3">
 							<Capabilities bind:capabilities />
+						</div>
+
+						<div class="my-3">
+							<ReasoningEffortLevels
+								bind:levels={reasoningEffortLevels}
+								modelId={id}
+								baseModelId={info?.base_model_id ?? null}
+							/>
 						</div>
 
 						{#if Object.keys(capabilities).filter((key) => capabilities[key]).length > 0}

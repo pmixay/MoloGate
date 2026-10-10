@@ -10,24 +10,15 @@
 
 	import { updateFolderById } from '$lib/apis/folders';
 
-	import {
-		config,
-		user,
-		models as _models,
-		temporaryChatEnabled,
-		selectedFolder
-	} from '$lib/stores';
+	import { user, models as _models, temporaryChatEnabled, selectedFolder } from '$lib/stores';
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import { sanitizeResponseContent, extractCurlyBraceWords } from '$lib/utils';
 	import {
 		resolveLocalizedModelDescription,
-		resolveLocalizedModelName,
-		resolveLocalizedModelPromptSuggestions,
-		resolveLocalizedPromptSuggestions
+		resolveLocalizedModelName
 	} from '$lib/utils/localizedContent';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
-	import Suggestions from './Suggestions.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
 	import MessageInput from './MessageInput.svelte';
@@ -54,21 +45,17 @@
 	export let selectedSkillIds = [];
 	export let selectedFilterIds = [];
 	export let pendingOAuthTools = [];
+	export let params = {}; // Effort selector (agent C): passed through to the composer
 
 	export let showCommands = false;
 
-	export let imageGenerationEnabled = false;
-	export let codeInterpreterEnabled = false;
-	export let webSearchEnabled = false;
 	export let toolApprovalMode = 'full';
 	export let onToolApprovalModeChange: Function = () => {};
 	export let oauthRedirectHandler: Function = () => {};
 
 	export let onUpload: Function = (e) => {};
 	export let onUpdate: (data?: { file?: any }) => void = () => {};
-	export let onSelect = (e) => {};
 	export let onChange = (e) => {};
-	export let onWebSearchToggle: Function = () => {};
 	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
@@ -89,21 +76,11 @@
 	let selectedModel;
 	let selectedModelName = '';
 	let selectedModelDescription = '';
-	let selectedSuggestionPrompts = [];
 
 	$: models = selectedModels.map((id) => $_models.find((m) => m.id === id));
 	$: selectedModel = atSelectedModel ?? models[selectedModelIdx];
 	$: selectedModelName = resolveLocalizedModelName(selectedModel, $i18n.language);
 	$: selectedModelDescription = resolveLocalizedModelDescription(selectedModel, $i18n.language);
-	$: selectedSuggestionPrompts =
-		resolveLocalizedModelPromptSuggestions(atSelectedModel, $i18n.language) ??
-		resolveLocalizedModelPromptSuggestions(models[selectedModelIdx], $i18n.language) ??
-		resolveLocalizedPromptSuggestions(
-			$config?.default_prompt_suggestions,
-			$config?.default_prompt_suggestions_i18n ?? {},
-			$i18n.language,
-			(key) => $i18n.t(key)
-		);
 
 	// True when viewing a shared folder the current user doesn't own AND lacks write access
 	$: folderReadOnly =
@@ -250,15 +227,13 @@
 						bind:this={messageInput}
 						{history}
 						bind:selectedModels
+						bind:params
 						bind:files
 						bind:prompt
 						bind:autoScroll
 						bind:selectedToolIds
 						bind:selectedSkillIds
 						bind:selectedFilterIds
-						bind:imageGenerationEnabled
-						bind:codeInterpreterEnabled
-						bind:webSearchEnabled
 						bind:atSelectedModel
 						bind:showCommands
 						bind:dragged
@@ -277,7 +252,6 @@
 						{onQueueEdit}
 						{onQueueDelete}
 						{askUser}
-						{onWebSearchToggle}
 						on:chatVariables
 						on:submit={(e) => {
 							dispatch('submit', e.detail);
@@ -291,12 +265,6 @@
 	{#if $selectedFolder}
 		<div class="mx-auto px-4 md:max-w-3xl md:px-6 min-h-62" in:fade={{ duration: 200, delay: 200 }}>
 			<FolderPlaceholder folder={$selectedFolder} />
-		</div>
-	{:else}
-		<div class="mx-auto max-w-2xl mt-2" in:fade={{ duration: 200, delay: 200 }}>
-			<div class="mx-5">
-				<Suggestions suggestionPrompts={selectedSuggestionPrompts} inputValue={prompt} {onSelect} />
-			</div>
 		</div>
 	{/if}
 </div>

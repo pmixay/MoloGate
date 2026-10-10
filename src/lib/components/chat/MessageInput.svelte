@@ -19,7 +19,6 @@
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
-	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 
 	const dispatch = createEventDispatcher();
 
@@ -29,18 +28,11 @@
 		settings,
 		models,
 		config,
-		showCallOverlay,
-		tools,
-		skills,
-		terminalSkills,
-		toolServers,
 		terminalServers,
 		user as _user,
-		showControls,
 		showSettings,
 		showFileNavDir,
 		selectedTerminalId,
-		TTSWorker,
 		temporaryChatEnabled
 	} from '$lib/stores';
 
@@ -71,18 +63,14 @@
 	import { getSessionUser } from '$lib/apis/auths';
 
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
-	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
 
 	import InputMenu from './MessageInput/InputMenu.svelte';
-	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
-
-	import ToolServersModal from './ToolServersModal.svelte';
-	import SkillsModal from './SkillsModal.svelte';
+	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -91,19 +79,11 @@
 	import Spinner from '../common/Spinner.svelte';
 
 	import XMark from '../icons/XMark.svelte';
-	import GlobeAlt from '../icons/GlobeAlt.svelte';
-	import Photo from '../icons/Photo.svelte';
 	import Wrench from '../icons/Wrench.svelte';
-	import Cube from '../icons/Cube.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
-	import Mic from '../icons/Mic.svelte';
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
-	import Voice from '../icons/Voice.svelte';
-	import Terminal from '../icons/Terminal.svelte';
-	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
-	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
 
@@ -131,7 +111,6 @@
 
 	export let onUpload: Function = (e) => {};
 	export let onChange: Function = () => {};
-	export let onWebSearchToggle: Function = () => {};
 
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
@@ -149,6 +128,7 @@
 
 	export let atSelectedModel: Model | undefined = undefined;
 	export let selectedModels: [''];
+	export let params = {}; // Effort selector (agent C): chat params, bound from Chat.svelte
 
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
@@ -196,9 +176,6 @@
 	export let selectedSkillIds: string[] = [];
 	export let selectedFilterIds: string[] = [];
 
-	export let imageGenerationEnabled = false;
-	export let webSearchEnabled = false;
-	export let codeInterpreterEnabled = false;
 	export let toolApprovalMode = 'full';
 	export let onToolApprovalModeChange: Function = () => {};
 
@@ -231,11 +208,6 @@
 	let copiedStatusChatId = false;
 	let selectedValvesType = 'tool'; // 'tool' or 'function'
 	let selectedValvesItemId = null;
-	let integrationsMenuCloseOnOutsideClick = true;
-
-	$: if (!showValvesModal) {
-		integrationsMenuCloseOnOutsideClick = true;
-	}
 
 	let chatInputDraft: any;
 	$: chatInputDraft = {
@@ -252,9 +224,6 @@
 		selectedToolIds,
 		selectedSkillIds,
 		selectedFilterIds,
-		imageGenerationEnabled,
-		webSearchEnabled,
-		codeInterpreterEnabled,
 		toolApprovalMode
 	};
 
@@ -425,9 +394,7 @@
 			}
 
 			chatInputElement?.setText(text);
-			if (!$showCallOverlay) {
-				focus();
-			}
+			focus();
 
 			if (text !== '') {
 				text = await inputVariableHandler(text);
@@ -692,11 +659,7 @@
 	let suggestions = null;
 	$: atSelectedModelName = resolveLocalizedModelName(atSelectedModel, $i18n.language);
 
-	let showTools = false;
-	let showSkills = false;
-
 	let loaded = false;
-	let recording = false;
 
 	let isComposing = false;
 	// Safari has a bug where compositionend is not triggered correctly #16615
@@ -772,27 +735,6 @@
 		modelCapabilitiesById
 	);
 
-	let webSearchCapableModels = [];
-	$: webSearchCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'web_search',
-		modelCapabilitiesById
-	);
-
-	let imageGenerationCapableModels = [];
-	$: imageGenerationCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'image_generation',
-		modelCapabilitiesById
-	);
-
-	let codeInterpreterCapableModels = [];
-	$: codeInterpreterCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'code_interpreter',
-		modelCapabilitiesById
-	);
-
 	let terminalCapableModels = [];
 	$: terminalCapableModels = getCapableModelIds(
 		selectedModelIds,
@@ -813,37 +755,19 @@
 		.map((id) => ($models.find((model) => model.id === id) || {})?.filters ?? [])
 		.reduce((acc, filters) => acc.filter((f1) => filters.some((f2) => f2.id === f1.id)));
 
-	let showToolsButton = false;
-	$: showToolsButton = ($tools ?? []).length > 0 || ($toolServers ?? []).length > 0;
-
-	let showSkillsButton = false;
-	$: showSkillsButton =
-		($skills ?? []).some((skill) => skill.is_active) ||
-		($terminalSkills ?? []).some((skill) => skill.is_active);
-
-	let showWebSearchButton = false;
-	$: showWebSearchButton =
-		selectedModelIds.length === webSearchCapableModels.length &&
-		$config?.features?.enable_web_search &&
-		($_user.role === 'admin' || $_user?.permissions?.features?.web_search);
-
-	let showImageGenerationButton = false;
-	$: showImageGenerationButton =
-		selectedModelIds.length === imageGenerationCapableModels.length &&
-		$config?.features?.enable_image_generation &&
-		($_user.role === 'admin' || $_user?.permissions?.features?.image_generation);
-
-	let showCodeInterpreterButton = false;
-	$: showCodeInterpreterButton =
-		!$selectedTerminalId &&
-		selectedModelIds.length === codeInterpreterCapableModels.length &&
-		$config?.features?.enable_code_interpreter &&
-		($_user.role === 'admin' || $_user?.permissions?.features?.code_interpreter);
-
-	// Disable code interpreter when terminal is active (mutually exclusive)
-	$: if ($selectedTerminalId && codeInterpreterEnabled) {
-		codeInterpreterEnabled = false;
-	}
+	// Mologate: there is no Integrations menu. Web search, image generation and the code
+	// interpreter are always on when available (see getFeatures in Chat.svelte), and every tool
+	// the user can access is selected by default. The row next to "+" only shows what still
+	// needs the user: model valves, active filters, tools waiting for sign-in, the terminal picker.
+	$: showModelValvesButton =
+		selectedModelIds.length === 1 &&
+		!!$models.find((m) => m.id === selectedModelIds[0])?.has_user_valves;
+	$: activeFilterIds = selectedFilterIds.filter((id) => toggleFilters.some((f) => f.id === id));
+	$: hasToolbarExtras =
+		showModelValvesButton ||
+		activeFilterIds.length > 0 ||
+		pendingOAuthTools.length > 0 ||
+		showTerminalSelector;
 
 	// Clear selected terminal when model doesn't support terminal
 	$: if ($selectedTerminalId && selectedModelIds.length > 0 && terminalCapableModels.length === 0) {
@@ -1330,21 +1254,6 @@
 			shiftKey = true;
 		}
 
-		if (
-			$settings?.keyboardShortcuts !== false &&
-			matchKeybinding(e) === Shortcut.TOGGLE_DICTATION
-		) {
-			e.preventDefault();
-			if (recording) {
-				// Confirm and stop recording
-				document.getElementById('confirm-recording-button')?.click();
-			} else {
-				// Start recording (same logic as voice-input-button click)
-				document.getElementById('voice-input-button')?.click();
-			}
-			return;
-		}
-
 		if (e.key === 'Escape') {
 			console.log('Escape');
 			dragged = false;
@@ -1631,9 +1540,6 @@
 	});
 </script>
 
-<ToolServersModal bind:show={showTools} {selectedToolIds} />
-<SkillsModal bind:show={showSkills} {selectedSkillIds} />
-
 <InputVariablesModal
 	bind:show={showInputVariablesModal}
 	variables={inputVariables}
@@ -1647,9 +1553,6 @@
 	id={selectedValvesItemId ?? null}
 	on:save={async () => {
 		await tick();
-	}}
-	on:close={() => {
-		integrationsMenuCloseOnOutsideClick = true;
 	}}
 />
 
@@ -1732,33 +1635,8 @@
 						}}
 					/>
 
-					<div class={recording ? '' : 'hidden'}>
-						<VoiceRecording
-							bind:recording
-							onCancel={async () => {
-								recording = false;
-
-								await tick();
-								focus({ preventScroll: true });
-							}}
-							onConfirm={async (data) => {
-								const { text, filename } = data;
-
-								recording = false;
-
-								await tick();
-								await insertTextAtCursor(`${text}`);
-								await tick();
-								focus({ preventScroll: true });
-
-								if ($settings?.speechAutoSend ?? false) {
-									dispatch('submit', prompt);
-								}
-							}}
-						/>
-					</div>
 					<form
-						class="w-full flex flex-col gap-1.5 {recording ? 'hidden' : ''}"
+						class="w-full flex flex-col gap-1.5"
 						on:submit|preventDefault={() => {
 							dispatch('submit', prompt);
 						}}
@@ -2169,12 +2047,6 @@
 														if (e.key === 'Escape') {
 															console.log('Escape');
 															atSelectedModel = undefined;
-															selectedToolIds = [];
-															selectedFilterIds = [];
-
-															webSearchEnabled = false;
-															imageGenerationEnabled = false;
-															codeInterpreterEnabled = false;
 														}
 													}}
 													on:paste={async (e) => {
@@ -2292,59 +2164,14 @@
 										</button>
 									</InputMenu>
 
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+									{#if hasToolbarExtras}
 										<div class="flex self-center w-px h-4 bg-gray-200 dark:bg-gray-800 shrink-0" />
 									{/if}
 
 									<div
 										class="flex flex-1 items-center gap-1.5 min-w-0 overflow-x-auto scrollbar-none p-[3px] -m-[3px]"
 									>
-										{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
-											<IntegrationsMenu
-												selectedModels={selectedModelIds}
-												{toggleFilters}
-												{showWebSearchButton}
-												{showImageGenerationButton}
-												{showCodeInterpreterButton}
-												bind:selectedToolIds
-												bind:selectedSkillIds
-												bind:selectedFilterIds
-												bind:webSearchEnabled
-												bind:imageGenerationEnabled
-												bind:codeInterpreterEnabled
-												oauthRedirectHandler={(tool: {
-													id: string;
-													serverId: string;
-													authType?: string | null;
-												}) => oauthRedirectHandler(tool, chatInputDraft)}
-												{onWebSearchToggle}
-												closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
-												onShowValves={(e) => {
-													const { type, id } = e;
-													selectedValvesType = type;
-													selectedValvesItemId = id;
-													showValvesModal = true;
-													integrationsMenuCloseOnOutsideClick = false;
-												}}
-												onClose={async () => {
-													await tick();
-
-													const chatInput = document.getElementById('chat-input');
-													chatInput?.focus();
-												}}
-											>
-												<button
-													type="button"
-													id="integration-menu-button"
-													class="bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100 rounded-[9px] size-[34px] flex justify-center items-center transition outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent shrink-0"
-													aria-label={$i18n.t('Integrations')}
-												>
-													<Component className="size-[18px]" strokeWidth="1.5" />
-												</button>
-											</IntegrationsMenu>
-										{/if}
-
-										{#if selectedModelIds.length === 1 && $models.find((m) => m.id === selectedModelIds[0])?.has_user_valves}
+										{#if showModelValvesButton}
 											<div class="flex gap-1.5 shrink-0">
 												<Tooltip content={$i18n.t('Valves')} placement="top">
 													<button
@@ -2364,52 +2191,6 @@
 										{/if}
 
 										<div class="flex items-center gap-1.5 shrink-0">
-											{#if (selectedToolIds ?? []).length > 0}
-												<Tooltip
-													content={$i18n.t('{{COUNT}} Available Tools', {
-														COUNT: (selectedToolIds ?? []).length
-													})}
-												>
-													<button
-														class="h-8 px-2.5 flex gap-1.5 items-center text-[12.5px] rounded-lg border transition-colors duration-150 max-w-full overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent shrink-0 border-gray-300 bg-gray-100 text-gray-900 hover:bg-gray-200/70 dark:border-gray-700 dark:bg-[#1f2130] dark:text-gray-100 dark:hover:bg-[#262838]"
-														aria-label={$i18n.t('Available Tools')}
-														type="button"
-														on:click={() => {
-															showTools = !showTools;
-														}}
-													>
-														<Wrench className="size-[15px]" strokeWidth="1.75" />
-
-														<span class="font-mono text-xs tabular-nums">
-															{(selectedToolIds ?? []).length}
-														</span>
-													</button>
-												</Tooltip>
-											{/if}
-
-											{#if (selectedSkillIds ?? []).length > 0}
-												<Tooltip
-													content={$i18n.t('{{COUNT}} Available Skills', {
-														COUNT: (selectedSkillIds ?? []).length
-													})}
-												>
-													<button
-														class="h-8 px-2.5 flex gap-1.5 items-center text-[12.5px] rounded-lg border transition-colors duration-150 max-w-full overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent shrink-0 border-gray-300 bg-gray-100 text-gray-900 hover:bg-gray-200/70 dark:border-gray-700 dark:bg-[#1f2130] dark:text-gray-100 dark:hover:bg-[#262838]"
-														aria-label={$i18n.t('Available Skills')}
-														type="button"
-														on:click={() => {
-															showSkills = !showSkills;
-														}}
-													>
-														<Cube className="size-[15px]" strokeWidth="1.75" />
-
-														<span class="font-mono text-xs tabular-nums">
-															{(selectedSkillIds ?? []).length}
-														</span>
-													</button>
-												</Tooltip>
-											{/if}
-
 											{#each selectedFilterIds as filterId (filterId)}
 												{@const filter = toggleFilters.find((f) => f.id === filterId)}
 												{#if filter}
@@ -2481,73 +2262,6 @@
 												{/if}
 											{/each}
 
-											{#if webSearchEnabled && showWebSearchButton}
-												<Tooltip content={$i18n.t('Web Search')} placement="top">
-													<button
-														on:click|preventDefault={() => (webSearchEnabled = !webSearchEnabled)}
-														type="button"
-														class="group h-8 px-2.5 flex gap-1.5 items-center text-[12.5px] rounded-lg border transition-colors duration-150 max-w-full overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent {webSearchEnabled ||
-														($settings?.webSearch ?? false) === 'always'
-															? 'border-gray-300 bg-gray-100 text-gray-900 hover:bg-gray-200/70 dark:border-gray-700 dark:bg-[#1f2130] dark:text-gray-100 dark:hover:bg-[#262838]'
-															: 'bg-transparent border-gray-200 text-gray-600 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800/60'}"
-													>
-														<GlobeAlt className="size-[15px] shrink-0" strokeWidth="1.75" />
-														<span class="hidden sm:inline truncate">{$i18n.t('Web Search')}</span>
-														<div class="hidden group-hover:block text-gray-500 dark:text-gray-400">
-															<XMark className="size-3.5" strokeWidth="1.75" />
-														</div>
-													</button>
-												</Tooltip>
-											{/if}
-
-											{#if imageGenerationEnabled && showImageGenerationButton}
-												<Tooltip content={$i18n.t('Image')} placement="top">
-													<button
-														on:click|preventDefault={() =>
-															(imageGenerationEnabled = !imageGenerationEnabled)}
-														type="button"
-														class="group h-8 px-2.5 flex gap-1.5 items-center text-[12.5px] rounded-lg border transition-colors duration-150 max-w-full overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent {imageGenerationEnabled
-															? 'border-gray-300 bg-gray-100 text-gray-900 hover:bg-gray-200/70 dark:border-gray-700 dark:bg-[#1f2130] dark:text-gray-100 dark:hover:bg-[#262838]'
-															: 'bg-transparent border-gray-200 text-gray-600 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800/60'}"
-													>
-														<Photo className="size-[15px] shrink-0" strokeWidth="1.75" />
-														<span class="hidden sm:inline truncate">{$i18n.t('Image')}</span>
-														<div class="hidden group-hover:block text-gray-500 dark:text-gray-400">
-															<XMark className="size-3.5" strokeWidth="1.75" />
-														</div>
-													</button>
-												</Tooltip>
-											{/if}
-
-											{#if codeInterpreterEnabled && showCodeInterpreterButton}
-												<Tooltip content={$i18n.t('Code Interpreter')} placement="top">
-													<button
-														aria-label={codeInterpreterEnabled
-															? $i18n.t('Disable Code Interpreter')
-															: $i18n.t('Enable Code Interpreter')}
-														aria-pressed={codeInterpreterEnabled}
-														on:click|preventDefault={() =>
-															(codeInterpreterEnabled = !codeInterpreterEnabled)}
-														type="button"
-														class="group h-8 px-2.5 flex gap-1.5 items-center text-[12.5px] rounded-lg border transition-colors duration-150 max-w-full overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent {codeInterpreterEnabled
-															? 'border-gray-300 bg-gray-100 text-gray-900 hover:bg-gray-200/70 dark:border-gray-700 dark:bg-[#1f2130] dark:text-gray-100 dark:hover:bg-[#262838]'
-															: 'bg-transparent border-gray-200 text-gray-600 hover:bg-gray-100 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-800/60'} {($settings?.highContrastMode ??
-														false)
-															? 'm-1'
-															: ''}"
-													>
-														<Terminal className="size-3.5 shrink-0" strokeWidth="2" />
-														<span class="hidden sm:inline truncate"
-															>{$i18n.t('Code Interpreter')}</span
-														>
-
-														<div class="hidden group-hover:block text-gray-500 dark:text-gray-400">
-															<XMark className="size-3.5" strokeWidth="1.75" />
-														</div>
-													</button>
-												</Tooltip>
-											{/if}
-
 											{#each pendingOAuthTools as pendingTool (pendingTool.id)}
 												<Tooltip content={$i18n.t('Click to connect')} placement="top">
 													<button
@@ -2577,7 +2291,7 @@
 									</div>
 								</div>
 
-								<div class="self-end flex items-center gap-1 mr-0.5 min-w-0">
+								<div class="self-end flex items-center gap-1 mr-0.5 min-w-0 min-h-11">
 									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[14rem]">
 										<ModelSelector
 											bind:this={modelSelector}
@@ -2591,6 +2305,7 @@
 									</div>
 
 									<!-- Effort selector (agent C): insert <EffortSelector /> on the line below. -->
+									<EffortSelector {selectedModels} bind:params />
 
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">
@@ -2633,147 +2348,39 @@
 												</button>
 											</Tooltip>
 										</div>
-									{:else}
-										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
-											{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
-												<!-- {$i18n.t('Record voice')} -->
-												<Tooltip content={$i18n.t('Dictate')}>
-													<button
-														id="voice-input-button"
-														class="flex size-9 items-center justify-center text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100 transition rounded-[9px] self-center outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
-														type="button"
-														on:click={async () => {
-															try {
-																let stream = await navigator.mediaDevices
-																	.getUserMedia({ audio: true })
-																	.catch(function (err) {
-																		toast.error(
-																			$i18n.t(
-																				`Permission denied when accessing microphone: {{error}}`,
-																				{
-																					error: err
-																				}
-																			)
-																		);
-																		return null;
-																	});
-
-																if (stream) {
-																	recording = true;
-																	const tracks = stream.getTracks();
-																	tracks.forEach((track) => track.stop());
-																}
-																stream = null;
-															} catch {
-																toast.error($i18n.t('Permission denied when accessing microphone'));
-															}
-														}}
-														aria-label={$i18n.t('Voice Input')}
-													>
-														<Mic className="size-[1.125rem]" />
-													</button>
-												</Tooltip>
-											{/if}
-										{/if}
-
-										{#if !embedded && prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
-											<div class=" flex items-center">
-												<!-- {$i18n.t('Call')} -->
-												<Tooltip content={$i18n.t('Voice mode')}>
-													<button
-														class="flex size-11 items-center justify-center rounded-[11px] border border-gray-200 bg-gray-100 text-gray-900 hover:bg-gray-200 dark:border-gray-700/60 dark:bg-gray-800/60 dark:text-gray-100 dark:hover:bg-gray-800 transition self-center outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
-														type="button"
-														on:click={async () => {
-															if (selectedModels.length > 1) {
-																toast.error($i18n.t('Select only one model to call'));
-
-																return;
-															}
-
-															if ($config.audio.stt.engine === 'web') {
-																toast.error(
-																	$i18n.t('Call feature is not supported when using Web STT engine')
-																);
-
-																return;
-															}
-															// check if user has access to getUserMedia
-															try {
-																let stream = await navigator.mediaDevices.getUserMedia({
-																	audio: true
-																});
-																// If the user grants the permission, proceed to show the call overlay
-
-																if (stream) {
-																	const tracks = stream.getTracks();
-																	tracks.forEach((track) => track.stop());
-																}
-
-																stream = null;
-
-																if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-																	// If the user has not initialized the TTS worker, initialize it
-																	if (!$TTSWorker) {
-																		await TTSWorker.set(
-																			new KokoroWorker({
-																				dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-																			})
-																		);
-
-																		await $TTSWorker.init();
-																	}
-																}
-
-																showCallOverlay.set(true);
-																showControls.set(true);
-															} catch (err) {
-																// If the user denies the permission or an error occurs, show an error message
-																toast.error(
-																	$i18n.t('Permission denied when accessing media devices')
-																);
-															}
-														}}
-														aria-label={$i18n.t('Voice mode')}
-													>
-														<Voice className="size-[18px]" strokeWidth="2.5" />
-													</button>
-												</Tooltip>
-											</div>
-										{:else}
-											<div class=" flex items-center">
-												<Tooltip
-													content={uploadPending
-														? $i18n.t('Waiting for upload...')
-														: $i18n.t('Send message')}
+									{:else if prompt !== '' || files.length > 0 || uploadPending}
+										<!-- Mologate: no dictation / voice-mode buttons; send shows once there is input. -->
+										<div class=" flex items-center">
+											<Tooltip
+												content={uploadPending
+													? $i18n.t('Waiting for upload...')
+													: $i18n.t('Send message')}
+											>
+												<button
+													id="send-message-button"
+													class="bg-accent text-accent-ink hover:bg-accent-hover flex size-11 items-center justify-center rounded-[11px] transition self-center outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-850"
+													type="submit"
+													disabled={(prompt === '' && files.length === 0) || uploadPending}
 												>
-													<button
-														id="send-message-button"
-														class="{!(prompt === '' && files.length === 0) || uploadPending
-															? 'bg-accent text-accent-ink hover:bg-accent-hover'
-															: 'border border-gray-200 bg-gray-100 text-gray-400 dark:border-gray-800 dark:bg-gray-800/40 dark:text-gray-500 cursor-not-allowed disabled'} flex size-11 items-center justify-center rounded-[11px] transition self-center outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-gray-850"
-														type="submit"
-														disabled={(prompt === '' && files.length === 0) || uploadPending}
-													>
-														{#if uploadPending}
-															<Spinner className="size-5" />
-														{:else}
-															<svg
-																xmlns="http://www.w3.org/2000/svg"
-																viewBox="0 0 16 16"
-																fill="currentColor"
-																class="size-5"
-															>
-																<path
-																	fill-rule="evenodd"
-																	d="M8 14a.75.75 0 0 1-.75-.75V4.56L4.03 7.78a.75.75 0 0 1-1.06-1.06l4.5-4.5a.75.75 0 0 1 1.06 0l4.5 4.5a.75.75 0 0 1-1.06 1.06L8.75 4.56v8.69A.75.75 0 0 1 8 14Z"
-																	clip-rule="evenodd"
-																/>
-															</svg>
-														{/if}
-													</button>
-												</Tooltip>
-											</div>
-										{/if}
+													{#if uploadPending}
+														<Spinner className="size-5" />
+													{:else}
+														<svg
+															xmlns="http://www.w3.org/2000/svg"
+															viewBox="0 0 16 16"
+															fill="currentColor"
+															class="size-5"
+														>
+															<path
+																fill-rule="evenodd"
+																d="M8 14a.75.75 0 0 1-.75-.75V4.56L4.03 7.78a.75.75 0 0 1-1.06-1.06l4.5-4.5a.75.75 0 0 1 1.06 0l4.5 4.5a.75.75 0 0 1-1.06 1.06L8.75 4.56v8.69A.75.75 0 0 1 8 14Z"
+																clip-rule="evenodd"
+															/>
+														</svg>
+													{/if}
+												</button>
+											</Tooltip>
+										</div>
 									{/if}
 								</div>
 							</div>

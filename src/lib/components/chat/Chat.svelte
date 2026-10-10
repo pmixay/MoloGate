@@ -4436,11 +4436,13 @@
 									id={embedded ? messageInputDropzoneId : undefined}
 									class=" pb-2 {dragged ? 'z-0' : 'z-10'}"
 								>
+									<!-- Effort selector (agent C): bind:params lets it set the chat's reasoning_effort -->
 									<MessageInput
 										bind:this={messageInput}
 										{history}
 										{taskIds}
 										bind:selectedModels
+										bind:params
 										bind:files
 										bind:prompt
 										bind:autoScroll
@@ -4528,11 +4530,13 @@
 									</div>
 								{/if}
 								<div id={embedded ? messageInputDropzoneId : undefined} class="pb-2 z-10">
+									<!-- Effort selector (agent C): bind:params lets it set the chat's reasoning_effort -->
 									<MessageInput
 										bind:this={messageInput}
 										{history}
 										{taskIds}
 										bind:selectedModels
+										bind:params
 										bind:files
 										bind:prompt
 										bind:autoScroll
