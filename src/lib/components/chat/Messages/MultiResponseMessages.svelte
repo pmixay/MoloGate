@@ -15,7 +15,7 @@
 
 	import Markdown from './Markdown.svelte';
 	import Name from './Name.svelte';
-	import Skeleton from './Skeleton.svelte';
+	import WorkingIndicator from './WorkingIndicator.svelte';
 	import ProfileImage from './ProfileImage.svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 	import equal from 'fast-deep-equal';
@@ -404,7 +404,7 @@
 
 								<div class="mt-1 w-full min-w-full">
 									{#if (message?.content ?? '') === ''}
-										<Skeleton />
+										<WorkingIndicator />
 									{:else}
 										<div class="markdown-prose">
 											<Markdown id={`merged`} content={message.content ?? ''} />

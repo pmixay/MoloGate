@@ -273,13 +273,6 @@
 					<Switch bind:state={adminConfig.ENABLE_COMMUNITY_SHARING} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.messageRating.label')}
-					description={$i18n.t('settings.admin.general.messageRating.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_MESSAGE_RATING} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.folders.label')}
 					description={$i18n.t('settings.admin.general.folders.description')}
 					let:labelId
@@ -372,13 +365,6 @@
 					let:labelId
 				>
 					<Switch bind:state={adminConfig.ENABLE_USER_WEBHOOKS} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.userStatus.label')}
-					description={$i18n.t('settings.admin.general.userStatus.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_USER_STATUS} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 
 				<AdminSettingField

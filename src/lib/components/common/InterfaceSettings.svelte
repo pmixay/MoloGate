@@ -1167,29 +1167,6 @@
 
 	<div>
 		<div class={settingRowClass}>
-			<div id="insert-suggestion-prompt-label" class={settingLabelClass}>
-				{$i18n.t('settings.personal.interface.insertSuggestionPromptToInput.label')}
-			</div>
-
-			<div class={settingControlClass}>
-				<Switch
-					ariaLabelledbyId="insert-suggestion-prompt-label"
-					tooltip={true}
-					bind:state={insertSuggestionPrompt}
-					inherited={isDefaultSetting('insertSuggestionPrompt')}
-					on:change={() => {
-						saveSettings({ insertSuggestionPrompt });
-					}}
-				/>
-			</div>
-		</div>
-		<p class={settingDescriptionClass}>
-			{$i18n.t('settings.personal.interface.insertSuggestionPromptToInput.description')}
-		</p>
-	</div>
-
-	<div>
-		<div class={settingRowClass}>
 			<div id="keep-follow-up-prompts-label" class={settingLabelClass}>
 				{$i18n.t('settings.personal.interface.keepFollowUpPromptsInChat.label')}
 			</div>

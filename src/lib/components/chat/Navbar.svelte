@@ -9,7 +9,6 @@
 		config,
 		mobile,
 		settings,
-		showControls,
 		showSidebar,
 		temporaryChatEnabled,
 		user
@@ -22,7 +21,6 @@
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Menu from '$lib/components/layout/Navbar/Menu.svelte';
-	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
 
 	import PencilSquare from '../icons/PencilSquare.svelte';
 	import Banner from '../common/Banner.svelte';
@@ -34,7 +32,6 @@
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
-	import Knobs from '../icons/Knobs.svelte';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
 
 	const i18n: any = getContext('i18n');
@@ -237,20 +234,6 @@
 								aria-label={$i18n.t('New Chat')}
 							>
 								<ChatPlus className="size-[18px]" strokeWidth="1.5" />
-							</button>
-						</Tooltip>
-					{/if}
-
-					{#if $user?.role === 'admin' || ($user?.permissions.chat?.controls ?? true)}
-						<Tooltip content={$i18n.t('Controls')}>
-							<button
-								class="flex size-9 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100 outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent"
-								on:click={async () => {
-									await showControls.set(!$showControls);
-								}}
-								aria-label={$i18n.t('Controls')}
-							>
-								<Knobs className="size-5" strokeWidth="1" />
 							</button>
 						</Tooltip>
 					{/if}

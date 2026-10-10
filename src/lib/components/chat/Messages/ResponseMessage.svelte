@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WorkingIndicator from './WorkingIndicator.svelte';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
 	import { functions as localizedFunctions } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
@@ -624,12 +625,9 @@
 								/>
 							{/if}
 
-							{#if !message.done && !message.error && (hasResponseContent || !hasVisibleStatus)}
-								<div class="text-[0.9375rem] leading-relaxed">
-									<span
-										class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-pulse align-text-bottom"
-									></span>
-								</div>
+							{#if !message.done && !message.error}
+								<!-- Mologate: hammer animation while the agent is working -->
+								<WorkingIndicator />
 							{/if}
 
 							{#if message?.error}

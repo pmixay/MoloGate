@@ -53,7 +53,6 @@
 	export let autoScroll;
 	export let messagesContainerId = 'messages-container';
 
-	export let onSelect = (e) => {};
 	export let onInsertToNote: ((content: string) => void) | null = null;
 
 	export let messagesCount: number | null = 8;
@@ -473,7 +472,7 @@
 
 <div class={className}>
 	{#if Object.keys(history?.messages ?? {}).length == 0}
-		<ChatPlaceholder modelIds={selectedModels} {atSelectedModel} {onSelect} />
+		<ChatPlaceholder modelIds={selectedModels} {atSelectedModel} />
 	{:else}
 		<div class="w-full pt-2">
 			{#key chatId}

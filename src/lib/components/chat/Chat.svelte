@@ -28,7 +28,6 @@
 		socket,
 		audioQueue,
 		showControls,
-		showCallOverlay,
 		temporaryChatEnabled,
 		mobile,
 		chatTitle,
@@ -55,7 +54,6 @@
 	import {
 		convertMessagesToHistory,
 		copyToClipboard,
-		getMessageContentParts,
 		createMessagesList,
 		getDeepestChildId,
 		sanitizeHistory,
@@ -284,7 +282,7 @@
 		const threshold = contextCompactionEnabled
 			? (getContextThreshold() ?? serverContextUsage?.threshold ?? null)
 			: null;
-		const systemTokens = estimateTokens($settings?.system ?? '');
+		const systemTokens = estimateTokens(params?.system ?? '');
 		let estimatedTokens = systemTokens;
 		let hasUsageCheckpoint = false;
 		let summary = '';
@@ -331,26 +329,68 @@
 	let selectedFilterIds: string[] = [];
 	let pendingOAuthTools = [];
 
-	let imageGenerationEnabled = false;
-	let webSearchEnabled = false;
-	let codeInterpreterEnabled = false;
+	// Mologate: web search, image generation and the code interpreter have no toggles. Each is on
+	// whenever the admin has enabled it, the user has permission and the selected models support
+	// it. With native function calling (the default) the backend offers them to the model as tools
+	// and the model decides when to call them. With legacy function calling the backend would run
+	// web search and image generation on every message, so those two are only sent in native mode
+	// (web search still follows the user's "always" setting there).
 	let webSearchActive = false;
+	let imageGenerationActive = false;
+	let codeInterpreterActive = false;
+	let webSearchDeclined = false;
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
 
+	const usesNativeFunctionCalling = (modelIds: string[], allModels, userParams, chatParams) => {
+		// Same precedence as the backend: request params, then the model's own params.
+		const requestMode = { ...(userParams ?? {}), ...(chatParams ?? {}) }.function_calling;
+		return modelIds.every(
+			(id) =>
+				(requestMode ||
+					(allModels ?? []).find((m) => m.id === id)?.info?.params?.function_calling ||
+					'native') !== 'legacy'
+		);
+	};
+
+	const allModelsSupport = (modelIds: string[], allModels, capability: string) =>
+		modelIds.every(
+			(id) =>
+				(allModels ?? []).find((m) => m.id === id)?.info?.meta?.capabilities?.[capability] ?? true
+		);
+
 	$: {
-		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
-		const allModelsSupportWebSearch =
-			currentModels.filter(
-				(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
-			).length === currentModels.length;
+		const currentModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
+			(id) => id
+		);
+		const nativeFunctionCalling = usesNativeFunctionCalling(
+			currentModels,
+			$models,
+			$settings?.params,
+			params
+		);
+		const isAdmin = $user?.role === 'admin';
 
 		webSearchActive = Boolean(
 			$config?.features?.enable_web_search &&
-			($user?.role === 'admin' || $user?.permissions?.features?.web_search) &&
-			(webSearchEnabled ||
-				(allModelsSupportWebSearch && ($settings?.webSearch ?? false) === 'always'))
+			(isAdmin || $user?.permissions?.features?.web_search) &&
+			allModelsSupport(currentModels, $models, 'web_search') &&
+			(nativeFunctionCalling || ($settings?.webSearch ?? false) === 'always') &&
+			!webSearchDeclined
+		);
+		imageGenerationActive = Boolean(
+			$config?.features?.enable_image_generation &&
+			(isAdmin || $user?.permissions?.features?.image_generation) &&
+			allModelsSupport(currentModels, $models, 'image_generation') &&
+			nativeFunctionCalling
+		);
+		codeInterpreterActive = Boolean(
+			$config?.features?.enable_code_interpreter &&
+			(isAdmin || $user?.permissions?.features?.code_interpreter) &&
+			allModelsSupport(currentModels, $models, 'code_interpreter') &&
+			// The terminal and the code interpreter are mutually exclusive.
+			!$selectedTerminalId
 		);
 	}
 
@@ -358,14 +398,6 @@
 		window.setTimeout(() => {
 			showWebSearchConfirm = true;
 		}, 0);
-	};
-
-	const handleWebSearchToggle = (enabled: boolean) => {
-		if (enabled && $config?.features?.enable_web_search_confirmation && !webSearchConfirmed) {
-			webSearchEnabled = false;
-			pendingWebSearchPrompt = null;
-			openWebSearchConfirm();
-		}
 	};
 
 	const resetWebSearchConfirmation = () => {
@@ -766,9 +798,6 @@
 			selectedToolIds = input.selectedToolIds ?? [];
 			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
-			webSearchEnabled = input.webSearchEnabled ?? false;
-			imageGenerationEnabled = input.imageGenerationEnabled ?? false;
-			codeInterpreterEnabled = input.codeInterpreterEnabled ?? false;
 			if (input.toolApprovalMode) {
 				await handleToolApprovalModeChange(input.toolApprovalMode);
 			}
@@ -832,8 +861,7 @@
 		selectedToolIds = [];
 		selectedSkillIds = [];
 		selectedFilterIds = [];
-		webSearchEnabled = false;
-		imageGenerationEnabled = false;
+		webSearchDeclined = false;
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
@@ -903,9 +931,6 @@
 		selectedToolIds = [];
 		selectedSkillIds = [];
 		selectedFilterIds = [];
-		webSearchEnabled = false;
-		imageGenerationEnabled = false;
-		codeInterpreterEnabled = false;
 		prompt = '';
 		messageInput?.setText('');
 		await chatId.set('');
@@ -915,20 +940,6 @@
 		loading = false;
 		await tick();
 		messageInput?.focus({ preventScroll: true });
-	};
-
-	const onSelect = async (e) => {
-		const { type, data } = e;
-
-		if (type === 'prompt') {
-			// Handle prompt selection
-			messageInput?.setText(data, async () => {
-				if (!($settings?.insertSuggestionPrompt ?? false)) {
-					await tick();
-					submitHandler(prompt);
-				}
-			});
-		}
 	};
 
 	$: if (selectedModels && chatIdProp !== '') {
@@ -972,9 +983,6 @@
 		selectedSkillIds = [];
 		selectedFilterIds = [];
 		pendingOAuthTools = [];
-		webSearchEnabled = false;
-		imageGenerationEnabled = false;
-		codeInterpreterEnabled = false;
 
 		if (selectedModelIds.filter((id) => id).length > 0) {
 			await setDefaults();
@@ -1019,7 +1027,19 @@
 			if (!$skills) {
 				skills.set(await getSkills(localStorage.token));
 			}
+
+			// Mologate: every tool the user can access is selected by default. Tools that still
+			// need the user to sign in (OAuth) are left out unless the model lists them, since
+			// there is no menu to connect them and they would block sending.
+			const accessibleToolIds = [
+				...($tools ?? []).filter((tool) => tool.authenticated !== false).map((tool) => tool.id),
+				...($toolServers ?? []).flatMap((server, idx) =>
+					server?.info ? [`direct_server:${idx}`] : []
+				)
+			];
+
 			if (selectedModels.length !== 1 && !atSelectedModel) {
+				selectedToolIds = accessibleToolIds;
 				return;
 			}
 
@@ -1050,13 +1070,11 @@
 							authed.push(id);
 						}
 					}
-					selectedToolIds = authed;
+					selectedToolIds = [...new Set([...authed, ...accessibleToolIds])];
 					pendingOAuthTools = unauthed;
 					await continueOAuthRedirect();
-				} else if ($settings?.tools) {
-					selectedToolIds = $settings.tools;
 				} else {
-					selectedToolIds = selectedToolIds.filter((id) => !id.startsWith('direct_server:'));
+					selectedToolIds = accessibleToolIds;
 				}
 
 				// Set Default Skills
@@ -1077,33 +1095,6 @@
 					selectedFilterIds = model.info.meta.defaultFilterIds.filter((id) =>
 						model?.filters?.find((f) => f.id === id)
 					);
-				}
-
-				// Set Default Features
-				if (model?.info?.meta?.defaultFeatureIds) {
-					if (
-						model.info?.meta?.capabilities?.['image_generation'] &&
-						$config?.features?.enable_image_generation &&
-						($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
-					) {
-						imageGenerationEnabled = model.info.meta.defaultFeatureIds.includes('image_generation');
-					}
-
-					if (
-						model.info?.meta?.capabilities?.['web_search'] &&
-						$config?.features?.enable_web_search &&
-						($user?.role === 'admin' || $user?.permissions?.features?.web_search)
-					) {
-						webSearchEnabled = model.info.meta.defaultFeatureIds.includes('web_search');
-					}
-
-					if (
-						model.info?.meta?.capabilities?.['code_interpreter'] &&
-						$config?.features?.enable_code_interpreter &&
-						($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
-					) {
-						codeInterpreterEnabled = model.info.meta.defaultFeatureIds.includes('code_interpreter');
-					}
 				}
 
 				// Set Default Terminal — only if the referenced terminal actually exists
@@ -1585,7 +1576,6 @@
 
 		const showControlsSubscribe = showControls.subscribe((value) => {
 			if (!value) {
-				showCallOverlay.set(false);
 				showArtifacts.set(false);
 				showEmbeds.set(false);
 			}
@@ -1618,9 +1608,6 @@
 				selectedToolIds = [];
 				selectedSkillIds = [];
 				selectedFilterIds = [];
-				webSearchEnabled = false;
-				imageGenerationEnabled = false;
-				codeInterpreterEnabled = false;
 
 				await restoreChatInput(storageChatInput);
 			}
@@ -1907,45 +1894,6 @@
 
 	$: onHistoryChange(history);
 
-	const dispatchCallOverlayAudio = (message, final = false) => {
-		if (!$showCallOverlay) {
-			return;
-		}
-
-		const ttsSplitOn = $config?.audio?.tts?.split_on ?? 'punctuation';
-		const messageContentParts = getMessageContentParts(
-			getOutputText(message?.output) || removeAllDetails(message?.content ?? ''),
-			ttsSplitOn
-		);
-
-		const sentContentPartCount = message.ttsSentContentPartCount ?? 0;
-		const nextContentParts = (final ? messageContentParts : messageContentParts.slice(0, -1)).slice(
-			sentContentPartCount
-		);
-		const pendingContentPartIndex = nextContentParts.findIndex(
-			(content) =>
-				!final &&
-				ttsSplitOn === 'punctuation' &&
-				(content.split(/\s+/).length < 4 || content.length < 50)
-		);
-		const dispatchContentParts =
-			pendingContentPartIndex === -1
-				? nextContentParts
-				: nextContentParts.slice(0, pendingContentPartIndex);
-
-		dispatchContentParts.forEach((content) => {
-			eventTarget.dispatchEvent(
-				new CustomEvent('chat', {
-					detail: {
-						id: message.id,
-						content
-					}
-				})
-			);
-		});
-		message.ttsSentContentPartCount = sentContentPartCount + dispatchContentParts.length;
-	};
-
 	const getContents = () => {
 		const messages = history ? createMessagesList(history, history.currentId) : [];
 		let contents = [];
@@ -2005,16 +1953,10 @@
 	// Web functions
 	//////////////////////////
 
-	const openCallOverlay = () => {
-		setTimeout(() => {
-			showCallOverlay.set(true);
-			showControls.set(true);
-		}, 0);
-	};
-
 	const initNewChat = async () => {
 		console.log('initNewChat');
 		resetWebSearchConfirmation();
+		webSearchDeclined = false;
 
 		// Mark the outgoing chat as read before resetting; in-place created chats
 		// keep chatIdProp undefined, so navigateHandler never marks them read.
@@ -2135,7 +2077,6 @@
 		if ($mobile) {
 			await showControls.set(false);
 		}
-		await showCallOverlay.set(false);
 		await showArtifacts.set(false);
 
 		if (!embedded && $page.url.pathname.includes('/c/')) {
@@ -2169,18 +2110,6 @@
 			await uploadWeb($page.url.searchParams.get('load-url'));
 		}
 
-		if ($page.url.searchParams.get('web-search') === 'true') {
-			webSearchEnabled = true;
-		}
-
-		if ($page.url.searchParams.get('image-generation') === 'true') {
-			imageGenerationEnabled = true;
-		}
-
-		if ($page.url.searchParams.get('code-interpreter') === 'true') {
-			codeInterpreterEnabled = true;
-		}
-
 		if ($page.url.searchParams.get('tools')) {
 			selectedToolIds = $page.url.searchParams
 				.get('tools')
@@ -2204,18 +2133,12 @@
 			}
 		}
 
-		if ($page.url.searchParams.get('call') === 'true') {
-			openCallOverlay();
-		}
-
-		// Consume one-shot desktop event (e.g. Spotlight query, call shortcut)
+		// Consume one-shot desktop event (e.g. Spotlight query). Voice calls are not available.
 		if ($desktopEvent) {
 			const event = $desktopEvent;
 			desktopEvent.set(null);
 
-			if (event.type === 'call') {
-				openCallOverlay();
-			} else if (event.type === 'query') {
+			if (event.type === 'query') {
 				const query = event.data?.query;
 				const eventFiles = event.data?.files;
 
@@ -2769,7 +2692,6 @@
 				if (navigator.vibrate && ($settings?.hapticFeedback ?? false)) {
 					navigator.vibrate(5);
 				}
-				dispatchCallOverlayAudio(message);
 			}
 		} else if (data?.type === 'response.completed' || data?.type?.endsWith('.done')) {
 			message.content = getOutputText(message.output) || message.content;
@@ -2793,7 +2715,6 @@
 			) {
 				navigator.vibrate(5);
 			}
-			dispatchCallOverlayAudio(message);
 		}
 
 		if (error) {
@@ -2808,7 +2729,6 @@
 			if (choices[0]?.message?.content) {
 				// Non-stream response
 				message.content += choices[0]?.message?.content;
-				dispatchCallOverlayAudio(message);
 			} else {
 				// Stream response
 				let value = choices[0]?.delta?.content ?? '';
@@ -2820,7 +2740,6 @@
 					if (navigator.vibrate && ($settings?.hapticFeedback ?? false)) {
 						navigator.vibrate(5);
 					}
-					dispatchCallOverlayAudio(message);
 				}
 			}
 		}
@@ -2832,7 +2751,6 @@
 			if (navigator.vibrate && ($settings?.hapticFeedback ?? false)) {
 				navigator.vibrate(5);
 			}
-			dispatchCallOverlayAudio(message);
 		}
 
 		if (selected_model_id) {
@@ -2856,13 +2774,6 @@
 				copyToClipboard(visibleContent);
 			}
 
-			if ($settings.responseAutoPlayback && !$showCallOverlay) {
-				await tick();
-				document.getElementById(`speak-button-${message.id}`)?.click();
-			}
-
-			// Emit chat event for TTS (only when call overlay is active)
-			dispatchCallOverlayAudio(message, true);
 			eventTarget.dispatchEvent(
 				new CustomEvent('chat:finish', {
 					detail: {
@@ -2938,10 +2849,7 @@
 
 		history.currentId = userMessageId;
 
-		// focus on chat input (skip during voice call to avoid triggering mobile keyboard)
-		if (!$showCallOverlay) {
-			messageInput?.focus({ preventScroll: true });
-		}
+		messageInput?.focus({ preventScroll: true });
 
 		saveSessionSelectedModels();
 
@@ -3341,7 +3249,7 @@
 				if (
 					hasImages &&
 					!(model.info?.meta?.capabilities?.vision ?? true) &&
-					!imageGenerationEnabled
+					!imageGenerationActive
 				) {
 					toast.error(
 						$i18n.t('Model {{modelName}} is not vision capable', {
@@ -3390,17 +3298,8 @@
 
 		if ($config?.features)
 			features = {
-				voice: $showCallOverlay,
-				image_generation:
-					$config?.features?.enable_image_generation &&
-					($user?.role === 'admin' || $user?.permissions?.features?.image_generation)
-						? imageGenerationEnabled
-						: false,
-				code_interpreter:
-					$config?.features?.enable_code_interpreter &&
-					($user?.role === 'admin' || $user?.permissions?.features?.code_interpreter)
-						? codeInterpreterEnabled
-						: false,
+				image_generation: imageGenerationActive,
+				code_interpreter: codeInterpreterActive,
 				web_search: webSearchActive
 			};
 
@@ -3488,9 +3387,8 @@
 		// Always include system prompt — backend extracts it and prepends to DB messages.
 		// Only temp chats need conversation messages (persisted chats load from DB).
 		let messages: any[] = [
-			params?.system || $settings.system
-				? { role: 'system', content: `${params?.system ?? $settings?.system ?? ''}` }
-				: undefined
+			// Mologate: the personal system prompt setting was removed, so a previously saved one no longer applies.
+			params?.system ? { role: 'system', content: `${params.system}` } : undefined
 		].filter(Boolean);
 
 		if ($temporaryChatEnabled) {
@@ -3956,7 +3854,6 @@
 					id: _chatId,
 					title: $i18n.t('New Chat'),
 					models: selectedModels,
-					system: $settings.system ?? undefined,
 					params: params,
 					history: history,
 					messages: createMessagesList(history, history.currentId),
@@ -4041,9 +3938,6 @@
 		selectedToolIds,
 		selectedSkillIds,
 		selectedFilterIds,
-		imageGenerationEnabled,
-		webSearchEnabled,
-		codeInterpreterEnabled,
 		toolApprovalMode
 	});
 
@@ -4129,8 +4023,6 @@
 
 		if (userPrompt !== null) {
 			await submitHandler(userPrompt);
-		} else {
-			webSearchEnabled = true;
 		}
 	};
 
@@ -4222,9 +4114,9 @@
 	cancelLabel={$i18n.t('Cancel')}
 	on:confirm={confirmWebSearch}
 	on:cancel={() => {
-		if (pendingWebSearchPrompt === null) {
-			webSearchEnabled = false;
-		}
+		// There is no web search toggle: declining keeps web search off for this chat, and the
+		// message stays in the composer to be sent again without it.
+		webSearchDeclined = true;
 		pendingWebSearchPrompt = null;
 	}}
 />
@@ -4324,7 +4216,6 @@
 								chat: {
 									title: $chatTitle,
 									models: selectedModels,
-									system: $settings.system ?? undefined,
 									params: params,
 									history: history,
 									timestamp: Date.now()
@@ -4419,7 +4310,6 @@
 										forkHandler={handleForkChat}
 										topPadding={!embedded}
 										bottomPadding={files.length > 0}
-										{onSelect}
 										{onInsertToNote}
 									/>
 								</div>
@@ -4449,11 +4339,8 @@
 										bind:selectedToolIds
 										bind:selectedSkillIds
 										bind:selectedFilterIds
-										bind:imageGenerationEnabled
-										bind:codeInterpreterEnabled
 										{pendingOAuthTools}
 										{oauthRedirectHandler}
-										bind:webSearchEnabled
 										bind:atSelectedModel
 										bind:showCommands
 										bind:dragged
@@ -4483,7 +4370,6 @@
 												saveDraft(data, getDraftChatId());
 											}
 										}}
-										onWebSearchToggle={handleWebSearchToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4543,11 +4429,8 @@
 										bind:selectedToolIds
 										bind:selectedSkillIds
 										bind:selectedFilterIds
-										bind:imageGenerationEnabled
-										bind:codeInterpreterEnabled
 										{pendingOAuthTools}
 										{oauthRedirectHandler}
-										bind:webSearchEnabled
 										bind:atSelectedModel
 										bind:showCommands
 										bind:dragged
@@ -4577,7 +4460,6 @@
 												saveDraft(data, getDraftChatId());
 											}
 										}}
-										onWebSearchToggle={handleWebSearchToggle}
 										on:chatVariables={() => {
 											showChatVariablesModal = true;
 										}}
@@ -4593,10 +4475,12 @@
 							</div>
 						{:else}
 							<div class="flex items-center h-full">
+								<!-- Effort selector (agent C): bind:params so the home-screen composer sets it too -->
 								<Placeholder
 									bind:selectedModelIdx
 									{history}
 									bind:selectedModels
+									bind:params
 									bind:messageInput
 									bind:files
 									bind:prompt
@@ -4604,9 +4488,6 @@
 									bind:selectedToolIds
 									bind:selectedSkillIds
 									bind:selectedFilterIds
-									bind:imageGenerationEnabled
-									bind:codeInterpreterEnabled
-									bind:webSearchEnabled
 									bind:atSelectedModel
 									bind:showCommands
 									bind:dragged
@@ -4616,7 +4497,6 @@
 									{oauthRedirectHandler}
 									{stopResponse}
 									{createMessagePair}
-									{onSelect}
 									{onUpload}
 									{onUpdate}
 									messageQueue={$chatRequestQueues[$chatId] ?? []}
@@ -4624,7 +4504,6 @@
 									onQueueSendNow={sendQueuedMessageNow}
 									onQueueEdit={editQueuedMessage}
 									onQueueDelete={deleteQueuedMessage}
-									onWebSearchToggle={handleWebSearchToggle}
 									on:chatVariables={() => {
 										showChatVariablesModal = true;
 									}}
@@ -4649,24 +4528,10 @@
 				{#if !embedded}
 					<ChatControls
 						bind:history
-						bind:chatFiles
-						bind:params
-						bind:files
 						chatId={$chatId}
 						chatUser={chatOwner}
-						modelId={selectedModelIds?.at(0) ?? null}
-						models={selectedModelIds.reduce((a, e, i, arr) => {
-							const model = $models.find((m) => m.id === e);
-							if (model) {
-								return [...a, model];
-							}
-							return a;
-						}, [])}
-						submitPrompt={submitHandler}
-						{stopResponse}
 						{showMessage}
-						{eventTarget}
-						{codeInterpreterEnabled}
+						codeInterpreterEnabled={codeInterpreterActive}
 					/>
 				{/if}
 			</div>

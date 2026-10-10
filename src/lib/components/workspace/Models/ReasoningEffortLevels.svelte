@@ -42,7 +42,7 @@
 	<div class="mb-1.5 text-xs text-gray-400 dark:text-gray-600">
 		{$i18n.t('Reasoning effort levels')}
 	</div>
-	<div class="grid grid-cols-2 gap-x-5 gap-y-1 sm:grid-cols-3 lg:grid-cols-5">
+	<div class="grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
 		{#each choices as level (level)}
 			<div class="flex min-h-6 items-center gap-2.5">
 				<Checkbox
@@ -63,13 +63,15 @@
 	<div class="mt-1.5 text-[0.6875rem] leading-4 text-gray-500">
 		{#if levels.length > 0}
 			{$i18n.t('The effort selector offers only the levels checked here.')}
+		{:else if detected.length > 0}
+			{$i18n.t('None checked: the effort selector uses the levels the provider reports.')}
 		{:else}
-			{$i18n.t('None checked: levels come from the provider automatically.')}
+			{$i18n.t('None checked and the provider reports none, so the effort selector is hidden.')}
 		{/if}
 		{#if detected.length > 0}
 			{$i18n.t('Provider reports: {{levels}}.', { levels: detected.join(', ') })}
-		{:else}
-			{$i18n.t('The provider reports none, so the selector is hidden unless levels are checked.')}
+		{:else if levels.length > 0}
+			{$i18n.t('The provider reports none.')}
 		{/if}
 	</div>
 </div>

@@ -1,5 +1,5 @@
 <script context="module" lang="ts">
-	let savedTab: 'controls' | 'files' | 'overview' = 'controls';
+	let savedTab: 'files' | 'overview' = 'overview';
 </script>
 
 <script lang="ts">
@@ -8,7 +8,6 @@
 		config,
 		terminalServers,
 		showControls,
-		showCallOverlay,
 		showArtifacts,
 		showEmbeds,
 		settings,
@@ -17,8 +16,6 @@
 		user
 	} from '$lib/stores';
 
-	import Controls from './Controls/Controls.svelte';
-	import CallOverlay from './MessageInput/CallOverlay.svelte';
 	import Drawer from '../common/Drawer.svelte';
 	import ResizableSidePanel from '../common/ResizableSidePanel.svelte';
 	import Artifacts from './Artifacts.svelte';
@@ -30,21 +27,15 @@
 
 	const i18n = getContext('i18n');
 
+	// Mologate: this side panel no longer has a Controls tab (chat parameters) and no voice-call
+	// overlay. It only opens for artifacts, embeds, terminal/code-interpreter files and the
+	// chat overview, each from its own entry point.
 	export let history;
-	export let models = [];
 
 	export let chatId = null;
 	export let chatUser = null;
 
-	export let chatFiles = [];
-	export let params = {};
-
-	export let eventTarget: EventTarget;
-	export let submitPrompt: Function;
-	export let stopResponse: Function;
 	export let showMessage: Function;
-	export let files;
-	export let modelId;
 
 	export let codeInterpreterEnabled = false;
 
@@ -53,7 +44,7 @@
 	let mounted = false;
 	let controlsWidth = 350;
 
-	// Tab state for Controls+Files panel
+	// Tab state for the Files / Overview panel
 	let activeTab = savedTab;
 	// svelte-ignore reactive_declaration_module_script_dependency
 	$: {
@@ -62,7 +53,6 @@
 
 	$: hasMessages = history?.messages && Object.keys(history.messages).length > 0;
 
-	$: showControlsTab = $user?.role === 'admin' || ($user?.permissions?.chat?.controls ?? true);
 	const chatContext = (terminal: any) => terminal?.contexts?.chat ?? {};
 	const chatContextAvailable = (terminal: any) => chatContext(terminal) !== false;
 	const chatContextNeedsSavedChat = (terminal: any) =>
@@ -85,16 +75,12 @@
 		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
 	$: showOverviewTab = hasMessages;
 
-	// Tab fallback: if active tab becomes hidden, switch to next available
-	$: if (!showOverviewTab && activeTab === 'overview') activeTab = 'controls';
-	$: if (!showFilesTab && activeTab === 'files') activeTab = 'controls';
-	$: if (!showControlsTab && activeTab === 'controls') {
-		if (showFilesTab) activeTab = 'files';
-		else if (showOverviewTab) activeTab = 'overview';
-	}
+	// Tab fallback: if active tab becomes hidden, switch to the other one
+	$: if (!showOverviewTab && activeTab === 'overview' && showFilesTab) activeTab = 'files';
+	$: if (!showFilesTab && activeTab === 'files') activeTab = 'overview';
 
-	// Auto-close if there are no visible tabs
-	$: if (!showControlsTab && !showFilesTab && !showOverviewTab) {
+	// Auto-close if there is nothing to show
+	$: if (!showFilesTab && !showOverviewTab && !specialPanel) {
 		showControls.set(false);
 	}
 
@@ -119,22 +105,8 @@
 		selectedTerminalId.set(null);
 	}
 
-	const handleMediaQuery = async (e) => {
-		if (e.matches) {
-			largeScreen = true;
-			if ($showCallOverlay) {
-				showCallOverlay.set(false);
-				await tick();
-				showCallOverlay.set(true);
-			}
-		} else {
-			largeScreen = false;
-			if ($showCallOverlay) {
-				showCallOverlay.set(false);
-				await tick();
-				showCallOverlay.set(true);
-			}
-		}
+	const handleMediaQuery = (e) => {
+		largeScreen = e.matches;
 	};
 
 	const onMouseDown = () => {
@@ -183,13 +155,12 @@
 		}
 		showArtifacts.set(false);
 		showEmbeds.set(false);
-		if ($showCallOverlay) showCallOverlay.set(false);
 	};
 
 	$: if (mounted && !chatId) closeHandler();
 
 	// Helper: is a "special" full-screen panel active?
-	$: specialPanel = $showCallOverlay || $showArtifacts || $showEmbeds;
+	$: specialPanel = $showArtifacts || $showEmbeds;
 </script>
 
 {#if !largeScreen}
@@ -200,41 +171,16 @@
 			className="min-h-[100dvh] !bg-white dark:!bg-gray-850"
 		>
 			<div class="h-[100dvh] flex flex-col">
-				{#if $showCallOverlay}
-					<div
-						class="h-full max-h-[100dvh] bg-white text-gray-700 dark:bg-black dark:text-gray-300 flex justify-center"
-					>
-						<CallOverlay
-							bind:files
-							{submitPrompt}
-							{stopResponse}
-							{modelId}
-							{chatId}
-							{eventTarget}
-							on:close={() => showControls.set(false)}
-						/>
-					</div>
-				{:else if $showEmbeds}
+				{#if $showEmbeds}
 					<Embeds />
 				{:else if $showArtifacts}
 					<Artifacts {history} />
 				{:else}
-					<!-- Controls + Files tabs -->
+					<!-- Files / Overview tabs -->
 					<div class="flex flex-col h-full min-h-0">
 						<!-- Tab bar -->
 						<div class="flex items-center justify-between px-2 pt-2 pb-2 shrink-0">
 							<div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
-								{#if showControlsTab}
-									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
-										'controls'
-											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
-											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'controls')}
-									>
-										{$i18n.t('Controls')}
-									</button>
-								{/if}
 								{#if showFilesTab}
 									<button
 										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
@@ -276,13 +222,7 @@
 							</button>
 						</div>
 
-						<div
-							class="flex-1 min-h-0 {activeTab === 'overview'
-								? 'h-full'
-								: activeTab === 'controls'
-									? 'overflow-y-auto px-3 pt-1'
-									: ''}"
-						>
+						<div class="flex-1 min-h-0 {activeTab === 'overview' ? 'h-full' : ''}">
 							{#if activeTab === 'overview'}
 								<Overview
 									{history}
@@ -296,8 +236,6 @@
 								<FileNav {chatId} />
 							{:else if activeTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav />
-							{:else}
-								<Controls embed={true} {models} bind:chatFiles bind:params />
 							{/if}
 						</div>
 					</div>
@@ -318,46 +256,23 @@
 	>
 		<div class="flex h-full max-h-full min-h-full">
 			<div
-				class="w-full {specialPanel && !$showCallOverlay
+				class="w-full {specialPanel
 					? ' '
 					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {activeTab === 'files'
 					? ''
 					: 'overflow-y-auto'} scrollbar-hidden"
 				id="controls-container"
 			>
-				{#if $showCallOverlay}
-					<div class="w-full h-full flex justify-center">
-						<CallOverlay
-							bind:files
-							{submitPrompt}
-							{stopResponse}
-							{modelId}
-							{chatId}
-							{eventTarget}
-							on:close={() => showControls.set(false)}
-						/>
-					</div>
-				{:else if $showEmbeds}
+				{#if $showEmbeds}
 					<Embeds overlay={dragged} />
 				{:else if $showArtifacts}
 					<Artifacts {history} overlay={dragged} />
 				{:else}
-					<!-- Controls + Files tabs -->
+					<!-- Files / Overview tabs -->
 					<div class="flex flex-col h-full min-h-0">
 						<!-- Tab bar -->
 						<div class="flex items-center justify-between px-2 pt-2 pb-2 shrink-0">
 							<div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
-								{#if showControlsTab}
-									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
-										'controls'
-											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
-											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'controls')}
-									>
-										{$i18n.t('Controls')}
-									</button>
-								{/if}
 								{#if showFilesTab}
 									<button
 										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
@@ -399,13 +314,7 @@
 							</button>
 						</div>
 
-						<div
-							class="flex-1 min-h-0 {activeTab === 'overview'
-								? 'h-full'
-								: activeTab === 'controls'
-									? 'overflow-y-auto px-3 pt-1'
-									: ''}"
-						>
+						<div class="flex-1 min-h-0 {activeTab === 'overview' ? 'h-full' : ''}">
 							{#if activeTab === 'overview'}
 								<Overview
 									{history}
@@ -424,8 +333,6 @@
 								<FileNav overlay={dragged} {chatId} />
 							{:else if activeTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav overlay={dragged} />
-							{:else}
-								<Controls embed={true} {models} bind:chatFiles bind:params />
 							{/if}
 						</div>
 					</div>

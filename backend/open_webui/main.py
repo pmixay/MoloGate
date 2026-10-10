@@ -1481,6 +1481,8 @@ async def chat_completion(
                             'metadata': title_metadata,
                             'tasks': {TASKS.TITLE_GENERATION: initial_title_generation},
                             'event_emitter': event_emitter,
+                            # Mologate: background_tasks_handler reads ctx['model'] after the title task.
+                            'model': model,
                         }
 
                         async def run_initial_title_generation():

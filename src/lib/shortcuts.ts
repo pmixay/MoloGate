@@ -16,15 +16,13 @@ type ShortcutRegistry = {
 	[key in Shortcut]?: ShortcutDefinition;
 };
 
+// Mologate: the dictation, voice-mode (Toggle Mute) and Controls-panel shortcuts are removed.
 export enum Shortcut {
 	//Chat
 	NEW_CHAT = 'newChat',
 	NEW_TEMPORARY_CHAT = 'newTemporaryChat',
 	DELETE_CHAT = 'deleteChat',
 	OPEN_MODEL_SELECTOR = 'openModelSelector',
-	// Mologate: speech input is removed from the interface, so dictation has no binding and is
-	// not listed in Settings → Keyboard. The id stays so older references still compile.
-	TOGGLE_DICTATION = 'toggleDictation',
 	NAVIGATE_CHAT_UP = 'navigateChatUp',
 	NAVIGATE_CHAT_DOWN = 'navigateChatDown',
 

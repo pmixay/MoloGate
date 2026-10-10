@@ -34,7 +34,6 @@
 		showSearch,
 		showSidebar,
 		showControls,
-		mobile,
 		chatId,
 		chats
 	} from '$lib/stores';
@@ -372,12 +371,10 @@
 				checkForVersionUpdates();
 			}
 		}
-		// Persist showControls: track open/close state separately from saved size
-		// chatControlsSize always retains the last width for openPane()
-		await showControls.set(!$mobile ? localStorage.showControls === 'true' : false);
-		showControls.subscribe((value) => {
-			localStorage.showControls = value ? 'true' : 'false';
-		});
+		// Mologate: the chat side panel has no Controls toggle any more; it opens only for
+		// artifacts, embeds, files or the overview, so it always starts closed.
+		await showControls.set(false);
+		localStorage.removeItem('showControls');
 
 		// Persist selectedTerminalId across page loads
 		selectedTerminalId.subscribe((value) => {
