@@ -2,7 +2,7 @@ name: mologate-staging
 
 services:
   mologate:
-    image: ghcr.io/pmixay/mologate:limits-and-accounts-slim
+    image: ${IMAGE:-ghcr.io/pmixay/mologate:limits-and-accounts-slim}
     mem_limit: 768m
     networks:
       edge:

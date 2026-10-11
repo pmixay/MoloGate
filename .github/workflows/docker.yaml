@@ -11,6 +11,11 @@ on:
       - limits-and-accounts
     tags:
       - v*
+    # Mologate: deployment and documentation changes do not alter the image.
+    paths-ignore:
+      - 'docs/**'
+      - 'deploy/**'
+      - '.github/workflows/vps-verify.yaml'
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -33,29 +38,8 @@ jobs:
             runner: ubuntu-latest
           - arch: linux/arm64
             runner: ubuntu-24.04-arm
-        variant:
-          - name: main
-            suffix: ""
-            build_args: ""
-            free_disk: false
-          - name: cuda
-            suffix: "-cuda"
-            build_args: "USE_CUDA=true"
-            free_disk: true
-          - name: cuda126
-            suffix: "-cuda126"
-            build_args: |
-              USE_CUDA=true
-              USE_CUDA_VER=cu126
-            free_disk: true
-          - name: ollama
-            suffix: "-ollama"
-            build_args: "USE_OLLAMA=true"
-            free_disk: false
-          - name: slim
-            suffix: "-slim"
-            build_args: "USE_SLIM=true"
-            free_disk: false
+        # Mologate: staging only needs slim; keep the full release matrix elsewhere.
+        variant: ${{ fromJSON(github.ref == 'refs/heads/limits-and-accounts' && '[{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]' || '[{"name":"main","suffix":"","build_args":"","free_disk":false},{"name":"cuda","suffix":"-cuda","build_args":"USE_CUDA=true","free_disk":true},{"name":"cuda126","suffix":"-cuda126","build_args":"USE_CUDA=true\nUSE_CUDA_VER=cu126","free_disk":true},{"name":"ollama","suffix":"-ollama","build_args":"USE_OLLAMA=true","free_disk":false},{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]') }}
 
     steps:
       - name: Prepare environment
@@ -165,17 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - name: main
-            suffix: ""
-          - name: cuda
-            suffix: "-cuda"
-          - name: cuda126
-            suffix: "-cuda126"
-          - name: ollama
-            suffix: "-ollama"
-          - name: slim
-            suffix: "-slim"
+        variant: ${{ fromJSON(github.ref == 'refs/heads/limits-and-accounts' && '[{"name":"slim","suffix":"-slim"}]' || '[{"name":"main","suffix":""},{"name":"cuda","suffix":"-cuda"},{"name":"cuda126","suffix":"-cuda126"},{"name":"ollama","suffix":"-ollama"},{"name":"slim","suffix":"-slim"}]') }}
 
     steps:
       - name: Prepare environment
