@@ -58,3 +58,32 @@ jobs:
           assert not opened, f'Unexpected reachable TCP ports: {opened}'
           print('SSH verified; all 13 private/control TCP ports refused or filtered.')
           PYCODE
+
+      - name: Install port scanner
+        run: |
+          if ! command -v nmap >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nmap
+          fi
+
+      - name: Verify all public TCP ports with completed connections
+        run: |
+          nmap -n -Pn -sT -T4 --max-retries 1 --min-rate 500 --max-rate 1000 \
+            -p- -oX "$RUNNER_TEMP/mologate-ports.xml" 5.83.140.221 \
+            >"$RUNNER_TEMP/mologate-scan.log" 2>&1
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          result = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'mologate-ports.xml')
+          opened = {
+              int(port.attrib['portid'])
+              for port in result.findall('.//port')
+              if port.find('state').attrib['state'] == 'open'
+          }
+          assert opened == {22, 80, 443}, (
+              f'Found {len(opened)} open TCP ports; first 30: {sorted(opened)[:30]}'
+          )
+          print('Full external TCP scan passed: only 22, 80 and 443 are open.')
+          PY
