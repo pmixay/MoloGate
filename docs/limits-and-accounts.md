@@ -40,8 +40,10 @@ this branch; the current draft is [PR #3](https://github.com/pmixay/MoloGate/pul
 
 These come from the team and are not up for redesign. Numbers are defaults an admin can change.
 
-1. **Mologate enforces limits itself.** codex-lb was a UX reference only; nothing is embedded or
-   forked from it.
+1. **Mologate enforces limits itself.** ChatGPT accounts run through an internal, unmodified
+   codex-lb (pinned v1.24.0) that holds their tokens, limits and reset coupons and sends requests
+   as the official Codex client. Its own UI and pooling are not used: Mologate picks the account
+   for every request and shows everything in its own interface.
 2. **50/50 split.** Every shared account's quota, in each provider window (5-hour and weekly), is
    split in two: 50% is the **owner reserve** for the member who connected it, and 50% goes to the
    **public pool**.
@@ -72,8 +74,8 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
 9. **Automatic reset.** Only when every account that can serve a request is empty, Mologate
-   redeems a provider limit-reset coupon on one of them by itself, through the provider's own
-   CLI tooling. There is no button. Any team member can turn this off for everyone.
+   redeems a provider limit-reset coupon on one of them by itself, through codex-lb. There is no
+   button. Any team member can turn this off for everyone.
 
 ---
 
@@ -84,7 +86,7 @@ A team-accepted risk is a project decision, not permission from the provider.
 
 | Provider                                  | Access                                                                    | Into the pool?                          | Limits source                                                                        |
 | ----------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Codex / ChatGPT** (Plus, Pro, Business) | Device-code login through the official `codex app-server`                 | Yes (team-accepted risk, see below)     | `account/rateLimits/read` (5h + weekly), `x-codex-*` headers                         |
+| **Codex / ChatGPT** (Plus, Pro, Business) | Sign-in link or device code through codex-lb                              | Yes (team-accepted risk, see below)     | codex-lb account summary (5h + weekly), polled from OpenAI every minute              |
 | **Anthropic API key** (Claude Console)    | Key pasted in by its owner                                                | Yes                                     | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits            |
 | **Claude Pro / Max subscription**         | Owner connects an isolated runner using the unmodified Claude Code binary | Planned in Phase 7 (team-accepted risk) | CLI usage and verified stream observations; complete quota visibility is not assumed |
 | **OpenAI API key**, **OpenRouter key**    | Key                                                                       | Yes                                     | Owner-set budget; OpenRouter also reports key usage                                  |
@@ -170,10 +172,13 @@ New tables (Alembic migrations), all with `created_at` and `updated_at` epoch co
 **`provider_account`**
 `id`, `owner_user_id`, `provider` (`codex` | `anthropic_api` | `openai_api` | `openrouter` |
 `zai` | `claude_sub` in Phase 7), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
-ID: ChatGPT account ID, or a SHA-256 fingerprint of an API key), `label`, `secret` (Fernet-encrypted
-JSON; for Codex, the path of its isolated `CODEX_HOME`), `sharing` (`shared` | `private` |
-`paused`), `capacity_weight`, `budget` (API keys: amount and currency per month), `allow_team_resets`
-(bool, default true), `status` (`ok` | `needs_login` | `error` | `cooldown`), `last_error`.
+ID: codex-lb's account ID for ChatGPT, or a SHA-256 fingerprint of an API key), `label` (a generated
+name such as `Account #1n9Dk5`; members do not choose labels), `secret` (Fernet-encrypted JSON; for
+ChatGPT, the codex-lb account ID and a key scoped to that one account), `sharing` (`shared` | `private` |
+`paused`), `capacity_weight`, `budget` (API keys: amount and currency per month), `status` (`ok` |
+`needs_login` | `error` | `cooldown`), `last_error`. There is no per-account reset switch: the global
+auto-reset setting (§10) alone decides whether coupons are spent (migration `e5a3c1f8d2b7` dropped
+`allow_team_resets`).
 Unique: (`provider`, `external_account_id`).
 
 **Claude runner convention (Phase 7):** `provider='claude_sub'`, with plans `pro`, `max_5x` and
@@ -181,7 +186,8 @@ Unique: (`provider`, `external_account_id`).
 `{"manager":"http://runner-manager:8085","runner_id":"<uuid>","volume":"claude-cfg-<uuid>"}`;
 the manager origin is allowlisted server configuration. The provider identity must be verified
 before storing its SHA-256 hash as `external_account_id`. A pending registration is excluded from
-the pool and earns no credits. Add `verifying` to the lifecycle, and set `allow_team_resets=false`.
+the pool and earns no credits. Add `verifying` to the lifecycle. Automatic resets cover ChatGPT only,
+so Claude accounts never take part in them.
 The SQL provider column is a string, but the Phase 1 Python `Provider` literal, API validation,
 routing and frontend types still need extending. Durable registration/event tracking may require
 a migration; see [the complete schema contract](claude-runners.md#2-data-and-identity).
@@ -304,9 +310,15 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   API key, scheduled, workflow. Hook the post-step where the response's `usage` is known, in
   `routers/openai.py` for `generate_chat_completion`, `responses` and `proxy`, and in the Codex
   adapter.
-- **Polling:** read each Codex account's windows every 5 minutes through `account/rateLimits/read`
-  (more often while it is busy), and after every response from its headers. Store them in
-  `account_window`.
+- **Polling:** codex-lb reads each ChatGPT account's windows from OpenAI every minute and from
+  every response; Mologate takes them from its account summary. Store them in `account_window`.
+- **Owner and team split (started, an estimate):** until the ledger exists, Mologate counts the
+  requests each account serves for its owner and for everyone else, per 5-hour and weekly window.
+  When a reading shows the window's used percent rose, the rise is shared out by those counts and
+  the counts start again; a reading with no rise keeps them for the next one. A rise with no
+  requests from Mologate, and whatever was used before Mologate first read the window, is the
+  owner's (decision 4). A reset time that moves on, or a drop of more than 5 points, starts the
+  split over. Kept in Redis (or memory) with the limit snapshots; `utils/provider_limits.py`.
 - **Outside use:** between two readings of `u_a`, the expected change is the sum of `units` of the
   ledger rows in that interval. An increase larger than that, beyond a noise margin, becomes an
   `outside` row attributed to the owner (decision 4).
@@ -325,35 +337,34 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
 
 ## 9. Adding accounts
 
-**Codex (first, and the easiest):**
+**ChatGPT (through codex-lb):**
 
-1. The member clicks **Connect account → ChatGPT / Codex**.
-2. Mologate starts an isolated `codex app-server` for the new account, with its own `CODEX_HOME`
-   under the data volume (mode 0700), and calls `account/login/start` with the member's chosen
-   method:
-   - **Link** (`{"type": "chatgpt"}`): the UI shows OpenAI's sign-in link. After signing in, the
-     browser opens `http://127.0.0.1:1455/auth/callback?code=…&state=…`, which does not load on
-     the member's computer. The member pastes that address into Mologate. Mologate checks the
-     `state` against this login and passes only `code` and `state` to app-server's own loopback
-     callback inside the container; app-server holds the PKCE verifier and exchanges the code.
-     The pasted host is never contacted. All link logins share port 1455, and a second one would
-     cancel the first, so only one link login runs at a time.
-   - **Code** (`{"type": "chatgptDeviceCode"}`): the UI shows the code and OpenAI's device page.
-3. The member finishes the login on their own device, through OpenAI's flow, and can cancel a
-   pending attempt.
-4. On `account/login/completed`, Mologate calls `account/read` to get the plan and the ChatGPT
-   account ID, creates the `provider_account`, grants credits if that account ID never earned any,
-   and reads its windows.
-5. app-server refreshes tokens itself. On an auth failure, mark the account `needs_login` and
-   notify the owner.
+1. The member clicks **Connect → ChatGPT** and picks a method. Only one ChatGPT connection can be
+   in progress across the team at a time: codex-lb runs one device sign-in at a time, and the new
+   account is recognised by comparing codex-lb's account list before and after.
+2. Mologate asks codex-lb to start the sign-in (`POST /api/oauth/start` with `forceMethod`):
+   - **Link:** the UI shows OpenAI's sign-in link. After signing in, the browser opens
+     `http://localhost:1455/auth/callback?code=…&state=…`, which does not load on the member's
+     computer. The member pastes that address back. Mologate checks its `state` against this
+     sign-in and hands codex-lb only `code` and `state` (`/api/oauth/manual-callback`); the
+     pasted host is never contacted.
+   - **Code:** the UI shows OpenAI's device page and the code.
+3. When codex-lb reports success, Mologate finds the new account, creates a codex-lb API key
+   assigned to that account only (never an empty assignment, which codex-lb treats as the whole
+   pool), names the account (`Account #1n9Dk5`) and stores the `provider_account`. Signing in
+   again to a connected account reconnects it for the same owner.
+4. codex-lb refreshes tokens in the background. When it reports `reauth_required` or
+   `deactivated`, Mologate marks the account `needs_login`.
 
-The methods above are in OpenAI's open-source `openai/codex` app-server protocol (the Codex TUI
-uses the same ones). **Inference decision (2026-10-11):** use app-server 0.162.1 for device login,
-token refresh, model catalogs and windows. Send inference to the Codex Responses endpoint with
-those managed credentials. Translate its SSE text/tool deltas and final usage into Chat Completions
-for Mologate; preserve native SSE for `/responses`. No chat prompts or tool execution go through
-app-server. Protocol and streaming regressions are covered; two live browser connections remain
-the final acceptance check.
+**Inference decision (revised 2026-10-11):** requests go to codex-lb's
+`/backend-api/codex/responses` with the account's own key, so codex-lb can route them only to
+that account. codex-lb sends them upstream as the official Codex CLI (client name, version, a
+per-account installation ID, store disabled) and refreshes tokens. Mologate requires codex-lb's
+API-key authentication to be on and refuses ChatGPT traffic otherwise, translates the SSE
+text/tool deltas and final usage into Chat Completions, and preserves native SSE for `/responses`.
+The model list comes from codex-lb's catalog, synced from OpenAI every 5 minutes. Accounts that
+were connected through the earlier `codex app-server` integration are imported into codex-lb from
+their `auth.json` the first time they are used.
 
 **API keys** (Anthropic, OpenAI, OpenRouter, Z.ai): a form with the key and a monthly budget, a
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the
@@ -376,9 +387,15 @@ The first Phase 7 spike must establish whether `setup-token` exposes enough veri
 for step 4. Token presence or an `oauthAccount` JSON file is insufficient. The full
 [runner plan](claude-runners.md) defines this dependency, APIs, alternatives and acceptance tests.
 
-**Account card:** owner, provider, plan, windows as two-part bars (owner reserve and pool), status,
-sharing toggle (shared, private, paused), "allow automatic resets", reset coupons available, last
-automatic reset, disconnect.
+**Account row:** collapsed by default to its generated name, provider, plan, owner, a note only
+when it matters (Team, Paused, Sign-in required), the 5-hour and weekly bars, and a coupon badge
+(count; the tooltip has the last automatic reset). On a shared account each of those windows is
+two bars: the owner's reserve and the team pool, each out of 50 points (decision 2), with the
+owner's use past 50 shown as pool use. Expanded: every limit window, with "You · 8/50" and
+"Team · 15/50" under a shared window, a "Who can use" dropdown (Only me, Team, Paused), and
+Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
+header. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
+loan (decision 3) is not shown yet.
 
 **Disconnecting:** unspent credits from that account's grant are forfeited (`credit_entry.forfeit`).
 Reconnecting the same account doesn't grant again.
@@ -387,29 +404,34 @@ Reconnecting the same account doesn't grant again.
 
 ## 10. Automatic limit reset
 
-Implemented on 2026-10-11 in `utils/provider_account_proxy.py` and `utils/codex_accounts.py`.
-There is no reset button: members never redeem a coupon by hand.
+Implemented on 2026-10-11 in `utils/provider_account_proxy.py` and `utils/codex_accounts.py`, with
+codex-lb for ChatGPT accounts. There is no reset button: members never redeem a coupon by hand.
 
 - **Account switching first.** A request tries the accounts that can serve its model: the
-  member's own, then shared ones, with accounts known to be empty last. An account is skipped
-  when Codex reports it empty (`ordinaryUsageAllowed=false`, or a window at 100% when that field
-  is unavailable) or when the provider answers 429. Unknown quota never counts as empty.
-- **Codex only.** No reset mechanism exists for the other providers. The pinned app-server
-  (0.162.1) reports coupons in `account/rateLimits/read` → `rateLimitResetCredits`, and redeems
-  them with `account/rateLimitResetCredit/consume {idempotencyKey, creditId}`.
-- **When:** only after every eligible account is empty. Accounts whose owner turned off "allow
-  automatic resets" (`allow_team_resets`) are left out. It runs in `observe` and `enforce`: an
-  empty account is provider availability, not an allowance decision.
+  member's own, then shared ones, with accounts known to be empty last. A ChatGPT account is
+  skipped when codex-lb reports it `rate_limited`, `quota_exceeded` or paused, when a window is
+  used up and has not reset, or when codex-lb answers 429 or a 503 meaning the account cannot
+  serve the request. Other providers' accounts are skipped on 429. Unknown quota never counts as
+  empty.
+- **ChatGPT only.** No reset mechanism exists for the other providers. codex-lb lists an account's
+  coupons (`GET /api/accounts/{id}/rate-limit-reset-credits`) and redeems the soonest-expiring
+  one (`POST …/rate-limit-reset-credits/consume {redeemRequestId}`).
+- **When:** only after every ChatGPT account the member can use is empty. Any of their coupons
+  can be spent; there is no per-account opt-out. It runs in `observe` and `enforce`: an empty
+  account is provider availability, not an allowance decision.
 - **What it does:** under a lock, read every candidate again (a concurrent request may already
-  have refilled one), pick the unexpired coupon that expires soonest, write a pending
-  `limit_reset_event`, and consume it with that event's idempotency key, reusing the key for one
-  retry. After `reset` (or `nothingToReset`), read the account again and send the request there.
+  have refilled one), pick the account whose coupon expires soonest, write a pending
+  `limit_reset_event`, and redeem once with that event's idempotency key (redemption is not
+  idempotent upstream, so it is never retried). After a reset, read the account again and send
+  the request there.
 - **Guards:** a pending, successful or failed redemption blocks another one for 10 minutes on
-  every worker, so a refill that does not take never spends a second coupon. If no reset is
-  possible, the request gets a limit error with the time until the first account resets.
+  every worker, so a refill that does not take never spends a second coupon. A refusal from
+  codex-lb before it contacts OpenAI does not block. If no reset is possible, the request gets a
+  limit error with the time until the first account resets.
 - **Global switch:** `mologate.auto_reset` (env `MOLOGATE_AUTO_RESET`, default on). Any approved
-  member turns it off or on for everyone in **Settings → Provider accounts**
-  (`GET`/`PUT /api/v1/provider-accounts/auto-reset`); the page shows who changed it last.
+  member turns it off or on for everyone with the **Auto-reset** switch in **Settings → Provider
+  accounts** (`GET`/`PUT /api/v1/provider-accounts/auto-reset`); its tooltip shows who changed it
+  last. It is the only reset switch.
 - **Rules:** a redemption is irreversible and can't be transferred. The refilled window is split
   50/50 like any other once the allowance engine ships.
 
@@ -466,7 +488,8 @@ Claude Pro/Max subscription runners belong to Phase 7. They are not an additiona
 completion requirement; an isolated authentication/protocol spike can follow Phase 1 early.
 
 - [x] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
-- [x] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.
+- [x] ChatGPT connect from the browser (§9), by sign-in link or device code; first through
+      `codex app-server`, now through codex-lb.
 - [x] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
 - [x] Models come from providers, not connection indices; the gate chooses the account per request.
 - [x] Provider limits rekeyed by account ID; `/responses` and the proxy record them too.
@@ -478,7 +501,8 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 
 - [ ] `usage_event` ledger written for every source, including API keys and unsaved chats.
 - [ ] Account polling, outside-use detection, calibration jobs.
-- [ ] Accounts page and a "my usage" page (read-only numbers).
+- [ ] Accounts page and a "my usage" page (read-only numbers). Started: the accounts page shows
+      each shared account's owner and team use, estimated from request counts (§8).
 - [ ] Done when: after a week, ledger units match the provider's percent changes within 10% per
       account.
 
@@ -564,8 +588,13 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
   Pushes that change only `docs/` or `deploy/` skip image builds. The unused Docker Hub copy step
   was removed. The package is private, so the VPS needs a token with `read:packages`.
 - Containers: Mologate (the slim image: uploads reach the model as full text, and any embeddings
-  come from an API, since local embeddings would eat the RAM), Postgres, Redis, Caddy. Add a 4 GB
-  swap file.
+  come from an API, since local embeddings would eat the RAM), codex-lb, Postgres, Redis, Caddy.
+  Add a 4 GB swap file.
+- codex-lb (`ghcr.io/soju06/codex-lb:1.24.0`, pinned by digest) runs on a private network that
+  only Mologate joins, with no published ports, dashboard login disabled, telemetry off and its
+  OAuth listener bound to localhost. It keeps its SQLite database and encryption key in the
+  `codex_lb_data` volume. It also checks GitHub, npm and two pricing catalogs hourly for version
+  and price data, which cannot be turned off.
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
 - Backups: none while Mologate is in development. Add them later, kept off the box.
@@ -599,6 +628,10 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: no self-registration: admins create every member account. ChatGPT accounts can
   also connect with a sign-in link whose callback address the member pastes back, since a code
   alone is not enough for every account.
+- 2026-10-11: the owner revises decision 1 to follow ROADMAP.md: ChatGPT accounts run through
+  an internal codex-lb (accounts, limits, reset coupons and the Codex transport), with Mologate
+  choosing the account per request through keys scoped to one account. This replaces the
+  per-request `codex app-server` and direct calls to chatgpt.com. Accounts get generated names.
 - 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
   account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
   for the team.
@@ -613,5 +646,5 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - Claude Code authentication and long-lived tokens: https://code.claude.com/docs/en/authentication
 - Claude Code legal and compliance: https://code.claude.com/docs/en/legal-and-compliance
 - Claude Pro and Max plan comparison: https://claude.com/pricing
-- Codex app-server protocol, `openai/codex`: `codex-rs/app-server-protocol` (`account/login/start`,
-  `account/rateLimits/read`, `account/rateLimitResetCredit/consume`)
+- codex-lb, MIT: https://github.com/Soju06/codex-lb (v1.24.0: `/api/oauth/*`, `/api/accounts`,
+  `/api/api-keys/`, `/api/settings`, `/backend-api/codex/responses`, reset-credit endpoints)

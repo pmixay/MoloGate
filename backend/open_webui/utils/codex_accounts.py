@@ -1,182 +1,244 @@
-"""Managed Codex login and refresh. App-server never receives chat prompts or tool requests."""
+"""ChatGPT accounts run through the internal codex-lb service.
+
+codex-lb holds the OAuth tokens and sends inference as the official Codex client. Mologate keeps
+who owns and shares each account, and one codex-lb API key per account that is assigned to that
+account alone, so a request can never reach anyone else's account.
+"""
 
 import asyncio
-import base64
 import contextlib
-import fcntl
 import hmac
-import json
 import logging
-import os
+import math
 import shutil
 import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import aiohttp
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from open_webui.env import DATA_DIR
 from open_webui.internal.db import get_async_db_context
 from open_webui.models.provider_accounts import (
     LimitResetEvents,
+    ProviderAccount,
     ProviderAccounts,
     ProviderLogin,
     open_secret,
     seal_secret,
 )
+from open_webui.utils import codex_lb
+from open_webui.utils.codex_lb import CodexLBError
+from open_webui.utils.provider_limits import record_provider_snapshot
 
 log = logging.getLogger(__name__)
 
+# Credentials of the retired per-account app-server, moved into codex-lb on first use.
 ACCOUNT_ROOT = Path(DATA_DIR) / 'provider_accounts' / 'codex'
 LOGIN_TTL = 15 * 60
 # After a redemption, wait this long before spending another coupon on any account.
 RESET_COOLDOWN = 10 * 60
-_tasks: dict[str, asyncio.Task] = {}
+RECONNECT = 'Reconnect this ChatGPT account.'
+NEEDS_LOGIN = 'This ChatGPT account needs to be reconnected.'
+ALREADY_CONNECTED = 'This ChatGPT account is already connected.'
+BUSY = 'Another member is connecting a ChatGPT account right now. Try again in a few minutes.'
+EXPIRED = 'Sign-in expired. Start a new connection.'
+NOT_COMPLETED = 'Sign-in was not completed. Start a new connection.'
+# codex-lb's code for a redemption -> the recorded outcome. Anything else may have spent a coupon.
+RESET_OUTCOMES = {
+    'reset': 'reset',
+    'already_redeemed': 'reset',
+    'nothing_to_reset': 'nothingToReset',
+    'no_credit': 'noCredit',
+}
+# codex-lb refused before contacting OpenAI, so no coupon was spent.
+RESET_REFUSALS = (
+    'no_available_reset_credit',
+    'account_not_reset_credit_applicable',
+    'target_reset_credit_changed',
+    'account_not_found',
+)
 _login_lock = asyncio.Lock()
 _reset_lock = asyncio.Lock()
 
 
-def account_home(identifier: str) -> Path:
-    # Only generated UUIDs can select directories; never accept a client path.
-    identifier = str(uuid.UUID(identifier))
-    ACCOUNT_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-    ACCOUNT_ROOT.chmod(0o700)
-    home = ACCOUNT_ROOT / identifier
-    home.mkdir(mode=0o700, exist_ok=True)
-    home.chmod(0o700)
-    return home
+def unavailable():
+    return HTTPException(502, 'The ChatGPT account service is unavailable. Try again shortly.')
 
 
-class AppServer:
-    def __init__(self, identifier: str):
-        self.home = account_home(identifier)
-        self.sequence = 0
-        self.waiters = {}
-        self.notifications = asyncio.Queue()
-        self.process = None
-        self.reader = None
-        self.lock = None
+async def _best_effort(call):
+    try:
+        await call
+    except CodexLBError:
+        log.debug('Optional codex-lb update failed.')
 
-    async def __aenter__(self):
-        self.lock = (self.home / '.mologate.lock').open('a')
+
+async def _forget_key(key_id):
+    try:
+        await codex_lb.delete_key(key_id)
+    except CodexLBError:
+        log.warning('Could not revoke a codex-lb key; it stays assigned to one account only.')
+
+
+async def record_summary(redis, account_id: str, summary: dict | None):
+    """Windows and coupons for the account card and the context indicator."""
+    if summary:
+        current = codex_lb.snapshot(summary)
+        if current['windows']:
+            await record_provider_snapshot(redis, account_id, current['windows'], current['reset_credits'])
+
+
+async def sync_account(account, summary: dict | None, models: list | None = None):
+    """Mirror codex-lb: a lost login waits for its owner, a recovered one serves again."""
+    values = {}
+    if summary is None or summary.get('status') in codex_lb.REAUTH_STATUSES:
+        if account.status != 'needs_login':
+            values.update(status='needs_login', last_error=RECONNECT)
+    else:
+        if account.status == 'needs_login':
+            values.update(status='ok', last_error=None)
+        if summary.get('planType') and summary['planType'] != account.plan:
+            values['plan'] = summary['planType']
+    if models and models != account.models:
+        values['models'] = models
+    if not values:
+        return account
+    return await ProviderAccounts.update(account.id, values) or account
+
+
+async def account_secret(account) -> dict:
+    """The account's codex-lb binding; app-server credentials are imported the first time."""
+    secret = open_secret(account.secret)
+    if secret.get('lb_account_id'):
+        return secret
+    return await _migrate(account)
+
+
+async def _migrate(account) -> dict:
+    async with _login_lock:
+        current = await ProviderAccounts.get(account.id)
+        if current is None:
+            raise HTTPException(404, 'Account not found.')
+        secret = open_secret(current.secret)
+        if secret.get('lb_account_id'):
+            return secret
         try:
-            async with asyncio.timeout(30):
-                while True:
-                    try:
-                        fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        await asyncio.sleep(0.1)
-        except BaseException as error:
-            self.lock.close()
-            if isinstance(error, TimeoutError):
-                raise HTTPException(409, 'This account is busy. Try again shortly.') from None
-            raise
-        # Do not inherit the web server's database passwords, provider keys, or host login.
-        env = {key: os.environ[key] for key in ('PATH', 'LANG', 'SSL_CERT_FILE', 'SSL_CERT_DIR') if key in os.environ}
-        env['CODEX_HOME'] = str(self.home)
-        env['RUST_LOG'] = 'off'
+            home = ACCOUNT_ROOT / str(uuid.UUID(secret['home_id']))
+            raw = (home / 'auth.json').read_bytes()
+        except (KeyError, ValueError, OSError):
+            await ProviderAccounts.update(account.id, {'status': 'needs_login', 'last_error': RECONNECT})
+            raise HTTPException(401, NEEDS_LOGIN) from None
         try:
-            self.process = await asyncio.create_subprocess_exec(
-                os.environ.get('MOLOGATE_CODEX_BINARY', 'codex'),
-                'app-server',
-                '--listen',
-                'stdio://',
-                '-c',
-                'cli_auth_credentials_store="file"',
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                cwd=self.home,
-                env=env,
-                limit=4 * 1024 * 1024,
-            )
-            self.reader = asyncio.create_task(self._read())
-            await self.call(
-                'initialize',
+            imported = await codex_lb.import_auth(raw)
+        except CodexLBError as error:
+            if error.status in (400, 409, 422):
+                # codex-lb rejected these credentials; the files stay until the owner reconnects.
+                await ProviderAccounts.update(account.id, {'status': 'needs_login', 'last_error': RECONNECT})
+                raise HTTPException(401, NEEDS_LOGIN) from None
+            raise unavailable() from None
+        lb_id = imported['accountId']
+        try:
+            key = await codex_lb.create_key('mologate-' + account.id, lb_id)
+        except CodexLBError:
+            raise unavailable() from None
+        binding = {'lb_account_id': lb_id, 'lb_api_key': key['key'], 'lb_api_key_id': key['id']}
+        try:
+            await ProviderAccounts.update(
+                account.id,
                 {
-                    'clientInfo': {'name': 'mologate', 'title': 'MoloGate', 'version': '1.0'},
-                    'capabilities': {'experimentalApi': True},
+                    'secret': seal_secret(binding),
+                    'external_account_id': lb_id,
+                    'plan': imported.get('planType') or current.plan,
                 },
             )
-            await self._send({'method': 'initialized', 'params': {}})
-            return self
-        except BaseException:
-            await self.__aexit__(None, None, None)
-            raise
-
-    async def _send(self, message):
-        self.process.stdin.write(json.dumps(message).encode() + b'\n')
-        await self.process.stdin.drain()
-
-    async def _read(self):
-        try:
-            while line := await self.process.stdout.readline():
-                message = json.loads(line)
-                if 'id' in message and 'method' not in message:
-                    waiter = self.waiters.get(message['id'])
-                    if waiter and not waiter.done():
-                        if 'error' in message:
-                            waiter.set_exception(RuntimeError('Codex could not complete the account operation.'))
-                        else:
-                            waiter.set_result(message.get('result', {}))
-                elif 'id' in message:
-                    # This bridge only manages authentication and catalogs, never tools.
-                    await self._send(
-                        {'id': message['id'], 'error': {'code': -32601, 'message': 'Unsupported operation'}}
-                    )
-                elif message.get('method') == 'account/login/completed':
-                    await self.notifications.put(message.get('params', {}))
-        except (ValueError, OSError, asyncio.CancelledError):
-            pass
-        finally:
-            for waiter in self.waiters.values():
-                if not waiter.done():
-                    waiter.set_exception(RuntimeError('Codex account service disconnected.'))
-
-    async def call(self, method, params=None, timeout=45):
-        self.sequence += 1
-        identifier = self.sequence
-        waiter = asyncio.get_running_loop().create_future()
-        self.waiters[identifier] = waiter
-        try:
-            await self._send({'id': identifier, 'method': method, 'params': params or {}})
-            return await asyncio.wait_for(waiter, timeout)
-        finally:
-            self.waiters.pop(identifier, None)
-
-    async def __aexit__(self, *args):
-        if self.process and self.process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                self.process.terminate()
-            try:
-                await asyncio.wait_for(self.process.wait(), 5)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    self.process.kill()
-                await self.process.wait()
-        if self.reader:
-            self.reader.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self.reader
-        if self.lock and not self.lock.closed:
-            self.lock.close()
+        except IntegrityError:
+            await _forget_key(key['id'])
+            await ProviderAccounts.update(account.id, {'status': 'needs_login', 'last_error': ALREADY_CONNECTED})
+            raise HTTPException(409, ALREADY_CONNECTED) from None
+        await _best_effort(codex_lb.set_alias(lb_id, current.label))
+        shutil.rmtree(home, ignore_errors=True)
+        log.info('Moved ChatGPT account %s into codex-lb.', account.id)
+        return binding
 
 
-def read_credentials(identifier: str):
-    path = account_home(identifier) / 'auth.json'
-    path.chmod(0o600)
-    tokens = json.loads(path.read_text()).get('tokens') or {}
-    if not tokens.get('access_token') or not tokens.get('account_id'):
-        raise ValueError('Codex account credentials are incomplete.')
-    return tokens
+async def prepare_request(account) -> tuple[str, dict]:
+    """The account's key and codex-lb's current view of it. Raises when the account cannot serve."""
+    binding = await account_secret(account)
+    try:
+        accounts = await codex_lb.list_accounts()
+        if binding['lb_account_id'] not in accounts:
+            accounts = await codex_lb.list_accounts(fresh=True)
+    except CodexLBError:
+        raise unavailable() from None
+    summary = accounts.get(binding['lb_account_id'])
+    if (await sync_account(account, summary)).status != 'ok':
+        raise HTTPException(401, NEEDS_LOGIN)
+    return binding['lb_api_key'], summary
 
 
-async def _save_login(identifier: str, **values):
+async def verify(account, redis=None):
+    """Read status, plan, models and limits again, past every cache."""
+    binding = await account_secret(account)
+    try:
+        summary = (await codex_lb.list_accounts(fresh=True)).get(binding['lb_account_id'])
+        catalog = await codex_lb.models(fresh=True)
+    except CodexLBError:
+        raise unavailable() from None
+    account = await sync_account(await ProviderAccounts.get(account.id) or account, summary, catalog)
+    if account.status != 'ok':
+        raise HTTPException(401, NEEDS_LOGIN)
+    await record_summary(redis, account.id, summary)
+    return account
+
+
+async def sync_accounts(redis=None):
+    """Bring every ChatGPT account up to date from codex-lb's cached view, so new models appear."""
+    accounts = [account for account in await ProviderAccounts.list() if account.provider == 'codex']
+    if not accounts:
+        return
+    bindings = {}
+    try:
+        summaries = await codex_lb.list_accounts()
+        catalog = await codex_lb.models()
+        for account in accounts:
+            with contextlib.suppress(HTTPException):
+                bindings[account.id] = await account_secret(account)
+        if any(binding['lb_account_id'] not in summaries for binding in bindings.values()):
+            summaries = await codex_lb.list_accounts(fresh=True)
+    except CodexLBError:
+        log.debug('codex-lb is unavailable; ChatGPT accounts keep their last known state.')
+        return
+    for account in accounts:
+        if binding := bindings.get(account.id):
+            summary = summaries.get(binding['lb_account_id'])
+            await sync_account(account, summary, catalog)
+            await record_summary(redis, account.id, summary)
+
+
+async def _get_login(identifier):
+    async with get_async_db_context() as db:
+        return await db.get(ProviderLogin, identifier)
+
+
+async def _owned_login(identifier, user):
+    attempt = await _get_login(identifier)
+    if not attempt or attempt.owner_user_id != user.id:
+        raise HTTPException(404, 'Connection attempt not found.')
+    return attempt
+
+
+async def _pending_logins(now):
+    async with get_async_db_context() as db:
+        result = await db.execute(
+            select(ProviderLogin).where(ProviderLogin.status == 'pending', ProviderLogin.expires_at > now)
+        )
+        return list(result.scalars())
+
+
+async def _update_login(identifier, **values):
     async with get_async_db_context() as db:
         attempt = await db.get(ProviderLogin, identifier)
         if attempt:
@@ -186,357 +248,352 @@ async def _save_login(identifier: str, **values):
             await db.commit()
 
 
-def _link_details(started):
-    """Only OpenAI's own sign-in page, returning to app-server's loopback callback, is accepted."""
-    auth = urlparse(started['authUrl'])
-    query = parse_qs(auth.query)
-    callback = urlparse((query.get('redirect_uri') or [''])[0])
-    if auth.scheme != 'https' or auth.hostname != 'auth.openai.com' or not query.get('state'):
-        raise RuntimeError('Unexpected authorization URL.')
-    if callback.scheme != 'http' or callback.hostname not in ('127.0.0.1', 'localhost') or not callback.port:
-        raise RuntimeError('Unexpected sign-in callback.')
+async def _finish(identifier, status, error=None, account_id=None):
+    """End a pending attempt once. Flow details are dropped; only the method stays."""
+    async with get_async_db_context() as db:
+        attempt = await db.get(ProviderLogin, identifier)
+        if attempt and attempt.status == 'pending':
+            method = open_secret(attempt.secret).get('method')
+            attempt.status, attempt.error, attempt.account_id = status, error, account_id
+            attempt.secret = seal_secret({'method': method})
+            attempt.updated_at = int(time.time())
+            await db.commit()
+
+
+def _flow_details(method, started):
+    """Only OpenAI's own pages, returning to codex-lb's fixed callback, are shown to members."""
+    flow_id = started.get('flowId')
+    if not isinstance(flow_id, str) or not flow_id:
+        raise ValueError('Missing flow.')
+    if method == 'link':
+        url = started.get('authorizationUrl') or ''
+        auth = urlparse(url)
+        query = parse_qs(auth.query)
+        if (
+            started.get('method') != 'browser'
+            or auth.scheme != 'https'
+            or auth.hostname != 'auth.openai.com'
+            or query.get('redirect_uri') != [codex_lb.CALLBACK_URL]
+            or not query.get('state')
+        ):
+            raise ValueError('Unexpected authorization URL.')
+        return {'method': 'link', 'flowId': flow_id, 'authUrl': url, 'state': query['state'][0]}
+    verification = started.get('verificationUrl') or ''
+    parsed = urlparse(verification)
+    if (
+        started.get('method') != 'device'
+        or parsed.scheme != 'https'
+        or parsed.hostname not in ('auth.openai.com', 'chatgpt.com')
+        or not started.get('userCode')
+    ):
+        raise ValueError('Unexpected device authorization.')
     return {
-        'method': 'link',
-        'loginId': started['loginId'],
-        'authUrl': started['authUrl'],
-        'state': query['state'][0],
-        'callbackPort': callback.port,
-        'callbackPath': callback.path or '/auth/callback',
+        'method': 'device_code',
+        'flowId': flow_id,
+        'verificationUrl': verification,
+        'userCode': started['userCode'],
     }
 
 
-async def _complete_login(identifier, owner_id, label, sharing, ready, redis=None, method='device_code'):
-    keep_home = False
-    try:
-        async with AppServer(identifier) as server:
-            if method == 'link':
-                # The member signs in through OpenAI's page and pastes back the loopback address.
-                started = _link_details(await server.call('account/login/start', {'type': 'chatgpt'}))
-            else:
-                started = await server.call('account/login/start', {'type': 'chatgptDeviceCode'})
-                # Only OpenAI's device authorization page is shown to the user.
-                parsed = urlparse(started['verificationUrl'])
-                if parsed.scheme != 'https' or parsed.hostname not in ('auth.openai.com', 'chatgpt.com'):
-                    raise RuntimeError('Unexpected device authorization URL.')
-                started = {'method': 'device_code', **started}
-            await _save_login(identifier, secret=seal_secret({'home_id': identifier, **started}))
-            if not ready.done():
-                ready.set_result(True)
-            async with asyncio.timeout(LOGIN_TTL):
-                while True:
-                    completed = await server.notifications.get()
-                    if completed.get('loginId') == started['loginId']:
-                        if not completed.get('success'):
-                            raise RuntimeError('Sign-in was not completed.')
-                        break
-            details = await server.call('account/read', {'refreshToken': False})
-            if (details.get('account') or {}).get('type') != 'chatgpt':
-                raise RuntimeError('Connect a ChatGPT account.')
-            tokens = read_credentials(identifier)
-            catalog = await server.call('model/list', {'includeHidden': False})
-            models = [
-                {'id': item.get('model') or item['id'], 'name': item.get('displayName') or item['id']}
-                for item in catalog.get('data', [])
-            ]
-            if not models:
-                raise RuntimeError('Codex returned no models.')
-            account = await ProviderAccounts.insert(
-                owner_user_id=owner_id,
-                provider='codex',
-                plan=details['account'].get('planType') or 'unknown',
-                external_account_id=tokens['account_id'],
-                label=label,
-                sharing=sharing,
-                capacity_weight=1,
-                budget=None,
-                allow_team_resets=True,
-                status='ok',
-                models=models,
-                secret={'home_id': identifier},
-            )
-            keep_home = True
-            await _save_login(identifier, status='completed', account_id=account.id, secret=seal_secret({}))
-            from open_webui.utils.provider_limits import record_codex_snapshot
-
-            with contextlib.suppress(RuntimeError, TimeoutError):
-                await record_codex_snapshot(redis, account.id, await server.call('account/rateLimits/read'))
-    except (Exception, asyncio.CancelledError) as error:
-        message = 'Sign-in expired or failed. Start a new connection.'
-        if isinstance(error, IntegrityError):
-            message = 'This ChatGPT account is already connected.'
-        await _save_login(identifier, status='error', error=message, secret=seal_secret({}))
-        if not ready.done():
-            ready.set_exception(HTTPException(502, message))
-    finally:
-        if not keep_home:
-            shutil.rmtree(account_home(identifier), ignore_errors=True)
-        _tasks.pop(identifier, None)
-
-
-async def start_login(user, label, sharing, redis=None, method='device_code'):
-    if not shutil.which(os.environ.get('MOLOGATE_CODEX_BINARY', 'codex')):
-        raise HTTPException(503, 'The Codex account service is not installed.')
-    identifier = str(uuid.uuid4())
-    now = int(time.time())
-    # Bound long-lived login subprocesses on the small VPS; pending attempts survive worker routing.
-    async with _login_lock, get_async_db_context() as db:
-        pending = list(
-            (
-                await db.execute(
-                    select(ProviderLogin).where(ProviderLogin.status == 'pending', ProviderLogin.expires_at > now)
+async def start_login(user, sharing, redis=None, method='device_code'):
+    async with _login_lock:
+        now = int(time.time())
+        for attempt in await _pending_logins(now):
+            # A sign-in nobody is watching may have finished; settle it before turning others away.
+            with contextlib.suppress(CodexLBError, HTTPException):
+                await _settle(attempt.id, redis)
+        pending = await _pending_logins(now)
+        if own := next((attempt for attempt in pending if attempt.owner_user_id == user.id), None):
+            return own.id
+        # codex-lb runs one device flow at a time, and finding the new account relies on it.
+        if pending:
+            raise HTTPException(409, BUSY)
+        identifier = str(uuid.uuid4())
+        # The account's generated name, reserved while the sign-in is pending.
+        label = await ProviderAccounts.unique_label(include_logins=True)
+        async with get_async_db_context() as db:
+            db.add(
+                ProviderLogin(
+                    id=identifier,
+                    owner_user_id=user.id,
+                    label=label,
+                    sharing=sharing,
+                    secret=seal_secret({'method': method}),
+                    status='pending',
+                    expires_at=now + LOGIN_TTL,
+                    created_at=now,
+                    updated_at=now,
                 )
-            ).scalars()
-        )
-        if any(attempt.owner_user_id == user.id for attempt in pending):
-            return next(attempt.id for attempt in pending if attempt.owner_user_id == user.id)
-        if len(pending) >= 4:
-            raise HTTPException(429, 'Several members are connecting accounts. Try again shortly.')
-        # Every link sign-in returns to the same loopback port; a second one would cancel the first.
-        if method == 'link' and any(open_secret(attempt.secret).get('method') == 'link' for attempt in pending):
-            raise HTTPException(
-                409, 'Another member is signing in with a link. Try again in a few minutes, or sign in with a code.'
             )
-        db.add(
-            ProviderLogin(
-                id=identifier,
-                owner_user_id=user.id,
-                label=label,
-                sharing=sharing,
-                secret=seal_secret({'method': method}),
-                status='pending',
-                expires_at=now + LOGIN_TTL,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await db.commit()
-    ready = asyncio.get_running_loop().create_future()
-    _tasks[identifier] = asyncio.create_task(_complete_login(identifier, user.id, label, sharing, ready, redis, method))
-    try:
-        await asyncio.wait_for(ready, 60)
-    except TimeoutError:
-        _tasks[identifier].cancel()
-        raise HTTPException(504, 'The Codex login service timed out. Try again.') from None
+            await db.commit()
+        # Workers do not share the lock: of attempts saved at the same moment, only the first goes on.
+        first = min(await _pending_logins(now), key=lambda attempt: (attempt.created_at, attempt.id))
+        if first.id != identifier:
+            await _delete_login(identifier)
+            raise HTTPException(409, BUSY)
+        try:
+            # Signing in again to an existing codex-lb account updates it in place; this tells them apart.
+            known = {
+                account_id: summary.get('lastRefreshAt')
+                for account_id, summary in (await codex_lb.list_accounts(fresh=True)).items()
+            }
+            started = await codex_lb.start_oauth('browser' if method == 'link' else 'device')
+            details = _flow_details(method, started)
+        except (CodexLBError, ValueError):
+            await _delete_login(identifier)
+            raise unavailable() from None
+        values = {'secret': seal_secret(details | {'known': known})}
+        lifetime = started.get('expiresInSeconds')
+        if isinstance(lifetime, int) and 0 < lifetime < LOGIN_TTL:
+            values['expires_at'] = now + lifetime
+        await _update_login(identifier, **values)
     return identifier
 
 
-async def login_status(identifier, user):
+async def _delete_login(identifier):
     async with get_async_db_context() as db:
-        attempt = await db.get(ProviderLogin, identifier)
-        if not attempt or attempt.owner_user_id != user.id:
-            raise HTTPException(404, 'Connection attempt not found.')
-        status = attempt.status
-        if status == 'pending' and attempt.expires_at < time.time():
-            status = 'error'
-        result = {
-            'id': attempt.id,
-            'status': status,
-            'account_id': attempt.account_id,
-            'expires_at': attempt.expires_at,
-            'error': attempt.error,
-        }
-        if status == 'pending':
-            secret = open_secret(attempt.secret)
-            result.update(
-                method=secret.get('method', 'device_code'),
-                user_code=secret.get('userCode'),
-                verification_url=secret.get('verificationUrl'),
-                auth_url=secret.get('authUrl'),
-            )
-        return result
+        await db.execute(delete(ProviderLogin).where(ProviderLogin.id == identifier))
+        await db.commit()
 
 
-def callback_params(value: str) -> dict:
-    """Only the OAuth result travels on; the pasted host, port and path are never used."""
-    value = value.strip()
-    query = urlparse(value).query if '?' in value else value.lstrip('?')
-    params = {
-        key: values[0]
-        for key, values in parse_qs(query).items()
-        if key in ('code', 'state', 'error', 'error_description') and values
+async def _settle(identifier, redis=None):
+    """Follow codex-lb's flow. The caller holds the login lock; codex-lb errors propagate."""
+    attempt = await _get_login(identifier)
+    if attempt is None or attempt.status != 'pending':
+        return
+    if attempt.expires_at < time.time():
+        await _finish(identifier, 'error', EXPIRED)
+        return
+    flow_id = open_secret(attempt.secret).get('flowId')
+    if not flow_id:
+        return
+    status = await codex_lb.oauth_status(flow_id)
+    if status == 'success':
+        await _finalize(attempt, redis)
+    elif status == 'error':
+        await _finish(identifier, 'error', NOT_COMPLETED)
+
+
+async def _finalize(attempt, redis=None):
+    """codex-lb saved the sign-in: map the account it created, or refreshed, to this member."""
+    known = open_secret(attempt.secret).get('known') or {}
+    accounts = await codex_lb.list_accounts(fresh=True)
+    mapped = {
+        account.external_account_id: account for account in await ProviderAccounts.list() if account.provider == 'codex'
     }
-    if not params.get('state') or not (params.get('code') or params.get('error')):
+    found = [account_id for account_id in accounts if account_id not in known and account_id not in mapped]
+    if not found:
+        found = [
+            account_id
+            for account_id in accounts
+            if account_id in known and accounts[account_id].get('lastRefreshAt') != known[account_id]
+        ]
+    if len(found) != 1:
+        await _finish(attempt.id, 'error', 'Mologate could not tell which ChatGPT account signed in. Try again.')
+        return
+    lb_id = found[0]
+    summary = accounts[lb_id]
+    if existing := mapped.get(lb_id):
+        if existing.owner_user_id != attempt.owner_user_id:
+            await _finish(attempt.id, 'error', ALREADY_CONNECTED)
+            return
+        values = {'status': 'ok', 'last_error': None}
+        if summary.get('planType'):
+            values['plan'] = summary['planType']
+        await ProviderAccounts.update(existing.id, values)
+        await record_summary(redis, existing.id, summary)
+        await _finish(attempt.id, 'completed', account_id=existing.id)
+        log.info('ChatGPT account %s reconnected.', existing.id)
+        return
+    catalog = await codex_lb.models()
+    if not catalog:
+        raise CodexLBError(502, 'no_models')
+    key = await codex_lb.create_key('mologate-' + attempt.id, lb_id)
+    try:
+        account = await ProviderAccounts.insert(
+            owner_user_id=attempt.owner_user_id,
+            provider='codex',
+            plan=summary.get('planType') or 'unknown',
+            external_account_id=lb_id,
+            label=attempt.label,
+            sharing=attempt.sharing,
+            capacity_weight=1,
+            budget=None,
+            status='ok',
+            models=catalog,
+            secret={'lb_account_id': lb_id, 'lb_api_key': key['key'], 'lb_api_key_id': key['id']},
+        )
+    except IntegrityError:
+        await _forget_key(key['id'])
+        await _finish(attempt.id, 'error', ALREADY_CONNECTED)
+        return
+    await _best_effort(codex_lb.set_alias(lb_id, account.label))
+    await record_summary(redis, account.id, summary)
+    await _finish(attempt.id, 'completed', account_id=account.id)
+    log.info('ChatGPT account %s connected by user %s.', account.id, attempt.owner_user_id)
+
+
+def _login_view(attempt):
+    secret = open_secret(attempt.secret)
+    pending = attempt.status == 'pending'
+    return {
+        'id': attempt.id,
+        'status': attempt.status,
+        'account_id': attempt.account_id,
+        'expires_at': attempt.expires_at,
+        'error': attempt.error,
+        'method': secret.get('method', 'device_code'),
+        'user_code': secret.get('userCode') if pending else None,
+        'verification_url': secret.get('verificationUrl') if pending else None,
+        'auth_url': secret.get('authUrl') if pending else None,
+    }
+
+
+async def login_status(identifier, user, redis=None):
+    attempt = await _owned_login(identifier, user)
+    if attempt.status == 'pending':
+        async with _login_lock:
+            try:
+                await _settle(identifier, redis)
+            except CodexLBError:
+                raise unavailable() from None
+        attempt = await _owned_login(identifier, user)
+    return _login_view(attempt)
+
+
+def callback_params(value: str) -> tuple[str, str]:
+    value = value.strip()
+    query = parse_qs(urlparse(value).query if '?' in value else value.lstrip('?'))
+    code, state = (query.get('code') or [''])[0], (query.get('state') or [''])[0]
+    if query.get('error') and not code:
+        raise HTTPException(400, 'OpenAI did not accept this sign-in. Start a new connection and try again.')
+    if not code or not state:
         raise HTTPException(
             400,
             'Paste the full address your browser opened after signing in. '
-            'It starts with http://127.0.0.1:1455/auth/callback.',
+            'It starts with http://localhost:1455/auth/callback.',
         )
-    return params
+    return code, state
 
 
-async def submit_callback(identifier, user, value: str):
-    async with get_async_db_context() as db:
-        attempt = await db.get(ProviderLogin, identifier)
-        if not attempt or attempt.owner_user_id != user.id:
-            raise HTTPException(404, 'Connection attempt not found.')
-        status, expires_at, secret = attempt.status, attempt.expires_at, open_secret(attempt.secret)
-    if status != 'pending' or expires_at < time.time() or secret.get('method') != 'link':
+async def submit_callback(identifier, user, value: str, redis=None):
+    attempt = await _owned_login(identifier, user)
+    secret = open_secret(attempt.secret)
+    if attempt.status != 'pending' or attempt.expires_at < time.time() or secret.get('method') != 'link':
         raise HTTPException(409, 'This sign-in is no longer waiting. Start a new connection.')
-    if not secret.get('state'):
+    if not secret.get('state') or not secret.get('flowId'):
         raise HTTPException(409, 'The sign-in link is still being prepared. Try again in a moment.')
-    params = callback_params(value)
-    if not hmac.compare_digest(params['state'].encode(), secret['state'].encode()):
+    code, state = callback_params(value)
+    if not hmac.compare_digest(state.encode(), secret['state'].encode()):
         raise HTTPException(400, 'This address belongs to a different sign-in. Use the address from the latest link.')
-    # app-server holds the PKCE verifier and exchanges the code itself at its loopback callback.
-    url = f'http://127.0.0.1:{int(secret["callbackPort"])}{secret["callbackPath"]}?{urlencode(params)}'
+    # codex-lb holds the PKCE verifier. Only the code and state travel on, never the pasted host.
+    callback = codex_lb.CALLBACK_URL + '?' + urlencode({'code': code, 'state': state})
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-            async with session.get(url, allow_redirects=False) as response:
-                accepted = response.status < 400
-    except (aiohttp.ClientError, TimeoutError):
-        raise HTTPException(502, 'The sign-in could not be finished. Start a new connection.') from None
-    if not accepted:
-        raise HTTPException(400, 'OpenAI did not accept this sign-in. Start a new connection and try again.')
-    if task := _tasks.get(identifier):
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(asyncio.shield(task), 30)
-    return await login_status(identifier, user)
+        result = await codex_lb.manual_callback(callback, secret['flowId'])
+        async with _login_lock:
+            if result.get('status') == 'success':
+                await _settle(identifier, redis)
+            else:
+                await _finish(identifier, 'error', 'OpenAI did not accept this sign-in. Start a new connection.')
+    except CodexLBError:
+        raise unavailable() from None
+    return await login_status(identifier, user, redis)
 
 
 async def cancel_login(identifier, user):
-    async with get_async_db_context() as db:
-        attempt = await db.get(ProviderLogin, identifier)
-        if not attempt or attempt.owner_user_id != user.id:
-            raise HTTPException(404, 'Connection attempt not found.')
-        pending = attempt.status == 'pending'
-    if task := _tasks.get(identifier):
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    if pending:
-        await _save_login(identifier, status='error', error='Sign-in cancelled.', secret=seal_secret({}))
+    await _owned_login(identifier, user)
+    # codex-lb lets its own flow expire.
+    await _finish(identifier, 'error', 'Sign-in cancelled.')
     return True
-
-
-def token_needs_refresh(tokens):
-    try:
-        value = tokens['access_token'].split('.')[1]
-        claims = json.loads(base64.urlsafe_b64decode(value + '=' * (-len(value) % 4)))
-        return float(claims['exp']) < time.time() + 300
-    except (KeyError, IndexError, ValueError, TypeError):
-        return True
-
-
-async def refresh_account(account):
-    identifier = open_secret(account.secret)['home_id']
-    try:
-        async with AppServer(identifier) as server:
-            try:
-                refresh = token_needs_refresh(read_credentials(identifier))
-            except (OSError, ValueError):
-                refresh = True
-            details = await server.call('account/read', {'refreshToken': refresh})
-            if (details.get('account') or {}).get('type') != 'chatgpt':
-                raise ValueError('Login required.')
-            tokens = read_credentials(identifier)
-            if tokens['account_id'] != account.external_account_id:
-                raise ValueError('Account identity changed.')
-            return tokens, await server.call('account/rateLimits/read')
-    except HTTPException:
-        raise
-    except (OSError, ValueError):
-        await ProviderAccounts.update(
-            account.id, {'status': 'needs_login', 'last_error': 'Reconnect this ChatGPT account.'}
-        )
-        raise HTTPException(401, 'This ChatGPT account needs to be reconnected.') from None
-    except (RuntimeError, TimeoutError):
-        raise HTTPException(502, 'The Codex account service is unavailable. Try again shortly.') from None
-
-
-async def consume_reset_credit(account, idempotency_key: str, credit_id: str | None = None) -> str:
-    params = {'idempotencyKey': idempotency_key}
-    if credit_id:
-        params['creditId'] = credit_id
-    async with AppServer(open_secret(account.secret)['home_id']) as server:
-        result = await server.call('account/rateLimitResetCredit/consume', params)
-    return result.get('outcome') or 'unknown'
 
 
 async def auto_reset(accounts, triggered_by: str | None, redis=None):
     """Redeem one reset coupon once every eligible account is empty. Returns a usable account."""
-    from open_webui.utils.provider_limits import codex_exhausted, codex_reset_credits, record_codex_snapshot
-
-    accounts = [account for account in accounts if account.provider == 'codex' and account.allow_team_resets]
+    # One team-wide switch decides whether coupons are spent; accounts have no switch of their own.
+    accounts = [account for account in accounts if account.provider == 'codex']
     if not accounts:
         return None
     async with _reset_lock:
+        # Read again under the lock and past the cache: a concurrent request may have refilled one.
+        try:
+            summaries = await codex_lb.list_accounts(fresh=True)
+        except CodexLBError:
+            return None
         coupons = []
         for account in accounts:
-            # Read again under the lock: a concurrent request may already have refilled an account.
             try:
-                _, limits = await refresh_account(account)
+                lb_id = (await account_secret(account))['lb_account_id']
             except HTTPException:
                 continue
-            await record_codex_snapshot(redis, account.id, limits)
-            if not codex_exhausted(limits):
+            summary = summaries.get(lb_id)
+            if summary is None or summary.get('status') in ('paused', *codex_lb.REAUTH_STATUSES):
+                continue
+            await record_summary(redis, account.id, summary)
+            if not codex_lb.exhausted(summary):
                 return account
-            coupons += [(credit, account) for credit in codex_reset_credits(limits)]
+            try:
+                credits = codex_lb.available_credits(await codex_lb.reset_credits(lb_id))
+            except CodexLBError:
+                continue
+            if credits:
+                coupons.append((credits[0], account, lb_id))
         # The database also guards workers that do not share this lock.
         if not coupons or await LimitResetEvents.recent('codex', RESET_COOLDOWN):
             return None
-        # Spend the coupon that would expire first.
-        credit, account = min(coupons, key=lambda coupon: coupon[0].get('expiresAt') or float('inf'))
+        # Spend the coupon that would expire first; codex-lb redeems that account's soonest one.
+        credit, account, lb_id = min(
+            coupons, key=lambda coupon: math.inf if coupon[0]['expires_at'] is None else coupon[0]['expires_at']
+        )
         event = await LimitResetEvents.start(account, triggered_by, credit['id'])
         outcome = 'error'
         try:
-            for attempt in range(2):
-                try:
-                    # The same idempotency key makes a retried attempt redeem at most one coupon.
-                    outcome = await consume_reset_credit(account, event.idempotency_key, credit['id'])
-                    break
-                except (HTTPException, OSError, RuntimeError, TimeoutError):
-                    if attempt:
-                        log.warning('Automatic limit reset failed for account %s.', account.id)
+            # Sent once: a redemption that may have reached OpenAI is never repeated.
+            result = await codex_lb.consume_reset_credit(lb_id, event.idempotency_key)
+            outcome = RESET_OUTCOMES.get(result.get('code'), 'error')
+        except CodexLBError as error:
+            if error.code in RESET_REFUSALS:
+                outcome = 'refused'
         finally:
             await LimitResetEvents.finish(event.id, outcome)
         log.info('Automatic limit reset on account %s: %s.', account.id, outcome)
         if outcome not in ('reset', 'nothingToReset'):
             return None
         try:
-            _, limits = await refresh_account(account)
-        except HTTPException:
+            summary = (await codex_lb.list_accounts(fresh=True)).get(lb_id)
+        except CodexLBError:
             return None
-        await record_codex_snapshot(redis, account.id, limits)
-        return None if codex_exhausted(limits) else account
+        await record_summary(redis, account.id, summary)
+        return None if summary is None or codex_lb.exhausted(summary) else account
 
 
 async def disconnect(account):
-    identifier = open_secret(account.secret)['home_id']
-    # Local deletion remains possible when login has expired or the binary is unavailable.
-    try:
-        async with AppServer(identifier) as server:
-            await server.call('account/logout')
-    except (OSError, RuntimeError, TimeoutError):
-        pass
-    shutil.rmtree(account_home(identifier), ignore_errors=True)
+    """Revoke the key and remove the account from codex-lb. Never blocks local deletion."""
+    secret = open_secret(account.secret)
+    if secret.get('home_id'):
+        with contextlib.suppress(ValueError):
+            shutil.rmtree(ACCOUNT_ROOT / str(uuid.UUID(secret['home_id'])), ignore_errors=True)
+    if secret.get('lb_api_key_id'):
+        await _forget_key(secret['lb_api_key_id'])
+    if secret.get('lb_account_id'):
+        try:
+            await codex_lb.delete_account(secret['lb_account_id'])
+        except CodexLBError:
+            log.warning('Could not remove account %s from codex-lb; its key no longer reaches it.', account.id)
 
 
 async def delete_user_accounts(user_id):
     """Revoke credentials and pending logins when the owner is deleted."""
-    from open_webui.models.provider_accounts import ProviderAccount
-
     async with get_async_db_context() as db:
         accounts = list(
             (await db.execute(select(ProviderAccount).where(ProviderAccount.owner_user_id == user_id))).scalars()
         )
-        attempts = list(
-            (await db.execute(select(ProviderLogin).where(ProviderLogin.owner_user_id == user_id))).scalars()
-        )
-        for attempt in attempts:
-            if task := _tasks.get(attempt.id):
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
         await db.execute(delete(ProviderLogin).where(ProviderLogin.owner_user_id == user_id))
         await db.execute(delete(ProviderAccount).where(ProviderAccount.owner_user_id == user_id))
         await db.commit()
     for account in accounts:
         if account.provider == 'codex':
-            shutil.rmtree(account_home(open_secret(account.secret)['home_id']), ignore_errors=True)
-    for attempt in attempts:
-        shutil.rmtree(account_home(attempt.id), ignore_errors=True)
+            await disconnect(account)
 
 
 async def shutdown():
-    tasks = list(_tasks.values())
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await codex_lb.close()

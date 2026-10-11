@@ -12,10 +12,14 @@ The full design and phased plan for accounts, limits, credits and personal API k
       the subscription type, and whether it is an API key or a full account. Accounts are shared by the
       whole team.
   - Started: Settings → Provider accounts lists the member's own accounts and every shared one
-    (admins see all). Each card shows the provider, which tells an API key from a ChatGPT account,
-    the plan, owner, status and sharing, every limit window the provider reports with percent used
-    and reset time, and an API key's monthly budget. Missing: how much of that budget is left,
-    which needs the usage ledger.
+    (admins see all) as compact rows, collapsed by default. A row shows the generated name
+    (`Account #1n9Dk5`), the provider, which tells an API key from a ChatGPT account, the plan,
+    owner, the 5-hour and weekly bars and a ChatGPT account's reset coupons. Expanded, it shows
+    every limit window the provider reports with percent used and reset time, who can use it, and
+    an API key's monthly budget. A shared account's 5-hour and weekly windows are split into the
+    owner's half and the team's half, each with its own bar, estimated from who sent the requests
+    between readings (not enforced yet). Missing: how much of the budget is left, and exact
+    per-member numbers, which need the usage ledger.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
   - Started: each provider account keeps the limits its provider reports and shows them on its card
@@ -31,8 +35,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
   - Done: a request that finds an account empty, or gets a 429 from it, moves on to the next account
     that can serve the model: the member's own first, then shared ones. When every one is empty,
     Mologate redeems the Codex reset coupon that expires soonest and retries, at most once every
-    10 minutes. Any member turns this off for everyone in Settings → Provider accounts, and an owner
-    can keep their account's coupons out of it. Each account shows its coupons and last reset.
+    10 minutes. Any member turns this off for everyone with the Auto-reset switch in Settings →
+    Provider accounts; there is no per-account switch. Each ChatGPT account shows its coupon count,
+    with the last reset in the tooltip. ChatGPT limits and coupons come from codex-lb.
     Details in [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-automatic-limit-reset).
 - [ ] **Per-model limits:**
   - Show each model's own limits when it is selected.
@@ -349,9 +354,16 @@ The full design and phased plan for accounts, limits, credits and personal API k
     tools.
   - Open WebUI already has per-user API keys (off by default) and an OpenAI-compatible
     `/api/chat/completions` endpoint to build on.
-- [ ] **codex-lb integration for ChatGPT accounts:**
+- [x] **codex-lb integration for ChatGPT accounts:**
   - Cut codex-lb down to the minimum it needs: accounts and their limits.
   - Show everything inside Mologate instead of the codex-lb interface.
+  - Done: codex-lb runs beside Mologate as a pinned, unmodified image on a private network, with no
+    published port and its dashboard unused. Mologate drives only its sign-in, account, limit,
+    coupon and model endpoints, and sends ChatGPT requests through its proxy, which presents them
+    as the Codex CLI. Each account gets a codex-lb key scoped to that one account, so a private
+    account never serves anyone else. Sign-in, limits and coupons all show in Settings → Provider
+    accounts. Not yet deployed or tried with a live ChatGPT account. Details in
+    [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
 - [ ] **Providers needed now:**
   - Codex, via codex-lb as described above;
   - OpenCode, the free-model setup described above;
@@ -360,9 +372,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
   - When connecting each provider, check with a real key that the chosen effort level reaches it in
     the format it expects. Only a test server has been checked so far; OpenRouter, for example,
     documents a `reasoning: {effort}` object.
-  - Started: Z.ai coding plans and OpenRouter keys connect in Settings → Provider accounts, as do
-    Anthropic and OpenAI API keys, and a Z.ai coding-plan account has served real chats. OpenCode is
-    not started.
+  - Started: ChatGPT accounts connect through codex-lb (sign-in link or device code), and Z.ai coding
+    plans and OpenRouter keys connect in Settings → Provider accounts, as do Anthropic and OpenAI API
+    keys. A Z.ai coding-plan account has served real chats. OpenCode is not started.
 
 ## Proposed limits
 

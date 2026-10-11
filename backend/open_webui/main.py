@@ -483,7 +483,7 @@ async def lifespan(app: FastAPI):
     from open_webui.utils.session_pool import close_session
 
     await close_session()
-    # Mologate: stop pending device-code login processes during shutdown.
+    # Mologate: close the codex-lb client during shutdown.
     from open_webui.utils.codex_accounts import shutdown as close_codex_accounts
 
     await close_codex_accounts()

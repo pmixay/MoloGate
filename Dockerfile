@@ -52,15 +52,8 @@ RUN chown -R $UID:$GID /app/backend && \
     chgrp -R 0 /app/backend/open_webui/static && \
     chmod -R g=u /app/backend/open_webui/static
 
-# Mologate: pinned native app-server for isolated device login; no Node runtime or agent execution.
-FROM --platform=$BUILDPLATFORM python:3.11-slim-bookworm AS codex-auth
-ARG TARGETARCH
-COPY scripts/install-codex.py /tmp/install-codex.py
-RUN python /tmp/install-codex.py "$TARGETARCH" /usr/local/bin/codex
-
 ######## WebUI backend ########
 FROM python:3.11-slim-bookworm AS base
-COPY --from=codex-auth /usr/local/bin/codex /usr/local/bin/codex
 
 # Use args
 ARG USE_CUDA

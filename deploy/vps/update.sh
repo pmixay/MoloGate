@@ -10,5 +10,6 @@ docker compose config --quiet
 # Reuse the GitHub account already registered on this VPS.
 registry_user=$(gh api user --jq .login)
 gh auth token | docker login ghcr.io -u "$registry_user" --password-stdin >/dev/null
-docker compose pull mologate
-docker compose up -d --wait --wait-timeout 180 mologate
+# codex-lb carries the ChatGPT accounts; Mologate does not wait on it, so start it explicitly.
+docker compose pull mologate codex-lb
+docker compose up -d --wait --wait-timeout 180 mologate codex-lb

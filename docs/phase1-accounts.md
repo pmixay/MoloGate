@@ -11,8 +11,9 @@ passed on both architectures. The live image is pinned to
 `ghcr.io/pmixay/mologate@sha256:d983bdc3081560bc0312f46591b5f72d2646dc44a7960bcbf8bb555582716abd`.
 Existing production users, provider connections, data and registration policy are retained.
 Later commits on the branch are not deployed yet: automatic account switching and limit resets,
-admin-only account creation, ChatGPT link sign-in and full-text uploads. They add migrations
-`c3d9e7a5b1f0` and `d8e2b6c4a9f3`.
+admin-only account creation, ChatGPT link sign-in, full-text uploads, and ChatGPT accounts through
+codex-lb with generated account names and a single team-wide auto-reset switch. They add migrations `c3d9e7a5b1f0`, `d8e2b6c4a9f3` and
+`e5a3c1f8d2b7`, and a `codex-lb` service in the compose file.
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
 Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
 
@@ -31,14 +32,16 @@ pause, change sharing/budget, or disconnect an account. A paused account cannot 
 `/{id}/verify` refreshes verification. POST `/codex` starts a ChatGPT login with
 `method: "link"` or `"device_code"`; GET `/codex/logins/{id}` returns its status only to its
 initiating user, POST `/codex/logins/{id}/callback` takes the pasted callback address of a link
-login, and DELETE `/codex/logins/{id}` cancels it. At most one pending login per member, four
-concurrent attempts per worker and one link login at a time (they share loopback port 1455) are
-allowed. Login attempts expire after 15 minutes. The UI remembers the attempt ID so reopening
-Settings can resume.
+login, and DELETE `/codex/logins/{id}` cancels it. One pending login per member and one ChatGPT
+connection at a time across the team are allowed. Login attempts expire after 15 minutes. The UI
+remembers the attempt ID so reopening Settings can resume. Accounts are named by the server
+(`Account #1n9Dk5`); members do not set labels. PATCH `/{id}` takes `sharing`, `budget` and
+`capacity_weight` only; automatic resets are switched on or off for the whole team at
+`/auto-reset`, never per account.
 
 With a link login, the member opens OpenAI's sign-in page, signs in, and pastes back the address
-their browser opens at `http://127.0.0.1:1455/auth/callback`. Only the `code` and `state` of that
-address are passed, after a state check, to app-server's loopback callback in the container.
+their browser opens at `http://localhost:1455/auth/callback`. Only the `code` and `state` of that
+address are passed to codex-lb, after a state check.
 
 Provider secrets use the existing Fernet facility. Responses contain an explicit public-field
 allowlist; neither ciphertext, key fingerprints, nor raw credentials are returned. Input validation
@@ -70,19 +73,19 @@ Chat, Responses, and the deprecated proxy all record reported headers. Redis sto
 with an in-memory fallback. `mologate.limits_mode=off` disables the new endpoints and models;
 the default is `observe`.
 
-Codex app-server is pinned to **0.162.1**, downloaded from the official npm package with a pinned
-SHA-512 integrity check during the image build. Each account has a mode-0700 `CODEX_HOME` within
-the data volume and a mode-0600 managed `auth.json`. The database encrypts the home identifier.
-Subprocesses do not inherit application secrets. Per-home file locks serialize refresh operations;
-after `account/read` confirms the ChatGPT login, the managed file's `tokens.account_id` supplies
-the unique provider identity (the current `account/read` response supplies the plan, not the ID).
-no chat turns or tool requests are sent to app-server. Inference uses the managed access token
-with `https://chatgpt.com/backend-api/codex/responses`. Chat clients receive translated text/tool
-SSE deltas and normalized token usage. Provider auth failures mark the account as needing login.
+ChatGPT accounts run through codex-lb (`ghcr.io/soju06/codex-lb:1.24.0`), an internal service
+on a private network that only Mologate reaches. codex-lb stores the tokens, refreshes them,
+polls limits and reset coupons every minute, syncs the model catalog every 5 minutes, and sends
+requests upstream as the official Codex client. Each Mologate account holds a codex-lb key scoped
+to that one account, and Mologate requires codex-lb's key authentication to be on before sending
+any ChatGPT request, so a request can only reach the account Mologate chose. Chat clients receive
+translated text/tool SSE deltas and normalized token usage. An account codex-lb reports as
+`reauth_required` or `deactivated` is marked as needing a new sign-in. Accounts connected through
+the earlier `codex app-server` integration are imported into codex-lb from their `auth.json` the
+first time they are used, and their old home directory is then deleted.
 
-Initial Codex windows are read after login and refreshed when verifying or starting a request;
-response headers can update them afterwards. Scheduled polling and the usage ledger belong to
-Phase 2. Owner reserves, account weights, credits, and spending enforcement are not applied yet.
+Scheduled ledger polling belongs to Phase 2. Owner reserves, account weights, credits, and
+spending enforcement are not applied yet.
 
 The initial Z.ai spike on the VPS read the existing key in memory. The
 coding model endpoint returned 11 models, rejected a deliberately invalid key with HTTP 401, and
@@ -94,8 +97,8 @@ change independently of the published inference API.
 
 ## Verification
 
-- The suite now has 38 backend tests. Image CI for `aec1626`, the branch's latest image (not
-  deployed), passed all 38 on amd64 and arm64:
+- The suite now has 51 backend tests; image CI runs them on amd64 and arm64 before publishing.
+  The 38-test suite of `aec1626` passed there:
   [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).
 - Shared-account visibility regression: all 24 backend tests of that change passed, including
   mixed private/shared pools in either order, unhealthy accounts, pending users, sharing
@@ -137,10 +140,12 @@ cannot be started without losing the data written since.
 
 The stdlib regression suite lives at `backend/open_webui/test/limits/test_provider_accounts.py`.
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private
-permissions, live visibility changes, disabled mode, owner deletion, simulated device login with
-real subprocess JSON-RPC, duplicate ChatGPT IDs, SSE chunk boundaries/Unicode/tools/usage,
-provider errors, OpenRouter key verification, header/quota parsing, migration up/down, account
-failover and automatic resets, sign-up refusal, and the full-text upload migration.
+permissions, live visibility changes, disabled mode, owner deletion, ChatGPT sign-in through a
+fake codex-lb (link and device code, one connection at a time, reconnects), single-account key
+scoping, legacy account import, SSE chunk boundaries/Unicode/tools/usage, provider errors,
+OpenRouter key verification, header/quota parsing, migration up/down, account failover and
+automatic resets, the owner and team usage split, generated account names, sign-up refusal, and
+the full-text upload migration.
 Run against an isolated database whose name contains `provider-tests`; never use a live database.
 
 ```bash
@@ -158,11 +163,10 @@ The same tests support a disposable PostgreSQL database via `DATABASE_URL` and
 `TEST_MIGRATION_DATABASE_URL`. Image CI runs them against the built runtime on both architectures
 before publishing the branch's image tag. Build frontend/images in GitHub Actions, not on this VPS.
 
-The real installed app-server has also been checked with an empty isolated home: initialization,
-empty `account/read`, `chatgptDeviceCode` issuance to `auth.openai.com`, and login cancellation all
-succeeded. No real ChatGPT account was connected by that probe. Browser acceptance still requires
-two users to complete OpenAI's login themselves and send chats through their connected models.
+Earlier, the real `codex app-server` 0.162.1 was checked with an empty isolated home; it has since
+been replaced by codex-lb. Browser acceptance still requires two users to complete OpenAI's login
+themselves and send chats through their connected models.
 
-Protocol reference: [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
+codex-lb reference: [Soju06/codex-lb](https://github.com/Soju06/codex-lb).
 Provider references: [OpenRouter key verification](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key),
 [Z.ai API](https://docs.z.ai/api-reference/introduction).

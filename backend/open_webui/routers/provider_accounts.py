@@ -30,7 +30,7 @@ from open_webui.utils.provider_accounts import (
     verify_api_key,
 )
 from open_webui.utils.provider_accounts import refresh_zai_limits
-from open_webui.utils.provider_limits import get_provider_limits
+from open_webui.utils.provider_limits import get_provider_limits, with_team_use
 from open_webui.utils.rate_limit import RateLimiter
 
 
@@ -64,7 +64,6 @@ class ApiAccountForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
     provider: Literal['anthropic_api', 'openai_api', 'openrouter', 'zai']
     api_key: SecretStr
-    label: str = Field(min_length=1, max_length=100)
     plan: Literal['api', 'lite', 'pro', 'max'] = 'api'
     sharing: Sharing = 'private'
     budget: Budget | None = None
@@ -72,7 +71,6 @@ class ApiAccountForm(BaseModel):
 
 class CodexAccountForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    label: str = Field(default='ChatGPT', min_length=1, max_length=100)
     sharing: Sharing = 'private'
     # A code on OpenAI's device page, or OpenAI's sign-in link with the callback address pasted back.
     method: Literal['device_code', 'link'] = 'device_code'
@@ -84,12 +82,11 @@ class CodexCallbackForm(BaseModel):
 
 
 class AccountUpdateForm(BaseModel):
+    # Names are generated ('Account #' + 6 characters) and cannot be changed.
     model_config = ConfigDict(extra='forbid')
-    label: str | None = Field(default=None, min_length=1, max_length=100)
     sharing: Sharing | None = None
     budget: Budget | None = None
     capacity_weight: float | None = Field(default=None, gt=0, le=1000, allow_inf_nan=False)
-    allow_team_resets: bool | None = None
 
 
 class AutoResetForm(BaseModel):
@@ -135,6 +132,8 @@ async def set_auto_reset(form: AutoResetForm, user=Depends(get_verified_user)):
 
 @router.get('')
 async def list_accounts(request: Request, user=Depends(get_verified_user)):
+    # ChatGPT accounts pick up status, plan, new models and limits from codex-lb (cached).
+    await codex_accounts.sync_accounts(getattr(request.app.state, 'redis', None))
     result = []
     last_resets = await LimitResetEvents.last_resets()
     for account in await ProviderAccounts.list():
@@ -142,7 +141,9 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
         if not managed and account.sharing != 'shared':
             continue
         owner = await Users.get_user_by_id(account.owner_user_id)
-        limits = await get_provider_limits(getattr(request.app.state, 'redis', None), account.id)
+        redis = getattr(request.app.state, 'redis', None)
+        # Each window also says how much of it the rest of the team used (the owner used the rest).
+        limits = await with_team_use(redis, account.id, await get_provider_limits(redis, account.id))
         item = AccountView.model_validate(account).model_dump()
         item.update(
             owner_name=owner.name if owner else 'Former member',
@@ -169,11 +170,9 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
             provider=form.provider,
             plan=form.plan,
             external_account_id=key_fingerprint(key),
-            label=form.label.strip(),
             sharing=form.sharing,
             capacity_weight=1,
             budget=form.budget.model_dump() if form.budget else None,
-            allow_team_resets=True,
             status='ok',
             secret=secret,
             models=models,
@@ -187,20 +186,23 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
 @router.post('/codex')
 async def connect_codex(request: Request, form: CodexAccountForm, user=Depends(get_verified_user)):
     await check_rate(request, user)
-    identifier = await codex_accounts.start_login(
-        user, form.label.strip(), form.sharing, getattr(request.app.state, 'redis', None), form.method
-    )
-    return await codex_accounts.login_status(identifier, user)
+    redis = getattr(request.app.state, 'redis', None)
+    identifier = await codex_accounts.start_login(user, form.sharing, redis, form.method)
+    return await codex_accounts.login_status(identifier, user, redis)
 
 
 @router.get('/codex/logins/{identifier}')
-async def codex_login_status(identifier: str, user=Depends(get_verified_user)):
-    return await codex_accounts.login_status(identifier, user)
+async def codex_login_status(identifier: str, request: Request, user=Depends(get_verified_user)):
+    return await codex_accounts.login_status(identifier, user, getattr(request.app.state, 'redis', None))
 
 
 @router.post('/codex/logins/{identifier}/callback')
-async def codex_login_callback(identifier: str, form: CodexCallbackForm, user=Depends(get_verified_user)):
-    return await codex_accounts.submit_callback(identifier, user, form.callback_url.get_secret_value())
+async def codex_login_callback(
+    identifier: str, request: Request, form: CodexCallbackForm, user=Depends(get_verified_user)
+):
+    return await codex_accounts.submit_callback(
+        identifier, user, form.callback_url.get_secret_value(), getattr(request.app.state, 'redis', None)
+    )
 
 
 @router.delete('/codex/logins/{identifier}')
@@ -224,11 +226,7 @@ async def verify_account(account_id: str, request: Request, user=Depends(get_ver
     account = await owned_account(account_id, user)
     await check_rate(request, user)
     if account.provider == 'codex':
-        from open_webui.utils.provider_account_proxy import record_codex_limits
-
-        _, limits = await codex_accounts.refresh_account(account)
-        await record_codex_limits(request, account.id, limits)
-        return await ProviderAccounts.update(account.id, {'status': 'ok', 'last_error': None})
+        return await codex_accounts.verify(account, getattr(request.app.state, 'redis', None))
     secret, models = await verify_api_key(account.provider, open_secret(account.secret)['api_key'], account.plan)
     await refresh_zai_limits(account, getattr(request.app.state, 'redis', None))
     return await ProviderAccounts.update(

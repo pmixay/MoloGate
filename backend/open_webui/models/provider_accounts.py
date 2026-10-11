@@ -1,11 +1,13 @@
 """Provider credentials belong to accounts, independently of connection ordering."""
 
+import secrets
+import string
 import time
 import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import BigInteger, Boolean, Column, Float, Index, String, Text, UniqueConstraint, delete, func, select
+from sqlalchemy import BigInteger, Column, Float, Index, String, Text, UniqueConstraint, delete, func, select
 
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.oauth_sessions import OAuthSessions
@@ -27,7 +29,6 @@ class ProviderAccount(Base):
     sharing = Column(String(16), nullable=False, default='private')
     capacity_weight = Column(Float, nullable=False, default=1)
     budget = Column(JSONField, nullable=True)
-    allow_team_resets = Column(Boolean, nullable=False, default=True)
     status = Column(String(32), nullable=False, default='ok')
     last_error = Column(Text, nullable=True)
     models = Column(JSONField, nullable=False, default=list)
@@ -85,12 +86,19 @@ class AccountView(BaseModel):
     sharing: Sharing
     capacity_weight: float
     budget: dict | None
-    allow_team_resets: bool
     status: str
     last_error: str | None
     models: list[dict] = Field(default_factory=list)
     created_at: int
     updated_at: int
+
+
+NAME_ALPHABET = string.digits + string.ascii_letters
+
+
+def generate_label() -> str:
+    """Accounts are named by Mologate, never by members: 'Account #' and 6 random characters."""
+    return 'Account #' + ''.join(secrets.choice(NAME_ALPHABET) for _ in range(6))
 
 
 def seal_secret(data: dict) -> str:
@@ -111,10 +119,31 @@ class ProviderAccountsTable:
             result = await db.execute(select(ProviderAccount).order_by(ProviderAccount.created_at, ProviderAccount.id))
             return list(result.scalars().all())
 
-    async def insert(self, *, secret: dict, **values):
+    async def unique_label(self, preferred: str | None = None, include_logins: bool = False) -> str:
+        """A generated name no account (and, when asked, no pending sign-in) uses yet."""
+        async with get_async_db_context() as db:
+            taken = set((await db.execute(select(ProviderAccount.label))).scalars())
+            if include_logins:
+                taken |= set(
+                    (await db.execute(select(ProviderLogin.label).where(ProviderLogin.status == 'pending'))).scalars()
+                )
+        if preferred and preferred not in taken:
+            return preferred
+        for _ in range(100):
+            label = generate_label()
+            if label not in taken:
+                return label
+        raise RuntimeError('No free account name.')
+
+    async def insert(self, *, secret: dict, label: str | None = None, **values):
         now = int(time.time())
         account = ProviderAccount(
-            id=str(uuid.uuid4()), secret=seal_secret(secret), created_at=now, updated_at=now, **values
+            id=str(uuid.uuid4()),
+            label=await self.unique_label(label),
+            secret=seal_secret(secret),
+            created_at=now,
+            updated_at=now,
+            **values,
         )
         async with get_async_db_context() as db:
             db.add(account)

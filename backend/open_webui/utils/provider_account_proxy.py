@@ -2,32 +2,48 @@
 
 import copy
 import json
+import logging
 import math
+import re
 import time
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
-from open_webui.utils.codex_accounts import auto_reset, refresh_account
+from open_webui.utils import codex_lb
+from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
 from open_webui.utils.provider_accounts import auto_reset_enabled, select_accounts, split_model_id
 from open_webui.utils.provider_limits import (
-    codex_exhausted,
+    count_account_request,
     get_provider_limits,
-    record_codex_snapshot,
     record_provider_limits,
     snapshot_exhausted,
     window_exhausted,
 )
 from open_webui.utils.session_pool import cleanup_response, get_client_timeout, get_session, stream_wrapper
 
+log = logging.getLogger(__name__)
+SESSION_ID = re.compile(r'[A-Za-z0-9:._-]{1,128}')
+
 
 class AccountExhausted(Exception):
     """The provider reports this account's quota as used up; another account may still serve."""
 
 
-async def record_codex_limits(request, account_id, result):
-    await record_codex_snapshot(getattr(request.app.state, 'redis', None), account_id, result)
+def chat_session(request, form_data):
+    """The chat id lets codex-lb keep one conversation's prompt cache together."""
+    metadata = getattr(getattr(request, 'state', None), 'metadata', None) or form_data.get('metadata')
+    value = metadata.get('chat_id') if isinstance(metadata, dict) else None
+    return value if isinstance(value, str) and SESSION_ID.fullmatch(value) else None
+
+
+async def error_code(response):
+    try:
+        error = (await response.json(content_type=None)).get('error')
+    except Exception:
+        return None
+    return error.get('code') if isinstance(error, dict) else None
 
 
 def codex_payload(payload):
@@ -198,7 +214,7 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     # Mologate: an empty account hands the request to the next one that still has quota.
     for account in await order_by_headroom(redis, accounts):
         try:
-            return await account_request(request, account, form_data, endpoint)
+            return await account_request(request, account, form_data, endpoint, user)
         except AccountExhausted:
             exhausted.append(account)
     # Only when every account is empty: redeem a reset coupon, unless a member turned this off.
@@ -207,13 +223,13 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
         account = await auto_reset(exhausted, user.id, redis)
         if account is not None:
             try:
-                return await account_request(request, account, form_data, endpoint)
+                return await account_request(request, account, form_data, endpoint, user)
             except AccountExhausted:
                 pass
     raise await limit_error(redis, exhausted, resets_enabled)
 
 
-async def account_request(request, account, form_data, endpoint):
+async def account_request(request, account, form_data, endpoint, user):
     model = form_data.get('model', '')
     _, upstream_id = split_model_id(model)
     # Each attempt gets its own copy: the Responses conversion consumes the messages.
@@ -224,18 +240,22 @@ async def account_request(request, account, form_data, endpoint):
     if account.provider == 'codex':
         from open_webui.routers.openai import convert_to_responses_payload
 
-        tokens, limits = await refresh_account(account)
-        await record_codex_limits(request, account.id, limits)
-        if codex_exhausted(limits):
+        # Mologate: codex-lb sends the request as the official Codex client and refreshes tokens.
+        try:
+            # Without key auth codex-lb would route over every account; never send traffic then.
+            await codex_lb.ensure_settings()
+        except codex_lb.CodexLBError:
+            log.warning('codex-lb key authentication could not be confirmed; ChatGPT requests are refused.')
+            raise HTTPException(502, 'The ChatGPT account service is unavailable. Try again shortly.') from None
+        key, summary = await prepare_request(account)
+        await record_summary(getattr(request.app.state, 'redis', None), account.id, summary)
+        if summary.get('status') == 'paused' or codex_lb.exhausted(summary):
             raise AccountExhausted()
-        headers = {
-            'Authorization': 'Bearer ' + tokens['access_token'],
-            'ChatGPT-Account-Id': tokens['account_id'],
-            'originator': 'mologate',
-            'OpenAI-Beta': 'responses=experimental',
-        }
+        headers = {'Authorization': 'Bearer ' + key, 'Accept': 'text/event-stream'}
+        if session_id := chat_session(request, form_data):
+            headers['session_id'] = session_id
         payload = codex_payload(convert_to_responses_payload(payload) if endpoint == 'chat/completions' else payload)
-        url = 'https://chatgpt.com/backend-api/codex/responses'
+        url = codex_lb.BASE_URL + '/backend-api/codex/responses'
     else:
         secret = open_secret(account.secret)
         headers['Authorization'] = 'Bearer ' + secret['api_key']
@@ -247,7 +267,7 @@ async def account_request(request, account, form_data, endpoint):
     response = None
     streaming = False
     try:
-        session = await get_session()
+        session = codex_lb.get_session() if account.provider == 'codex' else await get_session()
         response = await session.post(
             url,
             json=payload,
@@ -258,6 +278,10 @@ async def account_request(request, account, form_data, endpoint):
         await record_provider_limits(getattr(request.app.state, 'redis', None), account.id, response.headers)
         if response.status == 429:
             raise AccountExhausted()
+        # codex-lb: the key's only account is empty, paused or cannot serve this model.
+        if account.provider == 'codex' and response.status == 503:
+            if await error_code(response) in codex_lb.UNAVAILABLE_CODES:
+                raise AccountExhausted()
         if response.status >= 300:
             if response.status in (401, 403):
                 await ProviderAccounts.update(
@@ -270,6 +294,11 @@ async def account_request(request, account, form_data, endpoint):
             raise HTTPException(
                 response.status if response.status >= 400 else 502,
                 f'The provider rejected the request (HTTP {response.status}).',
+            )
+        if account.plan != 'api':
+            # Mologate: who used the account decides how its next rise splits between owner and team.
+            await count_account_request(
+                getattr(request.app.state, 'redis', None), account.id, account.owner_user_id == user.id
             )
         if account.provider == 'codex':
             if wants_stream:

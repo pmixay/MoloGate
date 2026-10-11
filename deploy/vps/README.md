@@ -107,13 +107,28 @@ and 443 should be open.
 
 ## Updates
 
-Run `/opt/mologate/update.sh` to pull the selected prebuilt image and restart Mologate with a
-readiness check. Older images stay on the host. Deploy a previous image by setting `IMAGE` to its
-tag or digest in `.env` and running the same script.
+Run `/opt/mologate/update.sh` to pull the selected prebuilt images and restart Mologate and
+codex-lb with a readiness check. Older images stay on the host. Deploy a previous image by setting
+`IMAGE` to its tag or digest in `.env` and running the same script.
 
 **There are no backups while Mologate is in development.** Code that predates a database migration
 cannot read the newer schema, so rolling back across a migration loses the data written since.
 Add backups (kept off this VPS) before the team relies on the data.
+
+## ChatGPT accounts (codex-lb)
+
+ChatGPT accounts sign in and send requests through
+[codex-lb](https://github.com/Soju06/codex-lb) (MIT), the `codex-lb` service in `compose.yaml`.
+It is pinned to 1.24.0 by digest; set `CODEX_LB_IMAGE` in `.env` only to try another release.
+It publishes no port and shares a private network with Mologate only, so its dashboard, whose
+login is disabled, is never reachable from outside. Mologate turns on its per-key authentication
+at startup and gives each account a key scoped to that one account. Telemetry is off.
+
+Its accounts, encrypted tokens and request history live in the `codex_lb_data` volume. Losing
+that volume disconnects every ChatGPT account; members sign in again from **Settings → Provider
+accounts**. Accounts connected before codex-lb are moved into it once, from their stored
+`auth.json`, the first time Mologate lists or uses them. Mologate starts without codex-lb, and other
+providers keep working while it is down.
 
 ## Uploads and embeddings
 
