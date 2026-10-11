@@ -37,8 +37,12 @@ are not in priority order. Tick an item off when it ships.
 
 - [x] Web search is always on, everywhere, with no toggle. The model decides when to use it.
   - Done: once an admin sets up a search engine, it is on in every chat as a tool the model calls
-    when needed. It is not forced on for models set to legacy tool calling, where it would run on
-    every message.
+    when needed.
+  - Done: search is on by default through Exa in auto mode, the most accurate search API in an
+    independent 2026 benchmark. Set `EXA_API_KEY` on the deployment; until then the model isn't
+    offered the search tool, only `fetch_url` for pages it is given. Each result brings up to 3,000
+    characters of the page's text (`EXA_MAX_CONTENT_LENGTH`). Existing installs are switched on once,
+    and an engine an admin already picked is kept.
 
 ### Container nodes
 
@@ -279,6 +283,12 @@ are not in priority order. Tick an item off when it ships.
   - Restricting OpenCode completely doesn't work, so a different approach to locking it down is
     needed.
 - [ ] Pull in the latest models automatically.
+- [x] **Native tool calling only:** turn legacy (prompt-based) tool calling off everywhere.
+  - Done: every model uses its own tool calling, and the Function Calling switch is gone from chat
+    and model settings, along with the legacy tool prompt in admin settings. A "legacy" value saved
+    on older chats, models or settings is ignored. Checked against OpenRouter's model list: every
+    free chat model, GLM 5.3, GPT 6 and 6.1, Qwen 3.8, Kimi K3 and MiMo v2.6 support native tool
+    calls.
 - [x] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
       latest ChatGPT Luna model (currently Luna 6), and follow it automatically as new versions ship.
       If it's unavailable, they fall back to GLM-5.3 Flash.

@@ -586,17 +586,6 @@
 						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
 					/>
 				</AdminSettingField>
-
-				<AdminSettingField
-					label={$i18n.t('settings.admin.interface.toolsFunctionCallingPrompt.label')}
-					description={$i18n.t('settings.admin.interface.toolsFunctionCallingPrompt.description')}
-				>
-					<Textarea
-						className={textareaClass}
-						bind:value={taskConfig.TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE}
-						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
-					/>
-				</AdminSettingField>
 			</AdminSettingSection>
 		</div>
 

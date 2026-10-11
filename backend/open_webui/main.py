@@ -1282,11 +1282,9 @@ async def chat_completion(
                 'stream_delta_chunk_size': stream_delta_chunk_size,
                 'reasoning_tags': reasoning_tags,
                 'compact_token_threshold': compact_token_threshold,
-                'function_calling': (
-                    form_data.get('params', {}).get('function_calling')
-                    or model_info_params.get('function_calling')
-                    or 'native'
-                ),
+                # Mologate: native tool calling only. "legacy" saved on older chats, models or user
+                # settings is ignored; every model in use supports native tool calls.
+                'function_calling': 'native',
                 'tool_review': tool_review,
                 'tool_approval_always_allow': bool(form_data.get('params', {}).get('tool_approval_always_allow')),
             },

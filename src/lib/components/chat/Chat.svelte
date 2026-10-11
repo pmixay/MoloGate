@@ -328,10 +328,7 @@
 
 	// Mologate: web search, image generation and the code interpreter have no toggles. Each is on
 	// whenever the admin has enabled it, the user has permission and the selected models support
-	// it. With native function calling (the default) the backend offers them to the model as tools
-	// and the model decides when to call them. With legacy function calling the backend would run
-	// web search and image generation on every message, so those two are only sent in native mode
-	// (web search still follows the user's "always" setting there).
+	// it. The backend offers them to the model as tools and the model decides when to call them.
 	let webSearchActive = false;
 	let imageGenerationActive = false;
 	let codeInterpreterActive = false;
@@ -339,17 +336,6 @@
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
-
-	const usesNativeFunctionCalling = (modelIds: string[], allModels, userParams, chatParams) => {
-		// Same precedence as the backend: request params, then the model's own params.
-		const requestMode = { ...(userParams ?? {}), ...(chatParams ?? {}) }.function_calling;
-		return modelIds.every(
-			(id) =>
-				(requestMode ||
-					(allModels ?? []).find((m) => m.id === id)?.info?.params?.function_calling ||
-					'native') !== 'legacy'
-		);
-	};
 
 	const allModelsSupport = (modelIds: string[], allModels, capability: string) =>
 		modelIds.every(
@@ -361,26 +347,18 @@
 		const currentModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
 			(id) => id
 		);
-		const nativeFunctionCalling = usesNativeFunctionCalling(
-			currentModels,
-			$models,
-			$settings?.params,
-			params
-		);
 		const isAdmin = $user?.role === 'admin';
 
 		webSearchActive = Boolean(
 			$config?.features?.enable_web_search &&
 			(isAdmin || $user?.permissions?.features?.web_search) &&
 			allModelsSupport(currentModels, $models, 'web_search') &&
-			(nativeFunctionCalling || ($settings?.webSearch ?? false) === 'always') &&
 			!webSearchDeclined
 		);
 		imageGenerationActive = Boolean(
 			$config?.features?.enable_image_generation &&
 			(isAdmin || $user?.permissions?.features?.image_generation) &&
-			allModelsSupport(currentModels, $models, 'image_generation') &&
-			nativeFunctionCalling
+			allModelsSupport(currentModels, $models, 'image_generation')
 		);
 		codeInterpreterActive = Boolean(
 			$config?.features?.enable_code_interpreter &&

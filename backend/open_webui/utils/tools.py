@@ -558,6 +558,8 @@ async def get_builtin_tools(
         'subagents.enable',
         'subagents.background_enabled',
         'subagents.profiles',
+        'web.search.engine',
+        'web.search.exa_api_key',
     )
 
     async def has_user_permission(feature_key: str) -> bool:
@@ -689,7 +691,12 @@ async def get_builtin_tools(
         and features.get('web_search')
         and await has_user_permission('web_search')
     ):
-        builtin_functions.extend([search_web, fetch_url])
+        # Mologate: search waits for a usable engine (Exa, the default, needs its key); reading a
+        # page with fetch_url needs none.
+        engine = config.get('web.search.engine')
+        if engine and (engine != 'exa' or config.get('web.search.exa_api_key')):
+            builtin_functions.append(search_web)
+        builtin_functions.append(fetch_url)
 
     # Add image generation/edit tools if builtin category enabled,
     # globally enabled, and allowed by model capability.

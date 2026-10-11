@@ -1,11 +1,13 @@
 import logging
+import os
 
 import requests
 from open_webui.retrieval.web.main import SearchResult
 
 log = logging.getLogger(__name__)
 
-EXA_API_BASE = 'https://api.exa.ai'
+# Mologate: overridable for a proxy or a test double.
+EXA_API_BASE = os.getenv('EXA_API_BASE_URL', 'https://api.exa.ai').rstrip('/')
 
 
 def search_exa(

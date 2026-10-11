@@ -1159,7 +1159,8 @@ YOUTUBE_LOADER_PROXY_URL = os.getenv('YOUTUBE_LOADER_PROXY_URL', '')
 # Web Search
 ####################################
 
-ENABLE_WEB_SEARCH = os.getenv('ENABLE_WEB_SEARCH', 'False').lower() == 'true'
+# Mologate: web search is on by default, through Exa (set EXA_API_KEY).
+ENABLE_WEB_SEARCH = os.getenv('ENABLE_WEB_SEARCH', 'True').lower() == 'true'
 
 ENABLE_WEB_SEARCH_CONFIRMATION = os.getenv('ENABLE_WEB_SEARCH_CONFIRMATION', 'False').lower() == 'true'
 
@@ -1168,7 +1169,7 @@ WEB_SEARCH_CONFIRMATION_CONTENT = os.getenv(
     'Your query will be sent to the configured web search provider.',
 )
 
-WEB_SEARCH_ENGINE = os.getenv('WEB_SEARCH_ENGINE', '')
+WEB_SEARCH_ENGINE = os.getenv('WEB_SEARCH_ENGINE', 'exa')
 
 BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL = (
     os.getenv('BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL', 'False').lower() == 'true'
@@ -1277,9 +1278,11 @@ AZURE_AI_SEARCH_ENDPOINT = os.getenv('AZURE_AI_SEARCH_ENDPOINT', '')
 AZURE_AI_SEARCH_INDEX_NAME = os.getenv('AZURE_AI_SEARCH_INDEX_NAME', '')
 
 EXA_API_KEY = os.getenv('EXA_API_KEY', '')
-EXA_MAX_CONTENT_LENGTH = int(os.environ['EXA_MAX_CONTENT_LENGTH']) if os.getenv('EXA_MAX_CONTENT_LENGTH') else None
-if EXA_MAX_CONTENT_LENGTH is not None and EXA_MAX_CONTENT_LENGTH <= 0:
-    raise ValueError('EXA_MAX_CONTENT_LENGTH must be a positive integer or unset')
+# Mologate: page text per result. Results go to the model whole, so an uncapped page could fill
+# the context; the model can still read a full page with fetch_url.
+EXA_MAX_CONTENT_LENGTH = int(os.getenv('EXA_MAX_CONTENT_LENGTH') or 3000)
+if EXA_MAX_CONTENT_LENGTH <= 0:
+    raise ValueError('EXA_MAX_CONTENT_LENGTH must be a positive integer')
 
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY', '')
 
