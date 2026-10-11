@@ -385,6 +385,8 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 
 **In progress: 2026-10-11**, on `phase1-accounts`, based on `limits-and-accounts`.
 Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
+Deployed to staging; 21 automated regressions, real Z.ai normal/streamed chats, and desktop/mobile
+browser checks pass. The remaining acceptance check is two real Codex accounts serving chats.
 
 - [x] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
 - [x] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.

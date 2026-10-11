@@ -4,6 +4,11 @@ Implementation branch: `phase1-accounts`, stacked on `limits-and-accounts`.
 Phase 1 remains in progress until two members connect Codex accounts in the browser and both
 complete chats. Production continues to use the Phase 0 deployment.
 
+Deployed to [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_accounts) on
+2026-10-11 from code commit `a4fce64`, using `ghcr.io/pmixay/mologate:phase1-accounts-slim`.
+[Draft PR #4](https://github.com/pmixay/MoloGate/pull/4) is stacked on the Phase 0 branch.
+The existing two staging admins retain their accounts and passwords.
+
 ## Account management
 
 Open **Settings → Provider accounts** on staging. Approved members and admins can connect
@@ -21,6 +26,7 @@ per member and four concurrent attempts per worker are allowed. Login attempts e
 Provider secrets use the existing Fernet facility. Responses contain an explicit public-field
 allowlist; neither ciphertext, key fingerprints, nor raw credentials are returned. Input validation
 does not echo credentials. Verification only contacts fixed HTTPS origins, with redirects disabled.
+Optional request/response audit logging redacts all provider-account bodies, including device codes.
 OpenRouter verification calls `/key` because `/models` is public. Duplicate provider/key fingerprints
 and duplicate ChatGPT account IDs are rejected by a database uniqueness constraint.
 
@@ -43,6 +49,8 @@ Codex app-server is pinned to **0.162.1**, downloaded from the official npm pack
 SHA-512 integrity check during the image build. Each account has a mode-0700 `CODEX_HOME` within
 the data volume and a mode-0600 managed `auth.json`. The database encrypts the home identifier.
 Subprocesses do not inherit application secrets. Per-home file locks serialize refresh operations;
+after `account/read` confirms the ChatGPT login, the managed file's `tokens.account_id` supplies
+the unique provider identity (the current `account/read` response supplies the plan, not the ID).
 no chat turns or tool requests are sent to app-server. Inference uses the managed access token
 with `https://chatgpt.com/backend-api/codex/responses`. Chat clients receive translated text/tool
 SSE deltas and normalized token usage. Provider auth failures mark the account as needing login.
@@ -51,7 +59,7 @@ Initial Codex windows are read after login and refreshed when verifying or start
 response headers can update them afterwards. Scheduled polling and the usage ledger belong to
 Phase 2. Owner reserves, account weights, credits, and spending enforcement are not applied yet.
 
-The Z.ai spike on the VPS used the existing key in memory without copying it into staging. The
+The initial Z.ai spike on the VPS read the existing key in memory. The
 coding model endpoint returned 11 models, rejected a deliberately invalid key with HTTP 401, and
 did not return limit headers. `GET https://api.z.ai/api/monitor/usage/quota/limit` returned two
 `CREDIT_LIMIT` windows: `(unit=3, number=5)` for five hours and `(unit=6, number=1)` for a week,
@@ -60,6 +68,25 @@ Unknown window types or unavailable quota never imply zero usage. This console e
 change independently of the published inference API.
 
 ## Verification
+
+- 20 backend regressions passed against an isolated PostgreSQL database; 21 passed on SQLite
+  after adding the audit-redaction regression. Image CI passed all 21 on both amd64 and arm64:
+  [build 38136120277](https://github.com/pmixay/MoloGate/actions/runs/38136120277).
+- A full application startup against a fresh pgvector/PostgreSQL database migrated through the
+  new head and reached `/ready`. Full HTTP checks confirmed owner-only model visibility,
+  forbidden direct chat/Responses access by another member, immediate sharing, and pause behavior.
+- Staging migrated to `b1a7c9e4d205` and reached healthy status. A temporary Z.ai account and
+  temporary ordinary member completed real `glm-5.3-flash` chats through the shared account,
+  both normal and streamed; usage and both quota windows were returned. Private access was
+  rejected. The temporary provider credentials and member were deleted afterwards.
+- Both changed Svelte components compiled without warnings. The deployed Settings screen passed
+  desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no browser
+  page errors. Screenshots were inspected for layout and readability.
+
+Pre-deployment backup: `/opt/mologate-staging/backups/2026-10-11T11-37-24-862036999Z`.
+The previous image ID is recorded in `/opt/mologate-staging/phase1-rollback-image`. To roll back,
+restore the matching database backup before starting the old image, because its Alembic code does
+not know the new revision. The data volume and encryption secret must be restored together.
 
 The stdlib regression suite lives at `backend/open_webui/test/limits/test_provider_accounts.py`.
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private
