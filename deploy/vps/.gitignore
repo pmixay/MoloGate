@@ -1,4 +1,5 @@
 backups/
+admin-password
 .backup.lock
 .update.lock
 .install.lock

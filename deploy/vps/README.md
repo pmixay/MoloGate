@@ -62,6 +62,13 @@ installation. Add team members through **Admin Panel → Users → Add User**, w
 role **User**. Confirm a team member can sign in and complete a chat using the
 existing provider connection.
 
+Make the intended models available to team members in **Workspace → Models**.
+Provider connections alone can leave regular users with an empty model list.
+Share model read access with all authenticated users (`principal_type=user`,
+`principal_id=*`, `permission=read` in the access-grants API). The `anyone`
+principal means unauthenticated access and is not accepted for models. The
+existing 11 GLM models on production have authenticated-user read grants.
+
 Install the cron file and run `./backup.sh` once:
 
 ```bash
@@ -188,22 +195,45 @@ docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapte
 ```
 
 Create a separate staging admin. Add a nightly cron entry for
-`/opt/mologate-staging/backup.sh` at 04:00, writing to a separate log. Staging
-serves the branch image while the team stays on production's `main` image.
-Start it only when needed on this small VPS; stop it while idle.
+`/opt/mologate-staging/backup.sh` at 04:00 by installing
+`mologate-staging-backup.cron` into `/etc/cron.d/`. Staging serves the branch
+image while the team stays on production's `main` image. If stopping staging
+while idle, disable its backup cron entry until it is running again.
+
+The live staging stack follows `limits-and-accounts-slim`, published by the
+[successful branch build](https://github.com/pmixay/MoloGate/actions/runs/38131457642)
+at `fdbce1c`. `IMAGE` also accepts a digest for a pinned deployment.
+Its admin uses the production admin's email with a separate password
+stored in `/opt/mologate-staging/admin-password` (root only). It has a fresh
+database; production's provider keys and chat history were not copied.
 
 ## Evidence from this session
 
-On 2026-10-11, saved Docker records showed all four production containers
-running, Mologate using `main-slim` at `a20a336`, and only Caddy publishing
-80/tcp, 443/tcp and 443/udp. Caddy's log recorded certificate issuance; the
-application log recorded HTTP 200 for sign-in and chat. The deployed
-environment sets `ENABLE_SIGNUP=False`, a 03:30 backup cron entry exists, UFW's
-saved configuration allows only the expected ports, and `/proc/swaps` shows
-4 GB of active swap.
+On 2026-10-11, these files were installed on the VPS and checked live:
 
-This session can read those records but cannot access the Docker socket,
-connect to GitHub through the host CLI, or write `/opt` and `/etc`. The files in
-this directory are prepared and locally validated; they have **not** been
-installed into the running stack. Effective signup settings, an external port
-scan and a real restore still need host-level verification.
+- Production runs `main-slim` at `a20a336`; staging runs the branch's slim image
+  with separate PostgreSQL, Redis and data volumes. Both pass HTTPS readiness.
+- Production and staging admin sign-in passed. Public signup returned 403 on
+  production, and both stacks report signups disabled.
+- A disposable regular user could sign in, list shared models and receive a
+  `glm-5.3-flash` chat completion. The test user was deleted afterward.
+- Production backups run at 03:30 UTC, staging at 04:00 UTC, with seven-day
+  retention. Both scripts completed successfully against the live stacks.
+- A production database dump was restored into an isolated PostgreSQL 17
+  container: 1 user, 11 models, 11 model grants and 354 settings recovered.
+  The data/config archives extracted successfully, their checksums passed,
+  and the recovered `.env` matched the deployment. Six backup failure and
+  retention tests also passed.
+- UFW is active with only 22/tcp, 80/tcp, 443/tcp and 443/udp allowed. Only
+  Caddy publishes container ports, and the host has 4 GB of active swap.
+- [External checks](https://github.com/pmixay/MoloGate/actions/runs/38131735417)
+  passed HTTPS, disabled signups, an SSH handshake and rejection/filtering of
+  13 private/control TCP ports. A scan of all 65,535 TCP ports plus direct
+  confirmation found only 22, 80 and 443 reachable. One additional scan
+  candidate failed all three direct connection attempts. Raw SYN scans on
+  this route gave inconsistent results; the workflow uses TCP connections
+  and preserves scan artifacts. The VPS has no global IPv6 address.
+
+Recovery files and passwords remain outside Git. Backups are local to this
+VPS; off-host backup storage belongs to a later step. Remote document embeddings
+remain unconfigured; the verified team workflow is chat.

@@ -1,0 +1,3 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 4 * * * root /opt/mologate-staging/backup.sh >> /var/log/mologate-staging-backup.log 2>&1
