@@ -67,7 +67,7 @@ are not in priority order. Tick an item off when it ships.
   - After each turn, show the list of files the agent edited in that turn.
   - Show the number of lines added and removed (+ / −) for the whole session.
 
-### Agents and tasks
+### Agents
 
 - [x] **Subagents:**
   - Users can open and read each subagent's conversation.
@@ -98,9 +98,9 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent-swarm workflows.** Proposed design, to refine:
   - **Definition:** a workflow is an agent tool that starts a task in which many agents work together,
     as in Claude Code. It runs a reusable plan in phases, for example "plan → work in parallel →
-    verify → merge results". It shows up in the task list like other background tasks. It is a
-    separate feature from team [Workspaces](#workspaces): workflows coordinate agents, workspaces
-    coordinate people.
+    verify → merge results". It shows up in the [tasks panel](#tasks) like other background tasks.
+    It is a separate feature from team [Workspaces](#workspaces): workflows coordinate agents,
+    workspaces coordinate people.
   - **Agent steps:** each step names an agent profile, its instructions, its inputs, and the shape of
     the result it must return. The orchestrator can pass one step's results into the next.
   - **Patterns:**
@@ -123,23 +123,31 @@ are not in priority order. Tick an item off when it ships.
     starts a new turn for it. The main agent can restart a finished sub-agent with a message, up to
     10 times, and the answer comes back as a reply. Sub-agents can message running sub-agents, but
     not restart finished ones. Messages show in both conversations as "Message from…" rows.
-- [ ] **Task list:** the agent's checklist shows the task in progress and how many are left.
+- [ ] **Ask tool with a timer:**
+  - When the agent asks the user a question and gets no answer for more than a minute, the recommended
+    option is chosen automatically.
+  - A crossed-out-timer button turns the timer off, for when the user is still thinking.
+
+### Tasks
+
+- [ ] **Tasks panel:** one place to see the chat's tasks, running or finished: background sub-agents,
+      workflows, monitor and scheduled tasks.
+  - Opening a task shows its output where it has one, updating live while the task runs where
+    possible.
+  - Each task shows how long it took or, while it runs, how long it has been running so far.
+  - Running tasks can be stopped.
+  - A "Clear" button removes all completed tasks from the list.
+- [ ] **Background tasks:** a task moves to the background automatically after a set time.
+- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
+      [Proposed limits](#proposed-limits)).
+- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
+      [Proposed limits](#proposed-limits)).
+- [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
   - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
     panel above the message box lists it with "X out of N tasks completed", but only while a reply is
     generating.
   - Show the task in progress in the panel's header, with the number of tasks left.
   - Keep the panel, collapsed to that line, while tasks remain after the reply ends.
-- [ ] **Background tasks:**
-  - A task moves to the background automatically after a set time.
-  - Users can see the list of running tasks and stop any of them.
-- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
-      [Proposed limits](#proposed-limits)).
-- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
-      [Proposed limits](#proposed-limits)).
-- [ ] **Ask tool with a timer:**
-  - When the agent asks the user a question and gets no answer for more than a minute, the recommended
-    option is chosen automatically.
-  - A crossed-out-timer button turns the timer off, for when the user is still thinking.
 
 ### Browser
 
@@ -205,7 +213,7 @@ are not in priority order. Tick an item off when it ships.
       to all users and anyone can work in it.
 - [ ] **Projects:** a workspace is a project that holds chats and shared files. Workspaces are for
       team work between people; they are a separate feature from
-      [agent-swarm workflows](#agents-and-tasks).
+      [agent-swarm workflows](#agents).
 - [ ] **Shared files in chats:**
   - When a chat is created in a workspace, the workspace's shared files appear in that chat's container.
   - On creation, the chat's agent is given the current picture of the workspace.
