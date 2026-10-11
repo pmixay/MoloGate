@@ -32,8 +32,10 @@ export type AutoReset = {
 export type DeviceLogin = {
 	id: string;
 	status: 'pending' | 'completed' | 'error';
+	method?: 'device_code' | 'link';
 	user_code?: string;
 	verification_url?: string;
+	auth_url?: string;
 	expires_at: number;
 	error?: string;
 };

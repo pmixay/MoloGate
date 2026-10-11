@@ -30,6 +30,8 @@
 	let plan = 'api';
 	let sharing: Sharing = 'private';
 	let login: DeviceLogin | null = null;
+	let loginMethod: 'link' | 'device_code' = 'link';
+	let callbackUrl = '';
 	let disconnectId = '';
 	let editingId = '';
 	let editedBudget = 20;
@@ -60,19 +62,56 @@
 		try {
 			const next = await request<DeviceLogin>(`/codex/logins/${login.id}`);
 			if (!active) return;
-			login = next;
-			if (login.status === 'completed') {
-				localStorage.removeItem(`mologate-device-login:${$user?.id}`);
-				await refresh(true);
-				toast.success('ChatGPT account connected. Its models are ready to use.');
-			} else if (login.status === 'error') {
-				localStorage.removeItem(`mologate-device-login:${$user?.id}`);
-				error = login.error || 'Sign-in expired. Start a new connection.';
-			}
+			await applyLogin(next);
 		} catch (err) {
 			error = message(err);
 		} finally {
 			polling = false;
+		}
+	};
+	const applyLogin = async (next: DeviceLogin) => {
+		login = next;
+		if (login.status === 'completed') {
+			localStorage.removeItem(`mologate-device-login:${$user?.id}`);
+			callbackUrl = '';
+			await refresh(true);
+			toast.success('ChatGPT account connected. Its models are ready to use.');
+		} else if (login.status === 'error') {
+			localStorage.removeItem(`mologate-device-login:${$user?.id}`);
+			callbackUrl = '';
+			error = login.error || 'Sign-in expired. Start a new connection.';
+		}
+	};
+	// Mologate: the browser's failed 127.0.0.1 page carries the sign-in result back to Mologate.
+	const finishLink = async () => {
+		if (!login) return;
+		busy = true;
+		error = '';
+		try {
+			await applyLogin(
+				await request<DeviceLogin>(`/codex/logins/${login.id}/callback`, 'POST', {
+					callback_url: callbackUrl
+				})
+			);
+		} catch (err) {
+			error = message(err);
+		} finally {
+			busy = false;
+		}
+	};
+	const cancelLogin = async () => {
+		if (!login) return;
+		busy = true;
+		error = '';
+		try {
+			await request(`/codex/logins/${login.id}`, 'DELETE');
+			localStorage.removeItem(`mologate-device-login:${$user?.id}`);
+			login = null;
+			callbackUrl = '';
+		} catch (err) {
+			error = message(err);
+		} finally {
+			busy = false;
 		}
 	};
 	const connect = async () => {
@@ -82,7 +121,8 @@
 			if (provider === 'codex') {
 				login = await request<DeviceLogin>('/codex', 'POST', {
 					label: label.trim() || 'ChatGPT',
-					sharing
+					sharing,
+					method: loginMethod
 				});
 				localStorage.setItem(`mologate-device-login:${$user?.id}`, login.id);
 			} else {
@@ -259,6 +299,19 @@
 				</p>
 			{/if}
 		{/if}
+		{#if provider === 'codex'}
+			<label class="block"
+				>Sign-in method
+				<select
+					bind:value={loginMethod}
+					class="mt-1 w-full rounded-lg bg-gray-100 dark:bg-gray-850 p-2"
+				>
+					<option value="link">Link — sign in, then paste the address back</option><option
+						value="device_code">Code — enter a code on OpenAI's device page</option
+					>
+				</select>
+			</label>
+		{/if}
 		<label class="block"
 			>Sharing
 			<select bind:value={sharing} class="mt-1 w-full rounded-lg bg-gray-100 dark:bg-gray-850 p-2">
@@ -278,7 +331,43 @@
 	{#if login?.status === 'pending'}
 		<div class="rounded-xl border border-blue-300 dark:border-blue-800 p-4 space-y-2" role="status">
 			<h3 class="font-medium">Finish your ChatGPT sign-in</h3>
-			{#if login.user_code && login.verification_url}
+			{#if login.method === 'link' && login.auth_url}
+				<ol class="list-decimal ml-5 space-y-1">
+					<li>
+						<a
+							class="text-blue-600 dark:text-blue-400 underline"
+							href={login.auth_url}
+							target="_blank"
+							rel="noopener noreferrer">Open the OpenAI sign-in link</a
+						> and sign in.
+					</li>
+					<li>
+						Your browser then opens a page at <span class="font-mono">127.0.0.1:1455</span> that does
+						not load. That is expected.
+					</li>
+					<li>Copy the full address from the address bar and paste it here.</li>
+				</ol>
+				<form on:submit|preventDefault={finishLink} class="space-y-2">
+					<input
+						bind:value={callbackUrl}
+						aria-label="Address after signing in"
+						placeholder="http://127.0.0.1:1455/auth/callback?code=…"
+						required
+						autocomplete="off"
+						spellcheck="false"
+						class="w-full rounded-lg bg-gray-100 dark:bg-gray-850 p-2 font-mono text-xs"
+					/>
+					<button
+						type="submit"
+						disabled={busy || !callbackUrl.trim()}
+						class="rounded-lg bg-black dark:bg-white text-white dark:text-black px-4 py-2 disabled:opacity-50"
+						>{busy ? 'Finishing…' : 'Finish sign-in'}</button
+					>
+				</form>
+				<p class="text-xs text-gray-500">
+					Expires at {new Date(login.expires_at * 1000).toLocaleTimeString()}.
+				</p>
+			{:else if login.user_code && login.verification_url}
 				<p>Open the sign-in page and enter this code:</p>
 				<p class="font-mono text-xl tracking-widest select-all">{login.user_code}</p>
 				<a
@@ -291,6 +380,9 @@
 					Waiting for sign-in. Expires at {new Date(login.expires_at * 1000).toLocaleTimeString()}.
 				</p>
 			{:else}<p>Loading sign-in details…</p>{/if}
+			<button disabled={busy} on:click={cancelLogin} class="text-xs underline"
+				>Cancel sign-in</button
+			>
 		</div>
 	{/if}
 	<div class="space-y-3">

@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "OAuth-bejelentkezések összekapcsolása az azonos e-mail-című meglévő fiókokkal.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Fiókok egyesítése e-mail-cím alapján",
-	"settings.admin.authentication.newSignUps.description": "Engedélyezd az új felhasználóknak fiókok létrehozását.",
-	"settings.admin.authentication.newSignUps.label": "Új regisztrációk",
 	"settings.admin.authentication.oauthOidc.description": "Engedélyezd a felhasználóknak az OAuth / OIDC-szolgáltatóval történő hitelesítést.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Engedélyezd a felhasználóknak fiókok létrehozását OAuth használatával.",

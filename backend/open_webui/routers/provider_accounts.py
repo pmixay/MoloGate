@@ -74,6 +74,13 @@ class CodexAccountForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
     label: str = Field(default='ChatGPT', min_length=1, max_length=100)
     sharing: Sharing = 'private'
+    # A code on OpenAI's device page, or OpenAI's sign-in link with the callback address pasted back.
+    method: Literal['device_code', 'link'] = 'device_code'
+
+
+class CodexCallbackForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    callback_url: SecretStr = Field(max_length=8192)
 
 
 class AccountUpdateForm(BaseModel):
@@ -181,7 +188,7 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
 async def connect_codex(request: Request, form: CodexAccountForm, user=Depends(get_verified_user)):
     await check_rate(request, user)
     identifier = await codex_accounts.start_login(
-        user, form.label.strip(), form.sharing, getattr(request.app.state, 'redis', None)
+        user, form.label.strip(), form.sharing, getattr(request.app.state, 'redis', None), form.method
     )
     return await codex_accounts.login_status(identifier, user)
 
@@ -189,6 +196,16 @@ async def connect_codex(request: Request, form: CodexAccountForm, user=Depends(g
 @router.get('/codex/logins/{identifier}')
 async def codex_login_status(identifier: str, user=Depends(get_verified_user)):
     return await codex_accounts.login_status(identifier, user)
+
+
+@router.post('/codex/logins/{identifier}/callback')
+async def codex_login_callback(identifier: str, form: CodexCallbackForm, user=Depends(get_verified_user)):
+    return await codex_accounts.submit_callback(identifier, user, form.callback_url.get_secret_value())
+
+
+@router.delete('/codex/logins/{identifier}')
+async def cancel_codex_login(identifier: str, user=Depends(get_verified_user)):
+    return await codex_accounts.cancel_login(identifier, user)
 
 
 @router.patch('/{account_id}', response_model=AccountView)

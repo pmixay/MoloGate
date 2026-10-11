@@ -25,10 +25,17 @@ plans use their dedicated endpoint. New accounts default to private. Owners and 
 pause, change sharing/budget, or disconnect an account. A paused account cannot serve anyone.
 
 `/api/v1/provider-accounts` provides list/create, `/{id}` provides PATCH/DELETE, and
-`/{id}/verify` refreshes verification. POST `/codex` starts a device login;
-GET `/codex/logins/{id}` returns its status only to its initiating user. At most one pending login
-per member and four concurrent attempts per worker are allowed. Login attempts expire after
-15 minutes. The UI remembers the attempt ID so reopening Settings can resume polling.
+`/{id}/verify` refreshes verification. POST `/codex` starts a ChatGPT login with
+`method: "link"` or `"device_code"`; GET `/codex/logins/{id}` returns its status only to its
+initiating user, POST `/codex/logins/{id}/callback` takes the pasted callback address of a link
+login, and DELETE `/codex/logins/{id}` cancels it. At most one pending login per member, four
+concurrent attempts per worker and one link login at a time (they share loopback port 1455) are
+allowed. Login attempts expire after 15 minutes. The UI remembers the attempt ID so reopening
+Settings can resume.
+
+With a link login, the member opens OpenAI's sign-in page, signs in, and pastes back the address
+their browser opens at `http://127.0.0.1:1455/auth/callback`. Only the `code` and `state` of that
+address are passed, after a state check, to app-server's loopback callback in the container.
 
 Provider secrets use the existing Fernet facility. Responses contain an explicit public-field
 allowlist; neither ciphertext, key fingerprints, nor raw credentials are returned. Input validation
@@ -97,7 +104,8 @@ change independently of the published inference API.
 - Production at `https://ai.arbuz.lol` now passes trusted HTTPS, HTTP/old-hostname redirects,
   frontend asset loading, existing administrator sign-in, the authenticated account API and a
   real `glm-5.3-flash` chat. Migration reached `b1a7c9e4d205`; all 3 existing users and 11 model
-  records were retained. Limits mode remains `observe`, and registration still requires approval.
+  records were retained. Limits mode remains `observe`. Self-registration was later removed; admins
+  create every account.
 - 20 backend regressions passed against an isolated PostgreSQL database; 21 passed on SQLite
   after adding the audit-redaction regression. Image CI passed all 21 on both amd64 and arm64:
   [build 38136120277](https://github.com/pmixay/MoloGate/actions/runs/38136120277).

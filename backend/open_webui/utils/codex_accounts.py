@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import fcntl
+import hmac
 import json
 import logging
 import os
@@ -11,7 +12,9 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse
 
+import aiohttp
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import delete, select
@@ -183,17 +186,39 @@ async def _save_login(identifier: str, **values):
             await db.commit()
 
 
-async def _complete_login(identifier, owner_id, label, sharing, ready, redis=None):
+def _link_details(started):
+    """Only OpenAI's own sign-in page, returning to app-server's loopback callback, is accepted."""
+    auth = urlparse(started['authUrl'])
+    query = parse_qs(auth.query)
+    callback = urlparse((query.get('redirect_uri') or [''])[0])
+    if auth.scheme != 'https' or auth.hostname != 'auth.openai.com' or not query.get('state'):
+        raise RuntimeError('Unexpected authorization URL.')
+    if callback.scheme != 'http' or callback.hostname not in ('127.0.0.1', 'localhost') or not callback.port:
+        raise RuntimeError('Unexpected sign-in callback.')
+    return {
+        'method': 'link',
+        'loginId': started['loginId'],
+        'authUrl': started['authUrl'],
+        'state': query['state'][0],
+        'callbackPort': callback.port,
+        'callbackPath': callback.path or '/auth/callback',
+    }
+
+
+async def _complete_login(identifier, owner_id, label, sharing, ready, redis=None, method='device_code'):
     keep_home = False
     try:
         async with AppServer(identifier) as server:
-            started = await server.call('account/login/start', {'type': 'chatgptDeviceCode'})
-            # Only OpenAI's device authorization page is shown to the user.
-            from urllib.parse import urlparse
-
-            parsed = urlparse(started['verificationUrl'])
-            if parsed.scheme != 'https' or parsed.hostname not in ('auth.openai.com', 'chatgpt.com'):
-                raise RuntimeError('Unexpected device authorization URL.')
+            if method == 'link':
+                # The member signs in through OpenAI's page and pastes back the loopback address.
+                started = _link_details(await server.call('account/login/start', {'type': 'chatgpt'}))
+            else:
+                started = await server.call('account/login/start', {'type': 'chatgptDeviceCode'})
+                # Only OpenAI's device authorization page is shown to the user.
+                parsed = urlparse(started['verificationUrl'])
+                if parsed.scheme != 'https' or parsed.hostname not in ('auth.openai.com', 'chatgpt.com'):
+                    raise RuntimeError('Unexpected device authorization URL.')
+                started = {'method': 'device_code', **started}
             await _save_login(identifier, secret=seal_secret({'home_id': identifier, **started}))
             if not ready.done():
                 ready.set_result(True)
@@ -248,7 +273,7 @@ async def _complete_login(identifier, owner_id, label, sharing, ready, redis=Non
         _tasks.pop(identifier, None)
 
 
-async def start_login(user, label, sharing, redis=None):
+async def start_login(user, label, sharing, redis=None, method='device_code'):
     if not shutil.which(os.environ.get('MOLOGATE_CODEX_BINARY', 'codex')):
         raise HTTPException(503, 'The Codex account service is not installed.')
     identifier = str(uuid.uuid4())
@@ -266,13 +291,18 @@ async def start_login(user, label, sharing, redis=None):
             return next(attempt.id for attempt in pending if attempt.owner_user_id == user.id)
         if len(pending) >= 4:
             raise HTTPException(429, 'Several members are connecting accounts. Try again shortly.')
+        # Every link sign-in returns to the same loopback port; a second one would cancel the first.
+        if method == 'link' and any(open_secret(attempt.secret).get('method') == 'link' for attempt in pending):
+            raise HTTPException(
+                409, 'Another member is signing in with a link. Try again in a few minutes, or sign in with a code.'
+            )
         db.add(
             ProviderLogin(
                 id=identifier,
                 owner_user_id=user.id,
                 label=label,
                 sharing=sharing,
-                secret=seal_secret({}),
+                secret=seal_secret({'method': method}),
                 status='pending',
                 expires_at=now + LOGIN_TTL,
                 created_at=now,
@@ -281,7 +311,7 @@ async def start_login(user, label, sharing, redis=None):
         )
         await db.commit()
     ready = asyncio.get_running_loop().create_future()
-    _tasks[identifier] = asyncio.create_task(_complete_login(identifier, user.id, label, sharing, ready, redis))
+    _tasks[identifier] = asyncio.create_task(_complete_login(identifier, user.id, label, sharing, ready, redis, method))
     try:
         await asyncio.wait_for(ready, 60)
     except TimeoutError:
@@ -307,8 +337,74 @@ async def login_status(identifier, user):
         }
         if status == 'pending':
             secret = open_secret(attempt.secret)
-            result.update(user_code=secret.get('userCode'), verification_url=secret.get('verificationUrl'))
+            result.update(
+                method=secret.get('method', 'device_code'),
+                user_code=secret.get('userCode'),
+                verification_url=secret.get('verificationUrl'),
+                auth_url=secret.get('authUrl'),
+            )
         return result
+
+
+def callback_params(value: str) -> dict:
+    """Only the OAuth result travels on; the pasted host, port and path are never used."""
+    value = value.strip()
+    query = urlparse(value).query if '?' in value else value.lstrip('?')
+    params = {
+        key: values[0]
+        for key, values in parse_qs(query).items()
+        if key in ('code', 'state', 'error', 'error_description') and values
+    }
+    if not params.get('state') or not (params.get('code') or params.get('error')):
+        raise HTTPException(
+            400,
+            'Paste the full address your browser opened after signing in. '
+            'It starts with http://127.0.0.1:1455/auth/callback.',
+        )
+    return params
+
+
+async def submit_callback(identifier, user, value: str):
+    async with get_async_db_context() as db:
+        attempt = await db.get(ProviderLogin, identifier)
+        if not attempt or attempt.owner_user_id != user.id:
+            raise HTTPException(404, 'Connection attempt not found.')
+        status, expires_at, secret = attempt.status, attempt.expires_at, open_secret(attempt.secret)
+    if status != 'pending' or expires_at < time.time() or secret.get('method') != 'link':
+        raise HTTPException(409, 'This sign-in is no longer waiting. Start a new connection.')
+    if not secret.get('state'):
+        raise HTTPException(409, 'The sign-in link is still being prepared. Try again in a moment.')
+    params = callback_params(value)
+    if not hmac.compare_digest(params['state'].encode(), secret['state'].encode()):
+        raise HTTPException(400, 'This address belongs to a different sign-in. Use the address from the latest link.')
+    # app-server holds the PKCE verifier and exchanges the code itself at its loopback callback.
+    url = f'http://127.0.0.1:{int(secret["callbackPort"])}{secret["callbackPath"]}?{urlencode(params)}'
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            async with session.get(url, allow_redirects=False) as response:
+                accepted = response.status < 400
+    except (aiohttp.ClientError, TimeoutError):
+        raise HTTPException(502, 'The sign-in could not be finished. Start a new connection.') from None
+    if not accepted:
+        raise HTTPException(400, 'OpenAI did not accept this sign-in. Start a new connection and try again.')
+    if task := _tasks.get(identifier):
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.shield(task), 30)
+    return await login_status(identifier, user)
+
+
+async def cancel_login(identifier, user):
+    async with get_async_db_context() as db:
+        attempt = await db.get(ProviderLogin, identifier)
+        if not attempt or attempt.owner_user_id != user.id:
+            raise HTTPException(404, 'Connection attempt not found.')
+        pending = attempt.status == 'pending'
+    if task := _tasks.get(identifier):
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    if pending:
+        await _save_login(identifier, status='error', error='Sign-in cancelled.', secret=seal_secret({}))
+    return True
 
 
 def token_needs_refresh(tokens):

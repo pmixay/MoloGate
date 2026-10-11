@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "Aanmeldformulier",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "OAuth-aanmeldingen koppelen aan bestaande accounts met hetzelfde e-mailadres.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Accounts samenvoegen op e-mailadres",
-	"settings.admin.authentication.newSignUps.description": "Sta nieuwe gebruikers toe om accounts aan te maken.",
-	"settings.admin.authentication.newSignUps.label": "Nieuwe aanmeldingen",
 	"settings.admin.authentication.oauthOidc.description": "Sta gebruikers toe om zich via een OAuth- / OIDC-aanbieder te authenticeren.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Sta gebruikers toe om accounts via OAuth aan te maken.",

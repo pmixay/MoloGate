@@ -56,18 +56,14 @@ docker compose up -d --wait --wait-timeout 180
 ```
 
 On an empty database, create the first admin immediately through the initial
-setup screen. Upstream allows this bootstrap even with signups disabled. Once
-an admin exists, choose the onboarding policy in **Admin Settings → General**.
-Production allows registration with **Default User Role → Pending**, following
-the owner's request to let team members create their own accounts. Set
-`ENABLE_SIGNUP=True` in production's `.env` and enable signups in the admin
-settings. Persistent database settings override environment defaults on an
-existing installation.
+setup screen. After that, Mologate has no self-registration: the sign-up
+endpoint refuses every request once a user exists, whatever a stored setting or
+`ENABLE_SIGNUP` says, and the admin settings no longer offer the switch.
 
-New members choose their own passwords through **Sign up**, then an admin
-changes their role from **Pending** to **User** in **Admin Panel → Users**.
-Admins can also create accounts there directly. Confirm an approved member can
-sign in and complete a chat using the existing provider connection.
+Admins create every member account in **Admin Panel → Users → Add User**, with
+the member's name, email, a starting password and the **User** role. Members
+then sign in and can change their password. Confirm a new member can sign in and
+complete a chat using the existing provider connection.
 
 Make the intended models available to team members in **Workspace → Models**.
 Provider connections alone can leave regular users with an empty model list.
@@ -240,7 +236,8 @@ domain/Phase 1 update described above; current deployment evidence is in the Pha
   as specified by Phase 0. Production registration was subsequently reopened
   at the owner's request, with new accounts requiring admin approval. Public
   registration was tested: a pending account could not access models, then
-  could sign in and list models after admin approval.
+  could sign in and list models after admin approval. Self-registration was
+  later removed entirely; admins now create every account.
 - A disposable regular user could sign in, list shared models and receive a
   `glm-5.3-flash` chat completion. The test user was deleted afterward.
 - Production backups run at 03:30 UTC with seven-day retention. The script

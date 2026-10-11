@@ -2100,8 +2100,6 @@
 	"settings.admin.authentication.loginForm.label": "登入表單",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "將 OAuth 登入連結至具有相同電子郵件的現有帳號。",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "依電子郵件合併帳號",
-	"settings.admin.authentication.newSignUps.description": "允許新使用者建立帳號。",
-	"settings.admin.authentication.newSignUps.label": "新註冊使用者",
 	"settings.admin.authentication.oauthOidc.description": "允許使用者登入 OAuth / OIDC provider",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "允許使用者透過 OAuth 創建帳號",

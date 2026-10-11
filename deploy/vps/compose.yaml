@@ -24,7 +24,6 @@ services:
       DATABASE_URL: postgresql://mologate:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/mologate
       REDIS_URL: redis://redis:6379/0
       WEBSOCKET_MANAGER: redis
-      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-False}
       DEFAULT_USER_ROLE: pending
       ENABLE_OLLAMA_API: "False"
       UVICORN_WORKERS: "1"

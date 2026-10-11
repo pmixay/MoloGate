@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "Giriş Formu",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "OAuth oturum açma işlemlerini aynı e-postaya sahip mevcut hesaplarla ilişkilendir.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Hesapları E-postaya Göre Birleştir",
-	"settings.admin.authentication.newSignUps.description": "Yeni kullanıcıların hesap oluşturmasına izin ver.",
-	"settings.admin.authentication.newSignUps.label": "Yeni Kayıtlar",
 	"settings.admin.authentication.oauthOidc.description": "Kullanıcıların bir OAuth / OIDC sağlayıcısı ile kimlik doğrulamasına izin ver.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Kullanıcıların OAuth aracılığıyla hesap oluşturmasına izin ver.",

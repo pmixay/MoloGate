@@ -2148,8 +2148,6 @@
 	"settings.admin.authentication.loginForm.label": "",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Poveži prijave OAuth z obstoječimi računi z istim e-poštnim naslovom.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Merge Accounts by Email",
-	"settings.admin.authentication.newSignUps.description": "Dovoli novim uporabnikom ustvarjanje računov.",
-	"settings.admin.authentication.newSignUps.label": "Nove registracije",
 	"settings.admin.authentication.oauthOidc.description": "Dovoli uporabnikom avtentikacijo s ponudnikom OAuth / OIDC.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Dovoli uporabnikom ustvarjanje računov prek OAuth.",

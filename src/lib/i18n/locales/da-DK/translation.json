@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "Loginformular",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Knyt OAuth-login til eksisterende konti med samme e-mailadresse.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Flet konti efter e-mailadresse",
-	"settings.admin.authentication.newSignUps.description": "Tillad nye brugere at oprette konti.",
-	"settings.admin.authentication.newSignUps.label": "Nye tilmeldinger",
 	"settings.admin.authentication.oauthOidc.description": "Tillad brugere at autentificere sig via en OAuth- / OIDC-udbyder.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Tillad brugere at oprette konti via OAuth.",

@@ -2180,8 +2180,6 @@
 	"settings.admin.authentication.loginForm.label": "نموذج تسجيل الدخول",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "ربط تسجيلات الدخول عبر OAuth بالحسابات الحالية التي تستخدم البريد الإلكتروني نفسه.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "دمج الحسابات حسب البريد الإلكتروني",
-	"settings.admin.authentication.newSignUps.description": "السماح للمستخدمين الجدد بإنشاء حسابات.",
-	"settings.admin.authentication.newSignUps.label": "تسجيلات جديدة",
 	"settings.admin.authentication.oauthOidc.description": "السماح للمستخدمين بالمصادقة عبر موفّر OAuth / OIDC.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "السماح للمستخدمين بإنشاء حسابات عبر OAuth.",

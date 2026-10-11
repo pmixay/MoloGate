@@ -2132,8 +2132,6 @@
 	"settings.admin.authentication.loginForm.label": "Formulario de inicio de sesión",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Vincula los inicios de sesión de OAuth con las cuentas existentes que tengan el mismo correo electrónico.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Fusionar Cuentas por Correo Electrónico",
-	"settings.admin.authentication.newSignUps.description": "Permite que los usuarios nuevos creen cuentas.",
-	"settings.admin.authentication.newSignUps.label": "Nuevos Registros",
 	"settings.admin.authentication.oauthOidc.description": "Permite que los usuarios se autentiquen con un proveedor OAuth / OIDC.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Permite que los usuarios creen cuentas a través de OAuth.",

@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Knyt OAuth-innritingar at verandi kontum við sama telduposti.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Samein kontur eftir telduposti",
-	"settings.admin.authentication.newSignUps.description": "Loyv nýggjum brúkarum at stovna kontur.",
-	"settings.admin.authentication.newSignUps.label": "Nýggjar skrásetingar",
 	"settings.admin.authentication.oauthOidc.description": "Loyv brúkarum at innrita við einum OAuth-/OIDC-veitara.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Loyv brúkarum at stovna kontur gjøgnum OAuth.",

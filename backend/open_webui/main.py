@@ -374,6 +374,9 @@ async def lifespan(app: FastAPI):
     if LICENSE_KEY:
         license_task = asyncio.create_task(asyncio.to_thread(get_license_data, app, LICENSE_KEY))
 
+    # Mologate: clear any stored sign-up setting; only admins create member accounts.
+    await Config.upsert({'ui.enable_signup': False})
+
     # Create admin account from env vars if specified and no users exist
     if WEBUI_ADMIN_EMAIL and WEBUI_ADMIN_PASSWORD:
         if await create_admin_user(WEBUI_ADMIN_EMAIL, WEBUI_ADMIN_PASSWORD, WEBUI_ADMIN_NAME):
@@ -2349,7 +2352,8 @@ async def get_app_config(request: Request):
             'auth_trusted_header': bool(WEBUI_AUTH_TRUSTED_EMAIL_HEADER),
             'enable_signup_password_confirmation': ENABLE_SIGNUP_PASSWORD_CONFIRMATION,
             'enable_ldap': config.get('ldap.enable'),
-            'enable_signup': config.get('ui.enable_signup'),
+            # Mologate: self-registration is disabled; admins create member accounts.
+            'enable_signup': False,
             'enable_login_form': config.get('ui.enable_login_form'),
             'enable_websocket': ENABLE_WEBSOCKET_SUPPORT,
             **(

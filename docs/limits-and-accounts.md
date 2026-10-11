@@ -328,10 +328,18 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
 
 1. The member clicks **Connect account → ChatGPT / Codex**.
 2. Mologate starts an isolated `codex app-server` for the new account, with its own `CODEX_HOME`
-   under the data volume (mode 0700), and calls `account/login/start` with
-   `{"type": "chatgptDeviceCode"}`.
-3. The UI shows the code and the URL. The member finishes the login on their own device, through
-   OpenAI's flow.
+   under the data volume (mode 0700), and calls `account/login/start` with the member's chosen
+   method:
+   - **Link** (`{"type": "chatgpt"}`): the UI shows OpenAI's sign-in link. After signing in, the
+     browser opens `http://127.0.0.1:1455/auth/callback?code=…&state=…`, which does not load on
+     the member's computer. The member pastes that address into Mologate. Mologate checks the
+     `state` against this login and passes only `code` and `state` to app-server's own loopback
+     callback inside the container; app-server holds the PKCE verifier and exchanges the code.
+     The pasted host is never contacted. All link logins share port 1455, and a second one would
+     cancel the first, so only one link login runs at a time.
+   - **Code** (`{"type": "chatgptDeviceCode"}`): the UI shows the code and OpenAI's device page.
+3. The member finishes the login on their own device, through OpenAI's flow, and can cancel a
+   pending attempt.
 4. On `account/login/completed`, Mologate calls `account/read` to get the plan and the ChatGPT
    account ID, creates the `provider_account`, grants credits if that account ID never earned any,
    and reads its windows.
@@ -431,14 +439,14 @@ Each phase lists what must be true to call it done.
 
 Hosting files and the deployment/recovery procedure are in
 [deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
-2026-10-11: production has HTTPS and nightly backups. At the owner's subsequent
-request, production allows registration with admin approval for new accounts.
+2026-10-11: production has HTTPS and nightly backups. Admins create every member
+account; self-registration is disabled in code.
 A regular team account completed a chat, and a production
 database backup was restored successfully. The full external TCP scan and
 direct confirmation found only ports 22, 80 and 443 reachable.
 
 - [x] The VPS runs `main` behind HTTPS (details in [§13](#13-hosting)).
-- [x] Team onboarding: registration enabled with admin approval; admins can also create accounts.
+- [x] Team onboarding: admins create every account; members cannot register themselves.
 - [x] Nightly backup of the database and data volume.
 - [x] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
 
@@ -583,6 +591,9 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
   verified stable identity and a permanent grant record. The proposed token relay handles a
   credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
+- 2026-10-11: no self-registration: admins create every member account. ChatGPT accounts can
+  also connect with a sign-in link whose callback address the member pastes back, since a code
+  alone is not enough for every account.
 - 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
   account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
   for the team.

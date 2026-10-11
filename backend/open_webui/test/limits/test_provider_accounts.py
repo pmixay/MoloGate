@@ -102,6 +102,58 @@ def coupon(identifier, expires_in, status='available'):
     return {'id': identifier, 'resetType': 'codexRateLimits', 'status': status, 'expiresAt': expires_at}
 
 
+LINK_APP_SERVER = """
+import http.server, json, os, sys, threading, urllib.parse
+from pathlib import Path
+
+lock = threading.Lock()
+
+
+def send(message):
+    with lock:
+        print(json.dumps(message), flush=True)
+
+
+class Callback(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        # Like the real loopback server: only this login's state and code, nothing else.
+        if query == {'code': ['fake-code'], 'state': ['fake-state']}:
+            tokens = {'account_id': 'link-chatgpt-id', 'access_token': 'fake-token'}
+            Path(os.environ['CODEX_HOME'], 'auth.json').write_text(json.dumps({'tokens': tokens}))
+            self.send_response(302)
+            self.send_header('Location', '/success')
+            self.end_headers()
+            send({'method': 'account/login/completed', 'params': {'loginId': 'link-1', 'success': True}})
+        else:
+            self.send_response(400)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+for raw in sys.stdin:
+    request = json.loads(raw)
+    if 'id' not in request:
+        continue
+    method, result = request['method'], {}
+    if method == 'account/login/start' and request['params'].get('type') == 'chatgpt':
+        server = http.server.HTTPServer(('127.0.0.1', 0), Callback)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        redirect = urllib.parse.quote(f'http://127.0.0.1:{server.server_port}/auth/callback', safe='')
+        url = f'https://auth.openai.com/oauth/authorize?response_type=code&redirect_uri={redirect}&state=fake-state'
+        result = {'type': 'chatgpt', 'loginId': 'link-1', 'authUrl': url}
+    elif method == 'account/read':
+        result = {'account': {'type': 'chatgpt', 'planType': 'pro'}}
+    elif method == 'model/list':
+        result = {'data': [{'id': 'test-model', 'model': 'test-model', 'displayName': 'Test'}]}
+    elif method == 'account/rateLimits/read':
+        result = {'rateLimits': {'primary': {'usedPercent': 10}}}
+    send({'id': request['id'], 'result': result})
+"""
+
+
 class PermissionTests(unittest.TestCase):
     def test_private_paused_pending_and_admin_boundaries(self):
         private = account()
@@ -425,6 +477,54 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot['windows'][0]['used_percent'], 40)
         self.assertEqual(snapshot['reset_credits'], 2)
 
+    async def test_link_login_accepts_only_its_own_pasted_callback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / 'fake-codex'
+            binary.write_text('#!' + sys.executable + '\n' + LINK_APP_SERVER)
+            binary.chmod(0o700)
+            with (
+                patch.dict(os.environ, {'MOLOGATE_CODEX_BINARY': str(binary)}),
+                patch.object(codex_accounts, 'ACCOUNT_ROOT', Path(temporary) / 'accounts'),
+            ):
+                identifier = await codex_accounts.start_login(OWNER, 'Link ChatGPT', 'shared', method='link')
+                status = await codex_accounts.login_status(identifier, OWNER)
+                self.assertEqual(status['method'], 'link')
+                self.assertTrue(status['auth_url'].startswith('https://auth.openai.com/oauth/authorize?'))
+                self.assertIsNone(status['user_code'])
+                # Every link sign-in returns to the same loopback port, so a second one must wait.
+                with self.assertRaises(HTTPException) as busy:
+                    await codex_accounts.start_login(OTHER, 'Second', 'private', method='link')
+                self.assertEqual(busy.exception.status_code, 409)
+                pasted = 'http://127.0.0.1:1455/auth/callback?code=fake-code&state=fake-state'
+                with self.assertRaises(HTTPException) as foreign:
+                    await codex_accounts.submit_callback(identifier, OTHER, pasted)
+                self.assertEqual(foreign.exception.status_code, 404)
+                for wrong in (
+                    pasted.replace('state=fake-state', 'state=other'),
+                    pasted.replace('state=fake-state', 'state=f%C3%BCnf'),
+                    'https://example.com/',
+                ):
+                    with self.assertRaises(HTTPException) as rejected:
+                        await codex_accounts.submit_callback(identifier, OWNER, wrong)
+                    self.assertEqual(rejected.exception.status_code, 400)
+                # The pasted host and extra parameters are ignored: only code and state reach app-server.
+                done = await codex_accounts.submit_callback(
+                    identifier, OWNER, '  http://evil.example:9/auth/callback?code=fake-code&state=fake-state&next=x '
+                )
+                self.assertEqual(done['status'], 'completed')
+                saved = await ProviderAccounts.get(done['account_id'])
+                self.assertEqual(
+                    (saved.external_account_id, saved.plan, saved.sharing), ('link-chatgpt-id', 'pro', 'shared')
+                )
+                with self.assertRaises(HTTPException) as finished:
+                    await codex_accounts.submit_callback(identifier, OWNER, pasted)
+                self.assertEqual(finished.exception.status_code, 409)
+                # The port is free again; a pending sign-in can be cancelled by its owner.
+                second = await codex_accounts.start_login(OTHER, 'Second', 'private', method='link')
+                self.assertTrue(await codex_accounts.cancel_login(second, OTHER))
+                cancelled = await codex_accounts.login_status(second, OTHER)
+                self.assertEqual((cancelled['status'], cancelled['error']), ('error', 'Sign-in cancelled.'))
+
     async def test_real_appserver_protocol_device_login_with_fake_provider(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / 'fake-codex'
@@ -550,6 +650,43 @@ class RouterTests(unittest.TestCase):
         form = {'provider': 'openai_api', 'label': 'test', 'api_key': 'test-secret'}
         self.assertEqual(self.client.post('/accounts', json=form).status_code, 400)
         self.assertEqual(self.client.post('/accounts', json=form | {'owner_user_id': 'other'}).status_code, 422)
+
+
+class SignupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_members_cannot_register_themselves(self):
+        from open_webui.routers import auths
+
+        form = auths.SignupForm(name='New member', email='new@example.com', password='Password-123!')
+        with (
+            patch.object(auths.Users, 'has_users', AsyncMock(return_value=True)),
+            patch.object(auths, 'WEBUI_AUTH', True),
+            patch.object(auths.Config, 'get', AsyncMock(return_value=True)),
+        ):
+            # Even a stored "sign-ups enabled" value cannot reopen registration.
+            with self.assertRaises(HTTPException) as error:
+                await auths.signup(SimpleNamespace(), SimpleNamespace(), form, db=None)
+        self.assertEqual(error.exception.status_code, 403)
+
+    async def test_admin_settings_keep_sign_up_off(self):
+        from open_webui.routers import auths
+
+        form = auths.AdminConfig.model_construct(
+            ENABLE_SIGNUP=True,
+            DEFAULT_USER_ROLE='pending',
+            CHANNEL_MODEL_RESPONSE_MODE='thread',
+            JWT_EXPIRES_IN='-1',
+            DEFAULT_INTERFACE_SETTINGS=None,
+            FOLDER_MAX_FILE_COUNT=None,
+            AUTOMATION_MAX_COUNT=None,
+            AUTOMATION_MIN_INTERVAL=None,
+        )
+        upsert = AsyncMock()
+        with (
+            patch.object(auths.Config, 'upsert', upsert),
+            patch.object(auths, 'get_config_values', AsyncMock(return_value={})),
+        ):
+            await auths.update_admin_config(SimpleNamespace(), form, user=ADMIN)
+        self.assertIs(upsert.await_args.args[0]['ui.enable_signup'], False)
 
 
 class Response:

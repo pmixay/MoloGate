@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Verknüpft OAuth-Anmeldungen mit vorhandenen Konten derselben E-Mail-Adresse.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Konten anhand der E-Mail-Adresse zusammenführen",
-	"settings.admin.authentication.newSignUps.description": "Erlaubt neuen Benutzern, ein Konto zu erstellen.",
-	"settings.admin.authentication.newSignUps.label": "Neuregistrierungen",
 	"settings.admin.authentication.oauthOidc.description": "Erlaubt Benutzern die Anmeldung über einen OAuth-/OIDC-Anbieter.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Erlaubt Benutzern, Konten über OAuth zu erstellen.",

@@ -2116,8 +2116,6 @@
 	"settings.admin.authentication.loginForm.label": "Saioa hasteko inprimakia",
 	"settings.admin.authentication.mergeAccountsByEmail.description": "Lotu OAuth saio-hasierak helbide elektroniko bera duten lehendik dauden kontuekin.",
 	"settings.admin.authentication.mergeAccountsByEmail.label": "Batu kontuak helbide elektronikoaren arabera",
-	"settings.admin.authentication.newSignUps.description": "Baimendu erabiltzaile berriei kontuak sortzea.",
-	"settings.admin.authentication.newSignUps.label": "Erregistro berriak",
 	"settings.admin.authentication.oauthOidc.description": "Baimendu erabiltzaileei OAuth / OIDC hornitzaile baten bidez autentifikatzea.",
 	"settings.admin.authentication.oauthOidc.label": "OAuth / OIDC",
 	"settings.admin.authentication.oauthSignup.description": "Baimendu erabiltzaileei OAuth bidez kontuak sortzea.",
