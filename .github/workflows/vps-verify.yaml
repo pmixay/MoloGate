@@ -1,0 +1,57 @@
+# Mologate: verify Phase 0 from outside the VPS.
+name: Verify VPS hosting
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [limits-and-accounts]
+    paths:
+      - 'deploy/vps/**'
+      - '.github/workflows/vps-verify.yaml'
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify HTTPS and disabled signups
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          base = 'https://5-83-140-221.sslip.io'
+          with urllib.request.urlopen(base + '/ready', timeout=30) as response:
+              assert json.load(response)['status'] is True
+          with urllib.request.urlopen(base + '/api/config', timeout=30) as response:
+              assert json.load(response)['features']['enable_signup'] is False
+          print('Public HTTPS readiness and signup settings passed.')
+          PY
+
+      - name: Install port scanner
+        run: |
+          if ! command -v nmap >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq nmap
+          fi
+
+      - name: Verify all public TCP ports
+        run: |
+          sudo nmap -n -Pn -sS -T4 --max-retries 1 --min-rate 1000 --max-rate 2000 \
+            -p- -oX "$RUNNER_TEMP/mologate-ports.xml" 5.83.140.221
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          result = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'mologate-ports.xml')
+          opened = {
+              int(port.attrib['portid'])
+              for port in result.findall('.//port')
+              if port.find('state').attrib['state'] == 'open'
+          }
+          assert opened == {22, 80, 443}, f'Unexpected open TCP ports: {sorted(opened)}'
+          print('External scan passed: only TCP 22, 80 and 443 are open.')
+          PY
