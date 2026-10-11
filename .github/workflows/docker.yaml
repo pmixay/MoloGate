@@ -7,7 +7,7 @@ on:
     branches:
       - main
       - dev
-      # Mologate: all account and limits work uses one staging branch.
+      # Mologate: all account and limits work uses one working branch.
       - limits-and-accounts
     tags:
       - v*
@@ -15,7 +15,6 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'deploy/**'
-      - '.github/workflows/vps-verify.yaml'
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -38,7 +37,7 @@ jobs:
             runner: ubuntu-latest
           - arch: linux/arm64
             runner: ubuntu-24.04-arm
-        # Mologate: staging only needs slim; keep the full release matrix elsewhere.
+        # Mologate: the working branch only needs slim; keep the full release matrix elsewhere.
         variant: ${{ fromJSON((github.ref == 'refs/heads/limits-and-accounts') && '[{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]' || '[{"name":"main","suffix":"","build_args":"","free_disk":false},{"name":"cuda","suffix":"-cuda","build_args":"USE_CUDA=true","free_disk":true},{"name":"cuda126","suffix":"-cuda126","build_args":"USE_CUDA=true\nUSE_CUDA_VER=cu126","free_disk":true},{"name":"ollama","suffix":"-ollama","build_args":"USE_OLLAMA=true","free_disk":false},{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]') }}
 
     steps:
@@ -125,7 +124,7 @@ jobs:
             BUILD_HASH=${{ github.sha }}
             ${{ matrix.variant.build_args }}
 
-      # Mologate: test the built runtime before making its staging tag deployable.
+      # Mologate: test the built runtime before publishing the working branch's tag.
       - name: Provider account regressions
         if: github.ref == 'refs/heads/limits-and-accounts'
         run: |

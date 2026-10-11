@@ -32,7 +32,6 @@ tar -tzf "$partial/data.tgz" >/dev/null
 
 # Preserve the encryption key and connection settings needed to recover the DB.
 config_files=(.env compose.yaml Caddyfile caddy-sites)
-if [[ -f compose.staging.yaml ]]; then config_files+=(compose.staging.yaml); fi
 tar -czf "$partial/config.tgz" "${config_files[@]}"
 chmod 600 "$partial/"*
 (

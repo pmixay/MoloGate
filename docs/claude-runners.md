@@ -22,14 +22,14 @@ Phase 7. Its infrastructure and authentication spike can start after Phase 1 wit
 all intervening phases, but it must remain isolated and disabled for team traffic until its
 dependencies are ready:
 
-| Dependency | Required for |
-| --- | --- |
-| Phase 1 | Account ownership, encrypted metadata, sharing, model IDs and access checks |
-| Phase 2 | Usage ledger, account windows and calibration |
-| Phase 3 | Pure `decide()` allowance engine and account selection |
-| Phase 4 | Gate coverage, concurrency, worker fallback and limit UI |
-| Phase 5 | Permanent credit grants, spending and disconnect forfeits |
-| Phase 6 | Not required for this MVP; subscription runners accept interactive chat only |
+| Dependency | Required for                                                                 |
+| ---------- | ---------------------------------------------------------------------------- |
+| Phase 1    | Account ownership, encrypted metadata, sharing, model IDs and access checks  |
+| Phase 2    | Usage ledger, account windows and calibration                                |
+| Phase 3    | Pure `decide()` allowance engine and account selection                       |
+| Phase 4    | Gate coverage, concurrency, worker fallback and limit UI                     |
+| Phase 5    | Permanent credit grants, spending and disconnect forfeits                    |
+| Phase 6    | Not required for this MVP; subscription runners accept interactive chat only |
 
 Do not patch the CLI, spoof its user agent, intercept provider TLS, automate the login page or
 rotate proxies. Tool execution and long autonomous agent loops are outside this phase.
@@ -76,16 +76,16 @@ New components:
 - Existing `ProviderAccounts` settings UI and `ContextIndicator.svelte`: extend these instead of
   creating a second independent account system.
 
-Use environment-specific internal control networks, for example `molo-staging-internal`.
+Use a dedicated internal control network, for example `molo-runners-internal`.
 Publish neither port 8085 nor 8090 on the host. Runners also need outbound DNS/HTTPS to Anthropic;
 an `internal: true` Docker network alone cannot supply that. Add an explicit outbound network
 and firewall policy without placing runners on the database or public proxy networks. Restrict
 runner-to-runner and control-plane access; an unpublished port still needs service authentication.
 See [Docker network isolation](https://docs.docker.com/reference/compose-file/networks/#internal).
 
-Production and staging must use distinct networks, service credentials, container labels and
-volumes. Initially deploy the manager only on staging. The VPS has one vCPU and about 3.8 GB RAM
-and already hosts both application stacks. Two live runners is a **host-wide ceiling**, not a
+The manager uses its own networks, service credentials, container labels and volumes, and stays
+disabled by default. The VPS has one vCPU and about 3.8 GB RAM and already hosts the production
+application stack. Two live runners is a **host-wide ceiling**, not a
 promise that two 512 MiB containers will fit. Start with one and measure before increasing it.
 Anthropic lists [4 GB+ RAM as a system requirement](https://code.claude.com/docs/en/setup#system-requirements)
 for Claude Code. The proposed 512 MiB container cap is an experiment for this restricted workload,
@@ -102,9 +102,9 @@ Store Fernet-encrypted metadata through `models/oauth_sessions.py`'s existing pa
 
 ```json
 {
-  "manager": "http://runner-manager:8085",
-  "runner_id": "<server-generated-uuid>",
-  "volume": "claude-cfg-<server-generated-uuid>"
+	"manager": "http://runner-manager:8085",
+	"runner_id": "<server-generated-uuid>",
+	"volume": "claude-cfg-<server-generated-uuid>"
 }
 ```
 
@@ -154,16 +154,16 @@ separate service credential; webhook signing alone does not protect this API. Us
 secret comparisons, bounded bodies, timeouts and no redirects. Backend owner/admin authorization
 precedes every lifecycle request; only the owner can submit a new login credential.
 
-| Method | Path | Contract |
-| --- | --- | --- |
-| `POST` | `/runners` | `{runner_id, plan, generation}` from the backend. Idempotently create labeled volume/container, initialize permissions, return `202 {state, status:"needs_login"}`. A login runner also consumes a live slot. |
-| `POST` | `/runners/{id}/credential` | Bounded raw token body for the current one-use generation. Write atomically as mode 0600; never echo/log it. Return `202 {status:"verifying"}`. Repeated transport requests are idempotent; replacing a credential needs a new generation. |
-| `GET` | `/runners/{id}` | Sanitized `{state, logged_in, busy, claude_version, uptime, last_verified_at}`; inspect Docker or proxy health without waking stopped runners. |
-| `POST` | `/runners/{id}/start` | Reserve a host slot, stop an idle LRU runner if necessary, then start. If all slots are busy, return a retryable capacity response. |
-| `POST` | `/runners/{id}/stop` | Drain with a bounded timeout; preserve the volume and account identity. |
-| `POST` | `/runners/{id}/chat` | Authenticated streaming proxy to the runner's `/v1/chat`; holds the slot lease through completion/cancellation. |
-| `DELETE` | `/runners/{id}` | Mark deleting, reject new work, drain up to 60 seconds, remove the labeled container and volume. Idempotent retries finish partial cleanup. |
-| `GET` | `/runners/{id}/terminal` | Optional later flow B only: issue an owner-bound single-use terminal URL, expiry at most 15 minutes. |
+| Method   | Path                       | Contract                                                                                                                                                                                                                                   |
+| -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST`   | `/runners`                 | `{runner_id, plan, generation}` from the backend. Idempotently create labeled volume/container, initialize permissions, return `202 {state, status:"needs_login"}`. A login runner also consumes a live slot.                              |
+| `POST`   | `/runners/{id}/credential` | Bounded raw token body for the current one-use generation. Write atomically as mode 0600; never echo/log it. Return `202 {status:"verifying"}`. Repeated transport requests are idempotent; replacing a credential needs a new generation. |
+| `GET`    | `/runners/{id}`            | Sanitized `{state, logged_in, busy, claude_version, uptime, last_verified_at}`; inspect Docker or proxy health without waking stopped runners.                                                                                             |
+| `POST`   | `/runners/{id}/start`      | Reserve a host slot, stop an idle LRU runner if necessary, then start. If all slots are busy, return a retryable capacity response.                                                                                                        |
+| `POST`   | `/runners/{id}/stop`       | Drain with a bounded timeout; preserve the volume and account identity.                                                                                                                                                                    |
+| `POST`   | `/runners/{id}/chat`       | Authenticated streaming proxy to the runner's `/v1/chat`; holds the slot lease through completion/cancellation.                                                                                                                            |
+| `DELETE` | `/runners/{id}`            | Mark deleting, reject new work, drain up to 60 seconds, remove the labeled container and volume. Idempotent retries finish partial cleanup.                                                                                                |
+| `GET`    | `/runners/{id}/terminal`   | Optional later flow B only: issue an owner-bound single-use terminal URL, expiry at most 15 minutes.                                                                                                                                       |
 
 The backend exposes owner-facing routes under `/api/v1/runners`, including status and credential
 submission, using the existing user authentication. Do not expose the manager API directly to
@@ -434,22 +434,22 @@ These are load and fairness controls, not assurances against provider enforcemen
 ## 10. Configuration
 
 Follow `Config.get('dotted.key')` and env defaults in `config.py`. Secrets are deployment-only,
-separate for staging/production, excluded from config exports and readable only by the services
+excluded from config exports and readable only by the services
 that need them. The following are proposed defaults, not environment variables implemented today:
 
-| Environment/config | Default / purpose |
-| --- | --- |
-| `MOLOGATE_CLAUDE_RUNNERS` | `off`; deployment enablement ceiling |
-| `mologate.claude_runners.enabled` | `false`; runtime switch, requires deployment enablement |
-| `RUNNER_MANAGER_URL` | `http://runner-manager:8085`; fixed/allowlisted service origin |
-| `RUNNER_MANAGER_API_SECRET` | No default; service authentication, distinct from webhook key |
-| `RUNNERS_WEBHOOK_SECRET` | No default; mandatory when enabling the integration |
-| `CLAUDE_MAX_LIVE_RUNNERS` | `2` ceiling; staging override `1` until load tests pass |
-| `CLAUDE_PLAN_MULTIPLIERS` | `{"pro":1,"max_5x":5,"max_20x":20}`; admin-adjustable |
-| `CLAUDE_RPM_CAP` | `8` per account |
-| `CLAUDE_DAILY_UNITS_CAP` | Unset; must be calibrated/configured before team traffic |
-| `CLAUDE_STREAM_IDLE_TIMEOUT_SECONDS` | `180` |
-| `CLAUDE_REQUEST_TIMEOUT_SECONDS` | `600` absolute maximum, configurable downward |
+| Environment/config                   | Default / purpose                                              |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `MOLOGATE_CLAUDE_RUNNERS`            | `off`; deployment enablement ceiling                           |
+| `mologate.claude_runners.enabled`    | `false`; runtime switch, requires deployment enablement        |
+| `RUNNER_MANAGER_URL`                 | `http://runner-manager:8085`; fixed/allowlisted service origin |
+| `RUNNER_MANAGER_API_SECRET`          | No default; service authentication, distinct from webhook key  |
+| `RUNNERS_WEBHOOK_SECRET`             | No default; mandatory when enabling the integration            |
+| `CLAUDE_MAX_LIVE_RUNNERS`            | `2` ceiling; set to `1` until load tests pass                  |
+| `CLAUDE_PLAN_MULTIPLIERS`            | `{"pro":1,"max_5x":5,"max_20x":20}`; admin-adjustable          |
+| `CLAUDE_RPM_CAP`                     | `8` per account                                                |
+| `CLAUDE_DAILY_UNITS_CAP`             | Unset; must be calibrated/configured before team traffic       |
+| `CLAUDE_STREAM_IDLE_TIMEOUT_SECONDS` | `180`                                                          |
+| `CLAUDE_REQUEST_TIMEOUT_SECONDS`     | `600` absolute maximum, configurable downward                  |
 
 Also define bounded registration lifetime, one active registration per owner, manager policy
 lease lifetime, breaker threshold/minimum sample count and maximum cooldown. Each runner needs
@@ -457,11 +457,10 @@ its own service credential, installed as a private file; a runner must not hold 
 Docker-control credential. The manager's non-Claude control state and outbox have their own
 private persistent volume.
 
-## 11. Tests and staging acceptance
+## 11. Tests and acceptance
 
 Extend `backend/open_webui/test/limits/`; use `node --test` for the wrapper. Mock service calls
-for deterministic tests and keep real-provider checks on staging with explicitly connected
-test accounts.
+for deterministic tests and limit real-provider checks to explicitly connected test accounts.
 
 - Connect: create, one-use credential generation, verify, signed event, account becomes `ok`,
   shared eligibility and Phase 5 once-ever grant. Cover duplicate identity, disconnect/reconnect,
@@ -479,7 +478,7 @@ test accounts.
 - Lifecycle: three registered accounts with ceiling two, concurrent start races, busy LRU
   exclusion, manager/Docker/host restarts, policy lease expiry, kill-switch and 429 storms.
 - Host: measure peak RSS, swap pressure, CPU and chat latency with the existing application
-  stacks. Verify outbound provider access and that 8085/8090/Docker remain unreachable externally.
+  stack. Verify outbound provider access and that 8085/8090/Docker remain unreachable externally.
 
 ## 12. Small PR sequence
 
@@ -488,17 +487,17 @@ Use the same `limits-and-accounts` working branch throughout; the steps below do
 separate branches.
 Do not deploy a credential-bearing service before authentication, caps and disablement work.
 
-| PR | Scope | Acceptance |
-| --- | --- | --- |
-| 7.0 | Authentication/identity/protocol and memory spike | Pinned version, sanitized fixtures, verified stable identity, quota visibility documented, resource measurements. Resolve flow A before promising it in UI. |
-| 7.1 | Manager and staging compose overlay | Authenticated create/start/stop/delete with a harmless test image, labeled volumes, slot cap, kill-switch and outbound isolation. No real credentials required. |
-| 7.2 | Official runner image and wrapper | A connected test runner streams text and correct usage; concurrency, watchdog and disconnect cleanup pass. |
-| 7.3 | Backend API, redaction, registrations/events, notifications | Owner connects through the API to a verified `ok` account; duplicate/replayed events and identities have no duplicate effects. |
-| 7.4 | Metering/account-window integration, after Phase 2 | Ledger reconciles against available provider readings within ±10%; missing authoritative readings are an explicit unresolved criterion. |
-| 7.5 | Selection/stickiness, worker rules and credits, after Phases 3–5 | Roadmap-style scenarios pass in observe, no background subscription use, grants persist across reconnects, no reset button. |
-| 7.6 | Reconciliation, LRU and circuit-breaker resilience | Three accounts never exceed the live ceiling, off stops runners, restart races and provider failure storms preserve state. |
-| 7.7 | Connect UI and account/context status | Owner completes the selected flow without SSH; flow A still requires local `claude setup-token`. Status and unknown quota are clear. |
-| 7.8 | Observe and rollout | At least one week of real traffic, accepted metering/isolation/load evidence, rollback procedure verified, then configured enforcement. |
+| PR  | Scope                                                            | Acceptance                                                                                                                                                      |
+| --- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 7.0 | Authentication/identity/protocol and memory spike                | Pinned version, sanitized fixtures, verified stable identity, quota visibility documented, resource measurements. Resolve flow A before promising it in UI.     |
+| 7.1 | Manager and compose overlay                                      | Authenticated create/start/stop/delete with a harmless test image, labeled volumes, slot cap, kill-switch and outbound isolation. No real credentials required. |
+| 7.2 | Official runner image and wrapper                                | A connected test runner streams text and correct usage; concurrency, watchdog and disconnect cleanup pass.                                                      |
+| 7.3 | Backend API, redaction, registrations/events, notifications      | Owner connects through the API to a verified `ok` account; duplicate/replayed events and identities have no duplicate effects.                                  |
+| 7.4 | Metering/account-window integration, after Phase 2               | Ledger reconciles against available provider readings within ±10%; missing authoritative readings are an explicit unresolved criterion.                         |
+| 7.5 | Selection/stickiness, worker rules and credits, after Phases 3–5 | Roadmap-style scenarios pass in observe, no background subscription use, grants persist across reconnects, no reset button.                                     |
+| 7.6 | Reconciliation, LRU and circuit-breaker resilience               | Three accounts never exceed the live ceiling, off stops runners, restart races and provider failure storms preserve state.                                      |
+| 7.7 | Connect UI and account/context status                            | Owner completes the selected flow without SSH; flow A still requires local `claude setup-token`. Status and unknown quota are clear.                            |
+| 7.8 | Observe and rollout                                              | At least one week of real traffic, accepted metering/isolation/load evidence, rollback procedure verified, then configured enforcement.                         |
 
 No fixed line-count target for manager or wrapper: lifecycle, cancellation and identity checks
 are part of the feature, not optional follow-ups. Minimal safety/resource controls ship in 7.1;
@@ -519,8 +518,8 @@ expiry follows the documented retention schedule, and owners can revoke credenti
 
 Rollback: disable runtime dispatch, stop/drain runners, retain account volumes and restore the
 previous pinned image/config. Back up the database before migrations; restore a matching schema
-when rolling back to code that cannot read the new revision. Do not touch production accounts
-or enable production runners as part of staging acceptance.
+when rolling back to code that cannot read the new revision. Do not touch members' existing
+accounts or enable runners for team traffic as part of acceptance testing.
 
 ## 14. Open questions to resolve during implementation
 
@@ -528,7 +527,7 @@ or enable production runners as part of staging acceptance.
    choose and prove the owner-operated login alternative before completing 7.3.
 2. Which window observations does the pinned CLI actually emit, and are they sufficient for
    calibration? No authoritative observations means no claim of provider-percent enforcement.
-3. Does one runner fit the measured memory budget, and can two coexist with both app stacks?
+3. Does one runner fit the measured memory budget, and can two coexist with the app stack?
    Keep the limit at one or move workloads if the measurements fail; swap is not extra RAM.
 4. Confirm token expiry/renewal, plan changes, cancellation and 401/429 classification using
    real fixtures, without consuming more subscription traffic than the verification budget.

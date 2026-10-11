@@ -13,10 +13,6 @@ Existing production users, provider connections, data and registration policy ar
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
 Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
 
-Earlier verification used [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_accounts)
-at `a4fce64`, using `ghcr.io/pmixay/mologate:phase1-accounts-slim`. That isolated stack remains
-available; the requested new staging domain was canceled in favor of testing on the main site.
-
 Anthropic API-key accounts are in this phase. Claude Pro/Max subscription containers are a
 separate [Phase 7 plan](claude-runners.md); they do not change Phase 1's completion criteria.
 
@@ -90,20 +86,20 @@ change independently of the published inference API.
 - A full application startup against a fresh pgvector/PostgreSQL database migrated through the
   new head and reached `/ready`. Full HTTP checks confirmed owner-only model visibility,
   forbidden direct chat/Responses access by another member, immediate sharing, and pause behavior.
-- Staging migrated to `b1a7c9e4d205` and reached healthy status. A temporary Z.ai account and
-  temporary ordinary member completed real `glm-5.3-flash` chats through the shared account,
-  both normal and streamed; usage and both quota windows were returned. Private access was
-  rejected. The temporary provider credentials and member were deleted afterwards.
-- Both changed Svelte components compiled without warnings. The deployed Settings screen passed
-  desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no browser
-  page errors. Screenshots were inspected for layout and readability.
+- A test deployment (since removed) migrated to `b1a7c9e4d205` and reached healthy status. A
+  temporary Z.ai account and temporary ordinary member completed real `glm-5.3-flash` chats
+  through the shared account, both normal and streamed; usage and both quota windows were
+  returned. Private access was rejected. The temporary provider credentials and member were
+  deleted afterwards.
+- Both changed Svelte components compiled without warnings. That deployment's Settings screen
+  passed desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no
+  browser page errors. Screenshots were inspected for layout and readability.
 
 Production pre-deployment backup: `/opt/mologate/backups/2026-10-11T12-36-21-020692649Z`.
 The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`.
-The earlier staging backup remains `/opt/mologate-staging/backups/2026-10-11T11-37-24-862036999Z`,
-with its previous image in `/opt/mologate-staging/phase1-rollback-image`. To roll back either stack,
-restore the matching database backup before starting the old image, because its Alembic code does
-not know the new revision. The data volume and encryption secret must be restored together.
+To roll back, restore the matching database backup before starting the old image, because its
+Alembic code does not know the new revision. The data volume and encryption secret must be
+restored together.
 
 The stdlib regression suite lives at `backend/open_webui/test/limits/test_provider_accounts.py`.
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private
@@ -125,7 +121,7 @@ docker run --rm --network none \
 
 The same tests support a disposable PostgreSQL database via `DATABASE_URL` and
 `TEST_MIGRATION_DATABASE_URL`. Image CI runs them against the built runtime on both architectures
-before publishing the staging tag. Build frontend/images in GitHub Actions, not on this VPS.
+before publishing the branch's image tag. Build frontend/images in GitHub Actions, not on this VPS.
 
 The real installed app-server has also been checked with an empty isolated home: initialization,
 empty `account/read`, `chatgptDeviceCode` issuance to `auth.openai.com`, and login cancellation all

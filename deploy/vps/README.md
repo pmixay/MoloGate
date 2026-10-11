@@ -36,8 +36,7 @@ limit disk and RAM use.
 
 ## Fresh installation
 
-Install Docker Engine with the Compose plugin, GitHub CLI and UFW. Use Compose
-2.24.4 or newer (the staging overlay replaces network aliases with `!override`).
+Install Docker Engine with the Compose plugin, GitHub CLI and UFW.
 Copy this directory to `/opt/mologate`, create the `mologate_edge` network as
 above, and copy `.env.example` to `.env` with mode 600. Set a unique
 `WEBUI_SECRET_KEY` and `POSTGRES_PASSWORD`, using separate runs of
@@ -62,8 +61,8 @@ an admin exists, choose the onboarding policy in **Admin Settings → General**.
 Production allows registration with **Default User Role → Pending**, following
 the owner's request to let team members create their own accounts. Set
 `ENABLE_SIGNUP=True` in production's `.env` and enable signups in the admin
-settings. Staging keeps registration disabled. Persistent database settings
-override environment defaults on an existing installation.
+settings. Persistent database settings override environment defaults on an
+existing installation.
 
 New members choose their own passwords through **Sign up**, then an admin
 changes their role from **Pending** to **User** in **Admin Panel → Users**.
@@ -134,9 +133,8 @@ Each successful backup is a timestamped, root-only directory containing:
 
 Failed backups leave no published set, and retention runs only after a complete
 set is saved. Sets older than seven days are removed. The script discovers the
-application volume from Docker, so staging gets its own data backup too.
-The data archive is a live copy; pause application writes for a coordinated
-database/files snapshot when performing a migration. Backups currently stay
+application volume from Docker. The data archive is a live copy; pause application
+writes for a coordinated database/files snapshot when performing a migration. Backups currently stay
 on this VPS, as specified by Phase 0.
 
 For recovery, validate the selected set first with `sha256sum -c SHA256SUMS`.
@@ -195,55 +193,11 @@ To retain the old hostname on a recovered deployment, copy `legacy-production.ca
 to `/opt/mologate/caddy-sites/legacy-production.caddy`, then validate and reload Caddy. Keep
 `DOMAIN=ai.arbuz.lol` in the production `.env`.
 
-The proposed `staging.ai.arbuz.lol` migration was canceled by the owner. No DNS record or Caddy
-site for it is required. The existing separate staging stack below remains available at its
-old address, but it is not the site for the current Phase 1 acceptance test.
-
-## Existing staging stack
-
-Copy the deployment files into `/opt/mologate-staging`, create its own `.env`
-with different secrets, and set:
-
-```dotenv
-DOMAIN=staging.5-83-140-221.sslip.io
-APP_UPSTREAM=mologate-staging
-IMAGE=ghcr.io/pmixay/mologate:limits-and-accounts-slim
-COMPOSE_FILE=compose.yaml:compose.staging.yaml
-```
-
-After the branch image has been published, pull and start this stack. The
-overlay uses the `mologate-staging` project, separate database/data volumes,
-smaller memory limits and the shared proxy network. It does not start a second
-Caddy or publish any ports. Leave the `standalone-proxy` profile disabled.
-
-Copy `staging.caddy.example` to `/opt/mologate/caddy-sites/staging.caddy` (edit
-the hostname if using another domain). Validate and reload production's Caddy:
-
 ```bash
 cd /opt/mologate
 docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
-
-Create a separate staging admin. Add a nightly cron entry for
-`/opt/mologate-staging/backup.sh` at 04:00 by installing
-`mologate-staging-backup.cron` into `/etc/cron.d/`. Staging serves the branch
-image while the team stays on production's `main` image. If stopping staging
-while idle, disable its backup cron entry until it is running again.
-
-Phase 0 initially used `limits-and-accounts-slim` at `fdbce1c`. On 2026-10-11, staging moved to
-`phase1-accounts-slim` at code commit `a4fce64`; see the
-[Phase 1 deployment and verification notes](../../docs/phase1-accounts.md).
-Use that image for the current Phase 1 deployment; `IMAGE` also accepts a pinned digest.
-All development now uses the consolidated `limits-and-accounts` branch. Future staging updates
-use `ghcr.io/pmixay/mologate:limits-and-accounts-slim` after its image checks pass; the branch
-consolidation itself does not replace the currently running image.
-The owner's two admin accounts also exist on staging. Their password hashes
-were copied once from production at the owner's request, so the same passwords
-work on both sites. Future registrations, password changes and role changes
-remain separate. The original admin's recovery password is stored in
-`/opt/mologate-staging/admin-password` (root only). Production's provider keys
-and chat history were not copied.
 
 ## Phase 7: Claude runners (planned)
 
@@ -251,11 +205,11 @@ The [English runner specification](../../docs/claude-runners.md) describes this 
 No runner-manager or Claude account containers are deployed by the current compose files.
 Anthropic API-key accounts already belong to Phase 1; subscription runners are separate work.
 
-Add the manager in a staging-only compose overlay, with its own pinned image and control-state
+Add the manager in a separate compose overlay, with its own pinned image and control-state
 volume. Only the manager receives `docker.sock`. Socket access is effectively host-root access:
 even a private endpoint needs service authentication and strict resource/operation validation.
 Do not mount the socket into Mologate or any runner. Keep manager port 8085 and runner port 8090
-unpublished, with separate production/staging networks, labels and secrets. An internal-only
+unpublished, with dedicated networks, labels and secrets. An internal-only
 network also blocks provider access; provide controlled outbound DNS/HTTPS for runners without
 joining the database or public proxy networks.
 
@@ -264,7 +218,7 @@ mode 0700 directories and mode 0600 credential files. Neither tokens nor full CL
 belong in compose environment values, logs, database rows or Redis. Backend credential relay
 must be redacted through the complete request/error/audit path.
 
-This VPS already hosts production and staging. Start with one live runner and measure CPU/RAM
+This VPS already hosts production. Start with one live runner and measure CPU/RAM
 headroom before allowing two; two is the combined host ceiling. Account volumes survive an idle
 stop. A single admission controller must cover creation, verification, chat and restart, and
 stop only idle runners for LRU. Let the manager restart runners under the cap rather than using
@@ -274,24 +228,23 @@ runtime disable switch that stops dispatch and drains/stops runners without a re
 Build images in CI. Before collecting credentials, extend backups to cover the new private
 volumes/control state, encrypt and restrict those backups, document retention and test restore.
 Include stored CLI conversation transcripts in the retention policy. Verify that only the
-existing public ports remain reachable. Staging acceptance does not enable this on production.
+existing public ports remain reachable.
 
 ## Evidence from this session
 
 The following initial Phase 0 checks were completed on 2026-10-11. They predate the production
 domain/Phase 1 update described above; current deployment evidence is in the Phase 1 notes.
 
-- Production runs `main-slim` at `a20a336`; staging runs the branch's slim image
-  with separate PostgreSQL, Redis and data volumes. Both pass HTTPS readiness.
-- Production and staging admin sign-in passed. Initially, signups were closed
+- Production runs `main-slim` at `a20a336` and passes HTTPS readiness.
+- Production admin sign-in passed. Initially, signups were closed
   as specified by Phase 0. Production registration was subsequently reopened
   at the owner's request, with new accounts requiring admin approval. Public
   registration was tested: a pending account could not access models, then
-  could sign in and list models after admin approval. Staging stays closed.
+  could sign in and list models after admin approval.
 - A disposable regular user could sign in, list shared models and receive a
   `glm-5.3-flash` chat completion. The test user was deleted afterward.
-- Production backups run at 03:30 UTC, staging at 04:00 UTC, with seven-day
-  retention. Both scripts completed successfully against the live stacks.
+- Production backups run at 03:30 UTC with seven-day retention. The script
+  completed successfully against the live stack.
 - A production database dump was restored into an isolated PostgreSQL 17
   container: 1 user, 11 models, 11 model grants and 354 settings recovered.
   The data/config archives extracted successfully, their checksums passed,
@@ -299,13 +252,10 @@ domain/Phase 1 update described above; current deployment evidence is in the Pha
   retention tests also passed.
 - UFW is active with only 22/tcp, 80/tcp, 443/tcp and 443/udp allowed. Only
   Caddy publishes container ports, and the host has 4 GB of active swap.
-- [External checks](https://github.com/pmixay/MoloGate/actions/runs/38131735417)
+- A one-off [external check](https://github.com/pmixay/MoloGate/actions/runs/38131735417)
   passed HTTPS, the initial closed-signup policy, an SSH handshake and rejection/filtering of
   13 private/control TCP ports. A scan of all 65,535 TCP ports plus direct
-  confirmation found only 22, 80 and 443 reachable. One additional scan
-  candidate failed all three direct connection attempts. Raw SYN scans on
-  this route gave inconsistent results; the workflow uses TCP connections
-  and preserves scan artifacts. The VPS has no global IPv6 address.
+  confirmation found only 22, 80 and 443 reachable. The VPS has no global IPv6 address.
 
 Recovery files and passwords remain outside Git. Backups are local to this
 VPS; off-host backup storage belongs to a later step. Remote document embeddings

@@ -9,5 +9,5 @@
 	}
 }
 
-# Optional staging site, served by this same proxy on ports 80 and 443.
+# Optional extra sites, served by this same proxy on ports 80 and 443.
 import /etc/caddy/sites/*.caddy

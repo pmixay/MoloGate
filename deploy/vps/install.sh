@@ -47,7 +47,7 @@ else:
 path.write_text(content)
 PY
 chmod 600 .env
-install -m 644 "$source_dir/compose.yaml" "$source_dir/compose.staging.yaml" "$source_dir/Caddyfile" .
+install -m 644 "$source_dir/compose.yaml" "$source_dir/Caddyfile" .
 install -m 700 "$source_dir/backup.sh" "$source_dir/update.sh" .
 install -d -m 700 caddy-sites backups
 install -m 644 "$source_dir/mologate-backup.cron" /etc/cron.d/mologate-backup

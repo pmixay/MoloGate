@@ -58,13 +58,13 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
    no account get none. A credit is worth 1/2.5 = 0.4 percentage points of extra pool use.
    Formula: **credits = 10 × the plan's usage multiplier**, where the provider's base paid tier is 1x.
 
-   | Account added | Multiplier | Credits | Extra pool points |
-   | --- | --- | --- | --- |
-   | ChatGPT Plus | 1x | 10 | 4 |
-   | ChatGPT Pro tiers (for example 5x, 20x) | the tier's multiplier | 50, 200 | 20, 80 |
-   | Claude Pro / Max 5x / Max 20x (Phase 7) | 1x / 5x / 20x relative to Pro | 10 / 50 / 200 | 4 / 20 / 80 |
-   | GLM coding plan (Lite, Pro, Max) | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier |
-   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20 | 10 × multiplier | 4 × multiplier |
+   | Account added                                               | Multiplier                                         | Credits         | Extra pool points |
+   | ----------------------------------------------------------- | -------------------------------------------------- | --------------- | ----------------- |
+   | ChatGPT Plus                                                | 1x                                                 | 10              | 4                 |
+   | ChatGPT Pro tiers (for example 5x, 20x)                     | the tier's multiplier                              | 50, 200         | 20, 80            |
+   | Claude Pro / Max 5x / Max 20x (Phase 7)                     | 1x / 5x / 20x relative to Pro                      | 10 / 50 / 200   | 4 / 20 / 80       |
+   | GLM coding plan (Lite, Pro, Max)                            | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier    |
+   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20                               | 10 × multiplier | 4 × multiplier    |
 
    The admin keeps the multiplier table in settings. Read the plan from the provider when possible
    (Codex `account/read`); otherwise the member picks it when connecting and an admin can correct it.
@@ -81,14 +81,14 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 This records the project's pool choices and the providers' restrictions, checked on 2026-10-11.
 A team-accepted risk is a project decision, not permission from the provider.
 
-| Provider | Access | Into the pool? | Limits source |
-| --- | --- | --- | --- |
-| **Codex / ChatGPT** (Plus, Pro, Business) | Device-code login through the official `codex app-server` | Yes (team-accepted risk, see below) | `account/rateLimits/read` (5h + weekly), `x-codex-*` headers |
-| **Anthropic API key** (Claude Console) | Key pasted in by its owner | Yes | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits |
-| **Claude Pro / Max subscription** | Owner connects an isolated runner using the unmodified Claude Code binary | Planned in Phase 7 (team-accepted risk) | CLI usage and verified stream observations; complete quota visibility is not assumed |
-| **OpenAI API key**, **OpenRouter key** | Key | Yes | Owner-set budget; OpenRouter also reports key usage |
-| **Z.ai GLM coding plan** | Key | Yes | Spike needed (phase 1) |
-| **OpenCode free models** | None (runs in a container) | Not an account | Per-user rate limit only |
+| Provider                                  | Access                                                                    | Into the pool?                          | Limits source                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Codex / ChatGPT** (Plus, Pro, Business) | Device-code login through the official `codex app-server`                 | Yes (team-accepted risk, see below)     | `account/rateLimits/read` (5h + weekly), `x-codex-*` headers                         |
+| **Anthropic API key** (Claude Console)    | Key pasted in by its owner                                                | Yes                                     | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits            |
+| **Claude Pro / Max subscription**         | Owner connects an isolated runner using the unmodified Claude Code binary | Planned in Phase 7 (team-accepted risk) | CLI usage and verified stream observations; complete quota visibility is not assumed |
+| **OpenAI API key**, **OpenRouter key**    | Key                                                                       | Yes                                     | Owner-set budget; OpenRouter also reports key usage                                  |
+| **Z.ai GLM coding plan**                  | Key                                                                       | Yes                                     | Spike needed (phase 1)                                                               |
+| **OpenCode free models**                  | None (runs in a container)                                                | Not an account                          | Per-user rate limit only                                                             |
 
 **Claude subscriptions:** the team has chosen to plan opt-in pooling through isolated runners.
 Anthropic distinguishes hosting the unmodified CLI for a user signing in with their own account
@@ -103,8 +103,8 @@ manager briefly handle the token in memory, and the manager writes it into the r
 volume. The token must never enter SQL, Redis, logs or API responses. This is not a token-free relay.
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
-make their account available to others. The team has accepted this risk (PLAN.md, risk 1). Lower
-it: keep sharing opt-in per account, keep the owner's traffic on their own account, keep requests
+make their account available to others. The team has accepted this risk. Lower it: keep
+sharing opt-in per account, keep the owner's traffic on their own account, keep requests
 per account at ordinary human volumes (per-account concurrency caps in phase 4), and prefer
 Business seats and API keys where it matters.
 
@@ -117,23 +117,23 @@ The [Phase 1 implementation](phase1-accounts.md), on `limits-and-accounts`, adds
 connect UI and routing. Phase 7 must build on that work and the later dependencies listed in its
 specification. Later-phase components are not implemented merely because they share this branch.
 
-| Piece | Where | Use it for |
-| --- | --- | --- |
-| Provider limits from response headers | `utils/provider_limits.py`, recorded at `routers/openai.py` (`generate_chat_completion`), read by `GET /api/v1/models/model/limits` | Keep the parsers; rekey from `openai:{url_idx}` to account ID (indices break when connections are reordered). Only the chat-completions path records today; `/responses` and the proxy do not. |
-| Context indicator ring and panel | `src/lib/components/chat/ContextIndicator.svelte` | Show the user's tier, share left and the account windows. |
-| Connections (URL + key + per-connection config) | `routers/openai.py` (`OPENAI_API_CONFIGS`, `auth_type`, `headers`, `prefix_id`) | API-key accounts can be expressed as connections, but the gate picks the account per request. |
-| Anthropic Messages conversion | `utils/anthropic.py` | Anthropic API-key accounts work through it. |
-| Fernet-encrypted token storage | `models/oauth_sessions.py` | Same pattern for account secrets. |
-| Per-user API keys | `api_key` table (`data` JSON, `expires_at`, `last_used_at`), `utils/auth.py`, `features.api_keys` permission, endpoint restrictions | Personal keys. `get_current_user_by_api_key` drops the key's ID; carry it on `request.state`. |
-| Usage on chat messages, analytics | `models/chat_messages.py` (`usage` column), `routers/analytics.py` | Only chats are recorded: API-key calls and unsaved chats leave nothing. The new ledger fixes that. |
-| Rolling-window counter | `utils/rate_limit.py` (`RateLimiter`, Redis + memory) | Per-key requests per minute. |
-| Groups, permissions, access grants | `models/groups.py`, `models/access_grants.py` | Admin role, who may connect accounts. |
-| Event bus | `events.py` (`publish_model_provider_request_failed`) | Detect 429 and limit errors for failover. |
-| All internal model calls | `utils/chat.py:generate_chat_completion` (chat, tasks, memory, compaction, tool review, subagents through the middleware) | Where the gate's pre-check goes. |
-| Default system model | `config.py` `DEFAULT_SYSTEM_MODEL_FAMILY='luna'` | Background jobs already prefer Luna, a worker model. |
+| Piece                                           | Where                                                                                                                               | Use it for                                                                                                                                                                                     |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider limits from response headers           | `utils/provider_limits.py`, recorded at `routers/openai.py` (`generate_chat_completion`), read by `GET /api/v1/models/model/limits` | Keep the parsers; rekey from `openai:{url_idx}` to account ID (indices break when connections are reordered). Only the chat-completions path records today; `/responses` and the proxy do not. |
+| Context indicator ring and panel                | `src/lib/components/chat/ContextIndicator.svelte`                                                                                   | Show the user's tier, share left and the account windows.                                                                                                                                      |
+| Connections (URL + key + per-connection config) | `routers/openai.py` (`OPENAI_API_CONFIGS`, `auth_type`, `headers`, `prefix_id`)                                                     | API-key accounts can be expressed as connections, but the gate picks the account per request.                                                                                                  |
+| Anthropic Messages conversion                   | `utils/anthropic.py`                                                                                                                | Anthropic API-key accounts work through it.                                                                                                                                                    |
+| Fernet-encrypted token storage                  | `models/oauth_sessions.py`                                                                                                          | Same pattern for account secrets.                                                                                                                                                              |
+| Per-user API keys                               | `api_key` table (`data` JSON, `expires_at`, `last_used_at`), `utils/auth.py`, `features.api_keys` permission, endpoint restrictions | Personal keys. `get_current_user_by_api_key` drops the key's ID; carry it on `request.state`.                                                                                                  |
+| Usage on chat messages, analytics               | `models/chat_messages.py` (`usage` column), `routers/analytics.py`                                                                  | Only chats are recorded: API-key calls and unsaved chats leave nothing. The new ledger fixes that.                                                                                             |
+| Rolling-window counter                          | `utils/rate_limit.py` (`RateLimiter`, Redis + memory)                                                                               | Per-key requests per minute.                                                                                                                                                                   |
+| Groups, permissions, access grants              | `models/groups.py`, `models/access_grants.py`                                                                                       | Admin role, who may connect accounts.                                                                                                                                                          |
+| Event bus                                       | `events.py` (`publish_model_provider_request_failed`)                                                                               | Detect 429 and limit errors for failover.                                                                                                                                                      |
+| All internal model calls                        | `utils/chat.py:generate_chat_completion` (chat, tasks, memory, compaction, tool review, subagents through the middleware)           | Where the gate's pre-check goes.                                                                                                                                                               |
+| Default system model                            | `config.py` `DEFAULT_SYSTEM_MODEL_FAMILY='luna'`                                                                                    | Background jobs already prefer Luna, a worker model.                                                                                                                                           |
 
 At that baseline there were no account, ledger or credit tables, and no account UI. Phase 1 now
-provides `provider_account`, `provider_login` and account UI on staging. The usage ledger,
+provides `provider_account`, `provider_login` and account UI. The usage ledger,
 `account_window`, `decide()` and credit tables remain work for Phases 2, 3 and 5.
 
 ---
@@ -321,6 +321,7 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
 ## 9. Adding accounts
 
 **Codex (first, and the easiest):**
+
 1. The member clicks **Connect account → ChatGPT / Codex**.
 2. Mologate starts an isolated `codex app-server` for the new account, with its own `CODEX_HOME`
    under the data volume (mode 0700), and calls `account/login/start` with
@@ -346,6 +347,7 @@ the final acceptance check.
 permanent Phase 5 `credit_grant` can prevent the same key from earning credits twice.
 
 **Claude subscriptions (Phase 7, not Phase 1):**
+
 1. The owner chooses **Connect → Claude subscription**, selects Pro / Max 5x / Max 20x and opts
    into sharing if desired. The backend creates a pending registration and an isolated runner.
 2. For the proposed MVP, the owner runs `claude setup-token` on their own computer and completes
@@ -410,9 +412,8 @@ Each phase lists what must be true to call it done.
 
 Hosting files and the deployment/recovery procedure are in
 [deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
-2026-10-11: production and isolated staging have HTTPS and nightly backups.
-At the owner's subsequent request, production allows registration with admin
-approval for new accounts; staging keeps signups closed.
+2026-10-11: production has HTTPS and nightly backups. At the owner's subsequent
+request, production allows registration with admin approval for new accounts.
 A regular team account completed a chat, and a production
 database backup was restored successfully. The full external TCP scan and
 direct confirmation found only ports 22, 80 and 443 reachable.
@@ -426,8 +427,8 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 
 **In progress: 2026-10-11**, on the single working branch `limits-and-accounts`.
 Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
-Implemented and first verified on staging; 21 automated regressions, real Z.ai normal/streamed
-chats, and desktop/mobile browser checks pass. The owner now requests acceptance testing on
+21 automated regressions, real Z.ai normal/streamed chats, and desktop/mobile browser checks
+pass. Acceptance testing takes place on
 [ai.arbuz.lol](https://ai.arbuz.lol/?settings=provider_accounts), where the verified Phase 1 image
 is deployed. The remaining acceptance check is two real Codex accounts serving chats.
 
@@ -440,10 +441,11 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 - [x] Models come from providers, not connection indices; the gate chooses the account per request.
 - [x] Provider limits rekeyed by account ID; `/responses` and the proxy record them too.
 - [x] Z.ai spike: coding-plan quota endpoint reports 5-hour and weekly `CREDIT_LIMIT` windows;
-  the model-list response has no rate-limit headers. Empty/unknown quota stays unknown.
+      the model-list response has no rate-limit headers. Empty/unknown quota stays unknown.
 - [ ] Done when: two members connect Codex accounts from the browser and both serve chats.
 
 ### Phase 2: metering (observe-only)
+
 - [ ] `usage_event` ledger written for every source, including API keys and unsaved chats.
 - [ ] Account polling, outside-use detection, calibration jobs.
 - [ ] Accounts page and a "my usage" page (read-only numbers).
@@ -451,6 +453,7 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
       account.
 
 ### Phase 3: allowance engine
+
 - [ ] `decide()` as a pure module with every example in §7.5 as a test, plus a simulation that
       replays a week of ledger data under the rules.
 - [ ] `MOLOGATE_LIMITS_MODE=observe` records decisions on every request.
@@ -458,6 +461,7 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
       for their tier.
 
 ### Phase 4: enforcement
+
 - [ ] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
 - [ ] Failover on 429 or limit errors to another account in the same tier.
 - [ ] Per-user concurrency cap (3 chats generating, from ROADMAP.md) and per-account concurrency
@@ -465,28 +469,30 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 - [ ] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
       the share with an estimate of minutes left from the last 30 minutes of use.
 - [ ] Admin and team overrides (`limit_override`), with an audit log.
-- [ ] Done when: in `enforce`, the §7.5 scenarios behave as written on the staging site.
+- [ ] Done when: in `enforce`, the §7.5 scenarios behave as written on the deployed site.
 
 ### Phase 5: credits and resets
+
 - [ ] Grants on connect, forfeit on disconnect, spending in tier 3, balance in the UI.
 - [ ] Reset button (§10).
 - [ ] Done when: a reset is redeemed from the browser on a test account and the windows refill.
 
 ### Phase 6: personal API keys (§11)
+
 - [ ] Done when: a member uses Mologate from an outside OpenAI-compatible client with their own
       key, and that use shows up in their share.
 
 ### Phase 7: Claude subscription runners
 
 **Planned, not implemented.** Full English specification: [Claude runners](claude-runners.md).
-One account gets one isolated runner container and persistent private volume. Start on staging
-with the integration disabled by default. Infrastructure/authentication work can follow Phase 1;
+One account gets one isolated runner container and persistent private volume. Ship with the
+integration disabled by default. Infrastructure/authentication work can follow Phase 1;
 the complete feature depends on Phases 2–5 for metering, selection, enforcement and credits.
 Phase 6 is not required for the interactive-chat MVP; personal API keys cannot use these runners.
 
 - [ ] 7.0: verify pinned CLI authentication, stable account identity, usage/limit output and memory
       requirements; record fixtures and resolve the `setup-token` identity gap.
-- [ ] 7.1: authenticated runner-manager, staging compose overlay, create/start/stop/delete,
+- [ ] 7.1: authenticated runner-manager, compose overlay, create/start/stop/delete,
       isolated networks, hard live-runner cap and working kill-switch.
 - [ ] 7.2: pinned runner image, one active request, NDJSON streaming, watchdog and cancellation.
 - [ ] 7.3: owner-authorized backend connect API, redacted credential relay, signed/replay-safe
@@ -496,13 +502,14 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
       Phase 5 credit grants and tier-5 reset-time display without a reset button.
 - [ ] 7.6: lifecycle reconciliation, idle LRU stop, cooldown/circuit breaker and restart/load tests.
 - [ ] 7.7: Connect UI, runner status on account cards and context/usage indicators.
-- [ ] 7.8: at least one week of real staging `observe` traffic; enable enforcement only after
+- [ ] 7.8: at least one week of real `observe` traffic; enable enforcement only after
       its metering and isolation acceptance criteria pass.
 - [ ] Done when: browser connect produces a verified usable account, three registered accounts
       never exceed the host's two-live-runner ceiling, disconnect removes the correct volume,
       and off/auth-loss/rate-limit/restart scenarios behave as specified.
 
 ### Later
+
 - Global limits on the status page.
 
 ---
@@ -510,29 +517,26 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 ## 13. Hosting
 
 **When:** from the start. Phase 0 runs before or alongside phase 1, not at the end, because:
+
 - calibration (phase 2) needs a week of real team traffic on a real deployment;
 - device-code logins, provider headers and polling can only be tested against real accounts;
 - this VPS is small (1 vCPU, 3.8 GB RAM, 42 GB free disk), and that is better found out early;
 - the implementer needs somewhere to check each phase.
 
 **Setup on this VPS (Ubuntu 24.04, x86_64, IP 5.83.140.221):**
+
 - Docker and Docker Compose. Don't build images here: one vCPU can't build the frontend in
   reasonable time. The repo's `docker.yaml` workflow publishes images to
-  `ghcr.io/pmixay/mologate` from `main` and slim-only staging images from `limits-and-accounts`.
+  `ghcr.io/pmixay/mologate` from `main`, and slim-only images from `limits-and-accounts` after
+  the provider-account regressions pass.
   Documentation/deployment-only pushes skip image builds. The unused Docker Hub copy step
   was removed. The package is private, so the VPS needs a token with `read:packages`.
 - Containers: Mologate (the slim image, with the embedding model offloaded to an API, since local
   embeddings would eat the RAM), Postgres, Redis, Caddy. Add a 4 GB swap file.
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
-- **Staging:** a second, smaller stack on `staging.<domain>` with its own database. Phase 0 used
-  `limits-and-accounts-slim`; staging now runs `phase1-accounts-slim` as recorded in the
-  [Phase 1 notes](phase1-accounts.md). Future staging builds/deployments use the consolidated
-  `limits-and-accounts-slim` tag. This stack remains available for isolated work. The owner has
-  chosen the production domain for the current Phase 1 acceptance test; no new staging domain
-  is being configured.
 - Backups: nightly `pg_dump` and a copy of the data volume, kept 7 days, later off the box.
-- **Phase 7, planned:** add a separate runner-manager and private account volumes on staging.
+- **Phase 7, planned:** add a separate runner-manager and private account volumes.
   Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
   runner ports stay unpublished. Start with one live runner on this shared VPS and permit at
   most two host-wide after memory/CPU tests. See [deployment requirements](../deploy/vps/README.md#phase-7-claude-runners-planned).
@@ -542,7 +546,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 ## 14. Decisions log
 
 - 2026-10-11: move production to `https://ai.arbuz.lol`, retaining redirects from the old hostname.
-  The owner requests Phase 1 testing on that site and cancels the new staging-domain setup.
+  The owner requests Phase 1 testing on that site.
   Deploy the verified `limits-and-accounts` image there after backup, preserving existing data.
 - 2026-10-11: the owner requests one working branch, `limits-and-accounts`, for every phase.
   Consolidate the Phase 1 code and Claude runner plan there; no separate phase branches.
@@ -558,6 +562,8 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
   verified stable identity and a permanent grant record. The proposed token relay handles a
   credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
+- 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
+  workflow and the original project plan (`PLAN.md`) were removed from the repository.
 
 ---
 
