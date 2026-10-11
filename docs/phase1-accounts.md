@@ -10,6 +10,9 @@ Deployed to production on 2026-10-11 from `limits-and-accounts` image commit `05
 passed on both architectures. The live image is pinned to
 `ghcr.io/pmixay/mologate@sha256:d983bdc3081560bc0312f46591b5f72d2646dc44a7960bcbf8bb555582716abd`.
 Existing production users, provider connections, data and registration policy are retained.
+Later commits on the branch are not deployed yet: automatic account switching and limit resets,
+admin-only account creation, ChatGPT link sign-in and full-text uploads. They add migrations
+`c3d9e7a5b1f0` and `d8e2b6c4a9f3`.
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
 Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
 
@@ -48,8 +51,10 @@ and duplicate ChatGPT account IDs are rejected by a database uniqueness constrai
 
 Models use `account:{provider}:{upstream_model_id}`. Model IDs remain stable when members connect,
 disconnect, or reorder accounts. Each request selects an eligible owned account first, then a
-healthy shared account. Private access is checked again during inference, including for admins,
-direct OpenAI routes, API-key requests, and model presets. Admin management permission does not
+healthy shared account. An empty account, or one that answers 429, hands the request to the
+next one ([automatic limit reset](limits-and-accounts.md#10-automatic-limit-reset)). Private
+access is checked again during inference, including for admins, direct OpenAI routes, API-key
+requests, and model presets. Admin management permission does not
 permit inference through another member's private account.
 
 Admin → Models labels an account-backed model **Public** while at least one healthy account
@@ -89,8 +94,12 @@ change independently of the published inference API.
 
 ## Verification
 
-- Shared-account visibility regression: all 24 backend tests pass, including mixed private/shared
-  pools in either order, unhealthy accounts, pending users, sharing revocation, and saved model ACLs.
+- The suite now has 38 backend tests. Image CI for `aec1626`, the branch's latest image (not
+  deployed), passed all 38 on amd64 and arm64:
+  [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).
+- Shared-account visibility regression: all 24 backend tests of that change passed, including
+  mixed private/shared pools in either order, unhealthy accounts, pending users, sharing
+  revocation, and saved model ACLs.
   An ordinary temporary member saw all seven models from the owner's connected Codex account and
   completed a real chat with reported usage on `https://ai.arbuz.lol`; the test member was removed.
   This verifies shared use of one real account. Acceptance still requires a second member to
@@ -104,8 +113,8 @@ change independently of the published inference API.
 - Production at `https://ai.arbuz.lol` now passes trusted HTTPS, HTTP/old-hostname redirects,
   frontend asset loading, existing administrator sign-in, the authenticated account API and a
   real `glm-5.3-flash` chat. Migration reached `b1a7c9e4d205`; all 3 existing users and 11 model
-  records were retained. Limits mode remains `observe`. Self-registration was later removed; admins
-  create every account.
+  records were retained. Limits mode remains `observe`. Self-registration was later removed in
+  code (`41ae16a`, not deployed yet); admins create every account.
 - 20 backend regressions passed against an isolated PostgreSQL database; 21 passed on SQLite
   after adding the audit-redaction regression. Image CI passed all 21 on both amd64 and arm64:
   [build 38136120277](https://github.com/pmixay/MoloGate/actions/runs/38136120277).
@@ -121,16 +130,17 @@ change independently of the published inference API.
   passed desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no
   browser page errors. Screenshots were inspected for layout and readability.
 
-The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`, and the
-image before the sharing-label fix in `/opt/mologate/sharing-rollback-image`. Backups are off
-during development, so an image older than the current database migration cannot be started
-without losing the data written since.
+The pre-Phase-1 production image ID is recorded in `/opt/mologate/phase1-rollback-image`, and
+the image before the sharing-label fix (`45ec77e`) in `/opt/mologate/sharing-rollback-image`.
+Backups are off during development, so an image older than the current database migration
+cannot be started without losing the data written since.
 
 The stdlib regression suite lives at `backend/open_webui/test/limits/test_provider_accounts.py`.
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private
 permissions, live visibility changes, disabled mode, owner deletion, simulated device login with
 real subprocess JSON-RPC, duplicate ChatGPT IDs, SSE chunk boundaries/Unicode/tools/usage,
-provider errors, OpenRouter key verification, header/quota parsing, and migration up/down.
+provider errors, OpenRouter key verification, header/quota parsing, migration up/down, account
+failover and automatic resets, sign-up refusal, and the full-text upload migration.
 Run against an isolated database whose name contains `provider-tests`; never use a live database.
 
 ```bash

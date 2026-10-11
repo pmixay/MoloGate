@@ -11,8 +11,18 @@ The full design and phased plan for accounts, limits, credits and personal API k
 - [ ] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
       the subscription type, and whether it is an API key or a full account. Accounts are shared by the
       whole team.
+  - Started: Settings → Provider accounts lists the member's own accounts and every shared one
+    (admins see all). Each card shows the provider, which tells an API key from a ChatGPT account,
+    the plan, owner, status and sharing, every limit window the provider reports with percent used
+    and reset time, and an API key's monthly budget. Missing: how much of that budget is left,
+    which needs the usage ledger.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
+  - Started: each provider account keeps the limits its provider reports and shows them on its card
+    in Settings → Provider accounts: Codex's 5-hour and weekly windows, Z.ai's coding-plan quota,
+    and the request and token limits in OpenAI, OpenRouter and Anthropic response headers, which
+    appear once the account has served a request. Missing: an OpenRouter key's credit limit and
+    usage, which its `/key` endpoint reports.
 - [x] **Account switching and limit resets:**
   - When an account reaches 0%, switch automatically to another shared account that still has quota.
   - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
@@ -29,8 +39,11 @@ The full design and phased plan for accounts, limits, credits and personal API k
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
     weekly limits.
   - Started: the context indicator's panel shows the selected model's limits when its provider reports
-    them in response headers (Codex's 5-hour and weekly windows, or OpenAI-style request and token
-    limits). They are kept per connection, so every model on a shared account shows the same ones.
+    them (Codex's 5-hour and weekly windows, Z.ai's coding-plan quota, or OpenAI-, OpenRouter- and
+    Anthropic-style request and token limits). They are kept per account or connection, so every
+    model on one account shows the same ones; for a model several accounts offer, the panel shows
+    the account the member's request would try first. Missing: a ring showing the 5-hour and
+    weekly limits; the existing ring shows the context window.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
 - [ ] **Fair use:** each shared account is split 50/50 between its owner and a public pool; members
@@ -146,6 +159,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
   - When the agent asks the user a question and gets no answer for more than a minute, the recommended
     option is chosen automatically.
   - A crossed-out-timer button turns the timer off, for when the user is still thinking.
+  - **Open WebUI today:** `ask_user` asks one to three questions with two or three options each,
+    and the first option is labelled Recommended. When its timeout (one to four minutes, two by
+    default) runs out, the question is cancelled instead of answered.
 
 ### Tasks
 
@@ -161,6 +177,10 @@ The full design and phased plan for accounts, limits, credits and personal API k
       [Proposed limits](#proposed-limits)).
 - [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
       [Proposed limits](#proposed-limits)).
+  - **Open WebUI today:** an agent can set a one-shot `timer` that sends a prompt back into the
+    chat. With the automations permission (off for members by default), `create_automation` runs a
+    prompt once or on a recurring schedule; its limits (`AUTOMATION_MAX_COUNT`,
+    `AUTOMATION_MIN_INTERVAL`) are unset by default. None of the proposed limits apply yet.
 - [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
   - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
     panel above the message box lists it with "X out of N tasks completed", but only while a reply is
@@ -242,6 +262,7 @@ The full design and phased plan for accounts, limits, credits and personal API k
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
+  - Started: the sidebar's Team list shows who created each chat opened to the team.
 - [x] **Personal chats:** chats outside a workspace are private to their creator by default. They can
       be opened to the team with the share feature (see [Interface](#interface)).
 
@@ -339,6 +360,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
   - When connecting each provider, check with a real key that the chosen effort level reaches it in
     the format it expects. Only a test server has been checked so far; OpenRouter, for example,
     documents a `reasoning: {effort}` object.
+  - Started: Z.ai coding plans and OpenRouter keys connect in Settings → Provider accounts, as do
+    Anthropic and OpenAI API keys, and a Z.ai coding-plan account has served real chats. OpenCode is
+    not started.
 
 ## Proposed limits
 

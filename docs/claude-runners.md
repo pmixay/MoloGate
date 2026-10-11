@@ -390,8 +390,9 @@ validated themselves. A later decision can define an explicit conservative local
 
 Enforce the live-runner ceiling atomically across creates, starts, verification, chat and restart
 reconciliation. Count starting and draining containers toward the ceiling. One manager process
-owns admission initially; multiple managers require a shared host-wide lease. If both deployments
-eventually run managers, their configured allocations must sum to no more than the host ceiling.
+owns admission initially; multiple managers require a shared host-wide lease. If another
+deployment on this host ever runs a manager, the configured allocations must sum to no more than
+the host ceiling.
 
 When a slot is needed, stop the least recently used **idle** runner and keep its volume. Never
 evict an active request for LRU. If all slots are busy, return a bounded retry response. Reconcile
@@ -511,10 +512,11 @@ compose overlay ships. Record image digests, tested CLI schema, resource measure
 selected identity mechanism. Do not mark the phase done from mocked tests alone.
 
 Before first credentials, add encrypted/restricted runner-volume backups with a documented
-retention policy and a restore test. The existing app-data backup does not automatically cover
-new Docker volumes. Treat resumed conversation files as sensitive as credentials; apply chat
-retention and owner-deletion policy. Disconnect deletes the live volume after drain; backup
-expiry follows the documented retention schedule, and owners can revoke credentials at Anthropic.
+retention policy and a restore test. There are no backups during development, and app-data
+backups, once they return, will not automatically cover new Docker volumes. Treat resumed
+conversation files as sensitive as credentials; apply chat retention and owner-deletion policy.
+Disconnect deletes the live volume after drain; backup expiry follows the documented retention
+schedule, and owners can revoke credentials at Anthropic.
 
 Rollback: disable runtime dispatch, stop/drain runners, retain account volumes and restore the
 previous pinned image/config. Back up the database before migrations; restore a matching schema

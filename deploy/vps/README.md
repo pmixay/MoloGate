@@ -37,8 +37,8 @@ limit disk and RAM use.
 ## Fresh installation
 
 Install Docker Engine with the Compose plugin, GitHub CLI and UFW.
-Copy this directory to `/opt/mologate`, create the `mologate_edge` network as
-above, and copy `.env.example` to `.env` with mode 600. Set a unique
+Copy this directory to `/opt/mologate`, create the shared proxy network with
+`docker network create mologate_edge`, and copy `.env.example` to `.env` with mode 600. Set a unique
 `WEBUI_SECRET_KEY` and `POSTGRES_PASSWORD`, using separate runs of
 `openssl rand -hex 32`. Set the domain's A record to the VPS before starting
 Caddy. The current production hostname is `ai.arbuz.lol`, with an A record to `5.83.140.221`.
@@ -51,7 +51,6 @@ cd /opt/mologate
 registry_user=$(gh api user --jq .login)
 gh auth token | docker login ghcr.io -u "$registry_user" --password-stdin
 docker compose pull
-docker pull alpine:3
 docker compose up -d --wait --wait-timeout 180
 ```
 
@@ -71,6 +70,9 @@ Share model read access with all authenticated users (`principal_type=user`,
 `principal_id=*`, `permission=read` in the access-grants API). The `anyone`
 principal means unauthenticated access and is not accepted for models. The
 existing 11 GLM models on production have authenticated-user read grants.
+Models from **Settings → Provider accounts** need no grant: they follow the
+account's sharing instead (see the
+[Phase 1 notes](../../docs/phase1-accounts.md#routing-and-limits)).
 
 ## Firewall and swap
 
@@ -118,9 +120,10 @@ Add backups (kept off this VPS) before the team relies on the data.
 Uploaded files reach the model as their full extracted text, like plain attachments: no
 embeddings and no vector database (`BYPASS_EMBEDDING_AND_RETRIEVAL`, on by default; a migration
 switches existing installs once). Per-chat sandboxes that receive the files themselves are a later
-roadmap item. Only knowledge bases still need embeddings.
+roadmap item. While this setting is on, knowledge bases are sent as full text too, so embeddings
+are needed only if an admin turns retrieval back on in **Admin Settings → Documents**.
 
-For those, slim has no local embedding model. Set `RAG_OPENAI_API_BASE_URL`,
+For that, slim has no local embedding model. Set `RAG_OPENAI_API_BASE_URL`,
 `RAG_OPENAI_API_KEY` and `RAG_EMBEDDING_MODEL` for an OpenAI-compatible embeddings
 provider, then select the same engine in **Admin Settings → Documents** if a
 database setting already exists. Chat and uploads do not require an embeddings key.
@@ -140,10 +143,12 @@ HTTP redirects to HTTPS, and Caddy manages the certificate. The old production h
 The application's `webui.url` database setting and `WEBUI_URL` environment both use the new URL.
 Users sign in on the new hostname with their existing credentials.
 
-Production runs the verified `limits-and-accounts` image from `45ec77e`, pinned as
-`ghcr.io/pmixay/mologate@sha256:bbf29556766851164e5e68ff51f1e86b4a9e171c90b09827a7166238de415113`.
-The previous application image ID is in `/opt/mologate/phase1-rollback-image`. Preserve the
-existing PostgreSQL image, volumes and secrets. Pre-Phase-1 code cannot read the newer schema.
+Production runs the verified `limits-and-accounts` image from `05a3311`, pinned as
+`ghcr.io/pmixay/mologate@sha256:d983bdc3081560bc0312f46591b5f72d2646dc44a7960bcbf8bb555582716abd`.
+Later commits on the branch are not deployed yet. The pre-Phase-1 application image ID is in
+`/opt/mologate/phase1-rollback-image`, and the earlier Phase 1 image (`45ec77e`) in
+`/opt/mologate/sharing-rollback-image`. Preserve the existing PostgreSQL image, volumes and
+secrets. Pre-Phase-1 code cannot read the newer schema.
 
 To retain the old hostname on a recovered deployment, copy `legacy-production.caddy.example`
 to `/opt/mologate/caddy-sites/legacy-production.caddy`, then validate and reload Caddy. Keep
@@ -181,8 +186,9 @@ stop only idle runners for LRU. Let the manager restart runners under the cap ra
 unconditional container restart policies. Keep the deployment switch off by default and add a
 runtime disable switch that stops dispatch and drains/stops runners without a redeploy.
 
-Build images in CI. Before collecting credentials, extend backups to cover the new private
-volumes/control state, encrypt and restrict those backups, document retention and test restore.
+Build images in CI. Before collecting credentials, add backups (there are none during
+development) that cover the new private volumes/control state, encrypt and restrict them,
+document retention and test restore.
 Include stored CLI conversation transcripts in the retention policy. Verify that only the
 existing public ports remain reachable.
 
@@ -191,23 +197,24 @@ existing public ports remain reachable.
 The following initial Phase 0 checks were completed on 2026-10-11. They predate the production
 domain/Phase 1 update described above; current deployment evidence is in the Phase 1 notes.
 
-- Production runs `main-slim` at `a20a336` and passes HTTPS readiness.
+- Production ran `main-slim` at `a20a336` and passed HTTPS readiness.
 - Production admin sign-in passed. Initially, signups were closed
   as specified by Phase 0. Production registration was subsequently reopened
   at the owner's request, with new accounts requiring admin approval. Public
   registration was tested: a pending account could not access models, then
   could sign in and list models after admin approval. Self-registration was
-  later removed entirely; admins now create every account.
+  later removed in code (`41ae16a`, not deployed yet), so admins create every account.
 - A disposable regular user could sign in, list shared models and receive a
   `glm-5.3-flash` chat completion. The test user was deleted afterward.
 - Nightly backups and a tested restore were part of Phase 0. They were removed
   afterwards for the development period and will come back later.
 - UFW is active with only 22/tcp, 80/tcp, 443/tcp and 443/udp allowed. Only
   Caddy publishes container ports, and the host has 4 GB of active swap.
-- A one-off [external check](https://github.com/pmixay/MoloGate/actions/runs/38131735417)
-  passed HTTPS, the initial closed-signup policy, an SSH handshake and rejection/filtering of
-  13 private/control TCP ports. A scan of all 65,535 TCP ports plus direct
-  confirmation found only 22, 80 and 443 reachable. The VPS has no global IPv6 address.
+- A one-off [external check](https://github.com/pmixay/MoloGate/actions/runs/38131735417),
+  from the since-removed port-check workflow, passed HTTPS, the initial closed-signup policy,
+  an SSH handshake and rejection/filtering of 13 private/control TCP ports. A scan of all
+  65,535 TCP ports plus direct confirmation found only 22, 80 and 443 reachable. The VPS has no
+  global IPv6 address.
 
 Passwords remain outside Git. There are no backups during development. Remote document embeddings
 remain unconfigured; the verified team workflow is chat.
