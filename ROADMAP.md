@@ -207,14 +207,14 @@ are not in priority order. Tick an item off when it ships.
   - Done: levels come from an admin override on the model, else from what the provider reports
     (Codex-style `supported_reasoning_levels`, a plain level list, or OpenRouter-style
     `supported_parameters`); the dropdown hides when a model has none. The choice is saved per chat.
-- [x] Hide image attachments automatically when the selected model can't read images, and filter
-      them out of what the model receives.
+- [x] Don't allow image attachments when the selected model can't read images.
   - Done: a model can't read images when an admin turned its Vision capability off or its provider
     lists input modalities without images (Codex `input_modalities`, OpenRouter `architecture`). While
-    no selected model reads images, image attachments stay attached but hidden behind an "N images
-    hidden" chip, Capture leaves the "+" menu, and sending leaves them out; picking a model that reads
-    images shows them again. The server also swaps every image in the request (earlier messages, tool
-    results) for a short note, so such a model never receives one.
+    no selected model reads images, uploading, pasting or dropping an image is refused, and Capture
+    and image files in the "+" menu are greyed out. Images attached before switching to such a model
+    stay visible but stop the send until they are removed or a model that reads images is picked. The
+    server also swaps any image in earlier messages or tool results for a short note, so such a model
+    never receives one.
 - [x] **Context indicator:**
   - A ring indicator to the right of the effort dropdown.
   - Opening it shows a breakdown of what is filling the context window, with percents, plus the

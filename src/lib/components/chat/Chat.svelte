@@ -2965,13 +2965,6 @@
 			selectedModels = _selectedModels;
 		}
 
-		// Mologate: while no selected model reads images, the composer hides image attachments
-		// and they aren't sent.
-		const imagesReadable = selectedModelIds.some((id) =>
-			modelReadsImages($models.find((m) => m.id === id))
-		);
-		const sendableFiles = imagesReadable ? files : files.filter((file) => !isImageAttachment(file));
-
 		if (String(userPrompt).trim() === '/compact') {
 			clearCommandInput();
 			await handleManualCompact();
@@ -2999,12 +2992,23 @@
 			toast.warning($i18n.t('Please connect all required integrations before sending a message'));
 			return;
 		}
-		if (userPrompt === '' && sendableFiles.length === 0) {
+		if (userPrompt === '' && files.length === 0) {
 			toast.error($i18n.t('Please enter a prompt'));
 			return;
 		}
 		if (selectedModels.includes('')) {
 			toast.error($i18n.t('Model not selected'));
+			return;
+		}
+		// Mologate: images can't go to a model that can't read them. Attaching is refused in the
+		// composer; images attached before switching to such a model stop the send here.
+		if (
+			files.some(isImageAttachment) &&
+			!selectedModelIds.some((id) => modelReadsImages($models.find((m) => m.id === id)))
+		) {
+			toast.error(
+				$i18n.t("The selected model can't read images. Remove them or pick a model that can.")
+			);
 			return;
 		}
 		const form = getChatVariablesForm(selectedModelIds, chatVariables, $models);
@@ -3020,7 +3024,7 @@
 
 		if (
 			($config?.file?.max_count ?? null) !== null &&
-			sendableFiles.length + chatFiles.length > $config?.file?.max_count
+			files.length + chatFiles.length > $config?.file?.max_count
 		) {
 			toast.error(
 				$i18n.t(`You can only chat with a maximum of {{maxCount}} file(s) at a time.`, {
@@ -3044,14 +3048,11 @@
 			($chatRequestQueues[$chatId] ?? []).some((m) =>
 				(m.files ?? []).some((file) => ['uploading', 'error'].includes(file.status))
 			) ||
-			sendableFiles.some((file) => ['uploading', 'error'].includes(file.status))
+			(files.length > 0 && files.some((file) => ['uploading', 'error'].includes(file.status)))
 		) {
 			chatRequestQueues.update((q) => ({
 				...q,
-				[$chatId]: [
-					...(q[$chatId] ?? []),
-					{ id: uuidv4(), prompt: userPrompt, files: sendableFiles }
-				]
+				[$chatId]: [...(q[$chatId] ?? []), { id: uuidv4(), prompt: userPrompt, files }]
 			}));
 			messageInput?.setText('');
 			prompt = '';
@@ -3067,7 +3068,7 @@
 		if (isGenerating) {
 			if ($settings?.enableMessageQueue ?? true) {
 				// Enqueue the request
-				const _files = structuredClone(sendableFiles);
+				const _files = structuredClone(files);
 				chatRequestQueues.update((q) => ({
 					...q,
 					[$chatId]: [...(q[$chatId] ?? []), { id: uuidv4(), prompt: userPrompt, files: _files }]
@@ -3087,7 +3088,7 @@
 		// Clear input and submit
 		messageInput?.setText('');
 		prompt = '';
-		const _files = structuredClone(sendableFiles);
+		const _files = structuredClone(files);
 		files = [];
 		messageInput?.setText('');
 

@@ -2,7 +2,9 @@
 	import { getContext, onMount, tick } from 'svelte';
 	import { fly } from 'svelte/transition';
 
+	import { toast } from 'svelte-sonner';
 	import { config, user, tools as _tools, mobile } from '$lib/stores';
+	import { isImageAttachment } from '$lib/utils';
 
 	import { createPicker } from '$lib/utils/google-drive-picker';
 
@@ -31,8 +33,8 @@
 
 	export let selectedModels: string[] = [];
 	export let fileUploadCapableModels: string[] = [];
-	// Mologate: no selected model reads images, so offering a screen or camera capture is pointless.
-	export let imagesHidden = false;
+	// Mologate: false while no selected model reads images; image options are greyed out.
+	export let canAttachImages = true;
 
 	export let screenCaptureHandler: Function;
 	export let uploadFilesHandler: Function;
@@ -80,6 +82,10 @@
 
 	const onSelect = (item) => {
 		if (files.find((f) => f.id === item.id)) {
+			return;
+		}
+		if (!canAttachImages && isImageAttachment(item)) {
+			toast.error($i18n.t('Selected model(s) do not support image inputs'));
 			return;
 		}
 		files = [
@@ -194,40 +200,42 @@
 						</button>
 					</Tooltip>
 
-					{#if !imagesHidden}
-						<Tooltip
-							content={fileUploadCapableModels.length !== selectedModels.length
+					<Tooltip
+						content={!canAttachImages
+							? $i18n.t("The selected model can't read images.")
+							: fileUploadCapableModels.length !== selectedModels.length
 								? $i18n.t('Model(s) do not support file upload')
 								: !fileUploadEnabled
 									? $i18n.t('You do not have permission to upload files.')
 									: ''}
-							className="w-full"
-						>
-							<button
-								class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
-									? 'opacity-50'
-									: ''}"
-								type="button"
-								on:click={() => {
-									if (fileUploadEnabled) {
-										if (!detectMobile()) {
-											screenCaptureHandler();
-										} else {
-											const cameraInputElement = document.getElementById('camera-input');
+						className="w-full"
+					>
+						<button
+							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal select-none rounded-xl {!fileUploadEnabled ||
+							!canAttachImages
+								? 'opacity-50 cursor-not-allowed'
+								: 'cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40'}"
+							type="button"
+							aria-disabled={!fileUploadEnabled || !canAttachImages}
+							on:click={() => {
+								if (fileUploadEnabled && canAttachImages) {
+									if (!detectMobile()) {
+										screenCaptureHandler();
+									} else {
+										const cameraInputElement = document.getElementById('camera-input');
 
-											if (cameraInputElement) {
-												cameraInputElement.click();
-											}
+										if (cameraInputElement) {
+											cameraInputElement.click();
 										}
-										show = false;
 									}
-								}}
-							>
-								<Camera />
-								<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
-							</button>
-						</Tooltip>
-					{/if}
+									show = false;
+								}
+							}}
+						>
+							<Camera />
+							<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
+						</button>
+					</Tooltip>
 
 					<Tooltip
 						content={!webUploadEnabled
@@ -534,7 +542,7 @@
 						</div>
 					</button>
 
-					<Files {onSelect} />
+					<Files {onSelect} {canAttachImages} />
 				</div>
 			{:else if tab === 'chats'}
 				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
