@@ -3108,6 +3108,8 @@ DEFAULT_CONFIG = {
     'webui.url': WEBUI_URL,
     # Mologate: Phase 1 connects accounts without enforcing later quota rules.
     'mologate.limits_mode': os.getenv('MOLOGATE_LIMITS_MODE', 'observe'),
+    # Mologate: redeem a Codex reset coupon automatically once every eligible account is empty.
+    'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,

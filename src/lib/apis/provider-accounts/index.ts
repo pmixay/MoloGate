@@ -18,7 +18,15 @@ export type ProviderAccount = {
 	limits: {
 		updated_at: number;
 		windows: { id: string; used_percent: number; resets_at?: number; window_minutes?: number }[];
+		reset_credits?: number;
 	} | null;
+	last_auto_reset_at: number | null;
+};
+
+export type AutoReset = {
+	enabled: boolean;
+	changed_by: string | null;
+	changed_at: number | null;
 };
 
 export type DeviceLogin = {

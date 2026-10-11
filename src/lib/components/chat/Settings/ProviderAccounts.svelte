@@ -5,6 +5,7 @@
 	import { models, settings, config, user } from '$lib/stores';
 	import {
 		providerAccountRequest,
+		type AutoReset,
 		type ProviderAccount,
 		type DeviceLogin,
 		type Sharing
@@ -18,6 +19,7 @@
 		zai: 'Z.ai'
 	};
 	let accounts: ProviderAccount[] = [];
+	let autoReset: AutoReset | null = null;
 	let loading = true;
 	let busy = false;
 	let error = '';
@@ -39,7 +41,10 @@
 	const message = (err: unknown) =>
 		err instanceof Error ? err.message : 'The account request failed.';
 	const refresh = async (refreshModels = false) => {
-		accounts = (await request<{ data: ProviderAccount[] }>()).data;
+		[accounts, autoReset] = await Promise.all([
+			request<{ data: ProviderAccount[] }>().then((result) => result.data),
+			request<AutoReset>('/auto-reset')
+		]);
 		if (refreshModels) {
 			models.set(
 				await getModels(
@@ -107,6 +112,20 @@
 			await request(`/${account.id}`, 'PATCH', body);
 			editingId = '';
 			await refresh(true);
+		} catch (err) {
+			error = message(err);
+			await refresh().catch(() => {});
+		} finally {
+			busy = false;
+		}
+	};
+	// Mologate: any approved member can switch automatic resets for the whole team.
+	const setAutoReset = async (enabled: boolean) => {
+		busy = true;
+		error = '';
+		try {
+			autoReset = await request<AutoReset>('/auto-reset', 'PUT', { enabled });
+			toast.success(enabled ? 'Automatic limit resets are on.' : 'Automatic limit resets are off.');
 		} catch (err) {
 			error = message(err);
 			await refresh().catch(() => {});
@@ -276,6 +295,28 @@
 	{/if}
 	<div class="space-y-3">
 		<h3 class="font-medium">Connected accounts</h3>
+		{#if autoReset}
+			<div class="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-1">
+				<label class="flex gap-2 items-center font-medium"
+					><input
+						type="checkbox"
+						checked={autoReset.enabled}
+						disabled={busy}
+						on:change={(event) => setAutoReset(event.currentTarget.checked)}
+					/>Automatic limit resets</label
+				>
+				<p class="text-xs text-gray-500">
+					When every ChatGPT account that can serve a model is out of quota, Mologate redeems the
+					reset coupon that expires soonest on one of them. This applies to the whole team, and any
+					member can turn it off.
+				</p>
+				{#if autoReset.changed_by && autoReset.changed_at}<p class="text-xs text-gray-500">
+						Turned {autoReset.enabled ? 'on' : 'off'} by {autoReset.changed_by} on {new Date(
+							autoReset.changed_at * 1000
+						).toLocaleString()}.
+					</p>{/if}
+			</div>
+		{/if}
 		{#if loading}<p class="text-gray-500">Loading accounts…</p>
 		{:else if accounts.length === 0}<p class="text-gray-500">No accounts connected yet.</p>{/if}
 		{#each accounts as account (account.id)}
@@ -325,6 +366,18 @@
 							</p>{/if}
 					</div>
 				{:else}<p class="text-xs text-gray-500">No provider limits reported yet.</p>{/each}
+				{#if account.provider === 'codex' && account.limits?.reset_credits != null}<p
+						class="text-xs text-gray-500"
+					>
+						{account.limits.reset_credits === 1
+							? '1 reset coupon available'
+							: `${account.limits.reset_credits} reset coupons available`}{account.allow_team_resets
+							? ''
+							: ' · automatic resets not allowed'}
+					</p>{/if}
+				{#if account.last_auto_reset_at}<p class="text-xs text-gray-500">
+						Last automatic reset {new Date(account.last_auto_reset_at * 1000).toLocaleString()}
+					</p>{/if}
 				{#if account.can_manage}
 					<label class="block text-xs"
 						>Sharing for {account.label}
@@ -347,7 +400,7 @@
 								disabled={busy}
 								on:change={(event) =>
 									change(account, { allow_team_resets: event.currentTarget.checked })}
-							/>Allow team resets when available</label
+							/>Allow automatic resets with this account's coupons</label
 						>
 					{/if}
 					<div class="flex gap-4 text-xs">

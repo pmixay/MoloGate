@@ -169,6 +169,46 @@ def parse_codex_rate_limits(result: dict) -> list[dict]:
     return windows
 
 
+def window_exhausted(window: dict, now: float) -> bool:
+    resets_at = _number(window.get('resets_at'))
+    return (_number(window.get('used_percent')) or 0) >= 100 and (resets_at is None or resets_at > now)
+
+
+def snapshot_exhausted(snapshot: dict | None, now: float | None = None) -> bool:
+    """Mologate: only a reported empty window counts; unknown quota is never treated as empty."""
+    if not snapshot:
+        return False
+    now = time.time() if now is None else now
+    return any(window_exhausted(window, now) for window in snapshot.get('windows', []))
+
+
+def codex_exhausted(result: dict, now: float | None = None) -> bool:
+    """The backend's own usage permission wins; percentages decide only when it is unavailable."""
+    allowed = result.get('ordinaryUsageAllowed')
+    if isinstance(allowed, bool):
+        return not allowed
+    if (result.get('rateLimits') or {}).get('rateLimitReachedType'):
+        return True
+    return snapshot_exhausted({'windows': parse_codex_rate_limits(result)}, now)
+
+
+def codex_reset_credits(result: dict, now: float | None = None) -> list[dict]:
+    """Unexpired reset coupons, soonest expiry first. A coupon without an expiry sorts last."""
+    now = time.time() if now is None else now
+    summary = result.get('rateLimitResetCredits') or {}
+    if summary.get('credits') is None:
+        # Only the count is known; the backend then redeems its next available coupon.
+        return [{'id': None, 'expiresAt': None}] if (_number(summary.get('availableCount')) or 0) > 0 else []
+    credits = [
+        credit
+        for credit in summary['credits']
+        if isinstance(credit, dict)
+        and credit.get('status') == 'available'
+        and (_number(credit.get('expiresAt')) is None or _number(credit.get('expiresAt')) > now)
+    ]
+    return sorted(credits, key=lambda credit: _number(credit.get('expiresAt')) or math.inf)
+
+
 def parse_zai_quota(result: dict) -> list[dict]:
     """Only map observed coding-plan windows. Unknown/empty quota is not zero usage."""
     if result.get('success') is not True:
@@ -200,13 +240,27 @@ async def record_provider_limits(redis, account_id: str, headers: Mapping[str, s
         if not windows:
             return
 
-        await record_provider_snapshot(redis, account_id, windows)
+        # Headers carry no reset coupons; keep the count the account service last reported.
+        previous = await get_provider_limits(redis, account_id) or {}
+        await record_provider_snapshot(redis, account_id, windows, previous.get('reset_credits'))
     except Exception as e:
         log.debug('Could not record provider limits: %s', e)
 
 
-async def record_provider_snapshot(redis, account_id: str, windows: list[dict]) -> None:
+async def record_codex_snapshot(redis, account_id: str, result: dict) -> None:
+    """Windows and available reset coupons from the Codex account service."""
+    windows = parse_codex_rate_limits(result)
+    if windows:
+        summary = result.get('rateLimitResetCredits') or {}
+        await record_provider_snapshot(redis, account_id, windows, _number(summary.get('availableCount')))
+
+
+async def record_provider_snapshot(
+    redis, account_id: str, windows: list[dict], reset_credits: float | None = None
+) -> None:
     snapshot = {'windows': windows, 'updated_at': int(time.time())}
+    if reset_credits is not None:
+        snapshot['reset_credits'] = int(reset_credits)
     _snapshots[account_id] = snapshot
     if redis is not None:
         try:

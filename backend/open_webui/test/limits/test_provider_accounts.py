@@ -24,6 +24,8 @@ from sqlalchemy.exc import IntegrityError
 from open_webui.internal.db import async_engine, get_async_db_context
 from open_webui.models.provider_accounts import (
     AccountView,
+    LimitResetEvent,
+    LimitResetEvents,
     ProviderAccount,
     ProviderAccounts,
     ProviderLogin,
@@ -42,11 +44,16 @@ from open_webui.utils.provider_accounts import (
     verify_api_key,
 )
 from open_webui.utils.provider_limits import (
+    codex_exhausted,
+    codex_reset_credits,
     get_provider_limits,
     legacy_account_key,
     parse_rate_limit_headers,
     parse_zai_quota,
+    record_codex_snapshot,
     record_provider_limits,
+    record_provider_snapshot,
+    snapshot_exhausted,
 )
 
 OWNER = SimpleNamespace(id='owner', role='user', name='Owner')
@@ -76,6 +83,25 @@ def account(**overrides):
     return SimpleNamespace(**(values | overrides))
 
 
+def codex_limits(used=10, allowed=None, credits=None, count=None):
+    """An `account/rateLimits/read` result in the pinned app-server's shape."""
+    summary = None
+    if credits is not None or count is not None:
+        summary = {'availableCount': len(credits or []) if count is None else count, 'credits': credits}
+    return {
+        'ordinaryUsageAllowed': allowed,
+        'rateLimits': {
+            'primary': {'usedPercent': used, 'windowDurationMins': 300, 'resetsAt': int(time.time()) + 3600}
+        },
+        'rateLimitResetCredits': summary,
+    }
+
+
+def coupon(identifier, expires_in, status='available'):
+    expires_at = None if expires_in is None else int(time.time()) + expires_in
+    return {'id': identifier, 'resetType': 'codexRateLimits', 'status': status, 'expiresAt': expires_at}
+
+
 class PermissionTests(unittest.TestCase):
     def test_private_paused_pending_and_admin_boundaries(self):
         private = account()
@@ -97,6 +123,42 @@ class PermissionTests(unittest.TestCase):
         for provider, model in [('codex', 'missing'), ('openai_api', 'test-model')]:
             with self.assertRaises(HTTPException):
                 choose_account([owned], provider, model, OWNER)
+
+    def test_exhaustion_is_reported_never_assumed(self):
+        now = time.time()
+        empty = {'windows': [{'id': 'primary', 'used_percent': 100, 'resets_at': now + 60}]}
+        self.assertTrue(snapshot_exhausted(empty, now))
+        self.assertFalse(snapshot_exhausted(empty, now + 61))
+        self.assertFalse(snapshot_exhausted({'windows': [{'id': 'primary', 'used_percent': 99}]}, now))
+        self.assertFalse(snapshot_exhausted(None, now))
+        # The backend's permission wins over percentages in both directions.
+        self.assertTrue(codex_exhausted(codex_limits(used=10, allowed=False)))
+        self.assertFalse(codex_exhausted(codex_limits(used=100, allowed=True)))
+        self.assertTrue(codex_exhausted(codex_limits(used=100)))
+        self.assertFalse(codex_exhausted(codex_limits(used=90)))
+        self.assertFalse(codex_exhausted({}))
+        reached = codex_limits(used=50)
+        reached['rateLimits']['rateLimitReachedType'] = 'rate_limit_reached'
+        self.assertTrue(codex_exhausted(reached))
+
+    def test_reset_coupons_soonest_expiry_first(self):
+        credits = [
+            coupon('later', 7200),
+            coupon('never', None),
+            coupon('soon', 600),
+            coupon('expired', -60),
+            coupon('spent', 60, status='redeemed'),
+        ]
+        ids = [credit['id'] for credit in codex_reset_credits(codex_limits(credits=credits))]
+        self.assertEqual(ids, ['soon', 'later', 'never'])
+        # Only a count: the backend picks the coupon itself.
+        self.assertEqual(codex_reset_credits(codex_limits(count=2)), [{'id': None, 'expiresAt': None}])
+        self.assertEqual(codex_reset_credits(codex_limits(count=0)), [])
+        self.assertEqual(codex_reset_credits(codex_limits(credits=[])), [])
+        self.assertEqual(proxy.wait_text(30), '1 min')
+        self.assertEqual(proxy.wait_text(3 * 3600 + 12 * 60), '3 h 12 min')
+        self.assertEqual(proxy.wait_text(2 * 3600), '2 h')
+        self.assertEqual(proxy.wait_text(50 * 3600), '2 d 2 h')
 
     def test_encryption_and_public_response(self):
         secret = {'api_key': 'private-test-key', 'refresh_token': 'private-refresh'}
@@ -139,13 +201,19 @@ class PermissionTests(unittest.TestCase):
         target = os.environ.get('TEST_MIGRATION_DATABASE_URL', 'sqlite://')
         if target != 'sqlite://' and 'provider-tests' not in target:
             raise RuntimeError('Use an isolated provider-tests database.')
+        resets = importlib.import_module('open_webui.migrations.versions.c3d9e7a5b1f0_add_limit_reset_event')
+        self.assertEqual(resets.down_revision, migration.revision)
         engine = create_engine(target)
         with engine.begin() as connection:
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
+                resets.upgrade()
                 names = inspect(connection).get_table_names()
                 self.assertIn('provider_account', names)
                 self.assertIn('provider_login', names)
+                self.assertIn('limit_reset_event', names)
+                resets.downgrade()
+                self.assertNotIn('limit_reset_event', inspect(connection).get_table_names())
                 migration.downgrade()
                 self.assertNotIn('provider_account', inspect(connection).get_table_names())
         engine.dispose()
@@ -176,7 +244,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         if 'provider-tests' not in str(async_engine.url):
             raise RuntimeError('Use an isolated provider-tests database.')
         async with async_engine.begin() as connection:
-            for table in (ProviderLogin.__table__, ProviderAccount.__table__):
+            for table in (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__):
                 await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
                 await connection.run_sync(table.create)
         self.config_patch = patch('open_webui.models.config.Config.get', AsyncMock(return_value='observe'))
@@ -186,7 +254,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.config_patch.stop()
         await codex_accounts.shutdown()
         async with async_engine.begin() as connection:
-            for table in (ProviderLogin.__table__, ProviderAccount.__table__):
+            for table in (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__):
                 await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
         await async_engine.dispose()
 
@@ -293,6 +361,70 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot['windows'][0]['used_percent'], 15)
         self.assertIsNone(await get_provider_limits(redis, 'other-account'))
 
+    async def test_auto_reset_spends_soonest_coupon_once_under_concurrency(self):
+        first = account(id='first', sharing='shared')
+        second = account(id='second', sharing='shared', owner_user_id=OTHER.id)
+        limits = {
+            'first': codex_limits(used=100, credits=[coupon('first-coupon', 7200)]),
+            'second': codex_limits(used=100, credits=[coupon('second-coupon', 600)]),
+        }
+
+        async def consume(account, key, credit_id):
+            await asyncio.sleep(0.01)
+            limits[account.id] = codex_limits(used=0)
+            return 'reset'
+
+        refresh = AsyncMock(side_effect=lambda account: ({'access_token': 'token'}, limits[account.id]))
+        with (
+            patch.object(codex_accounts, 'refresh_account', refresh),
+            patch.object(codex_accounts, 'consume_reset_credit', AsyncMock(side_effect=consume)) as redeem,
+        ):
+            # Two requests find every account empty at once; only one coupon may be spent.
+            results = await asyncio.gather(
+                codex_accounts.auto_reset([first, second], OWNER.id),
+                codex_accounts.auto_reset([first, second], OTHER.id),
+            )
+        self.assertEqual([result.id for result in results], ['second', 'second'])
+        redeem.assert_awaited_once()
+        self.assertEqual(redeem.await_args.args[2], 'second-coupon')
+        async with get_async_db_context() as db:
+            events = list((await db.execute(select(LimitResetEvent))).scalars())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].outcome, 'reset')
+        self.assertEqual(events[0].idempotency_key, redeem.await_args.args[1])
+        self.assertIn(events[0].triggered_by, (OWNER.id, OTHER.id))
+        self.assertEqual(list(await LimitResetEvents.last_resets()), ['second'])
+        self.assertEqual((await get_provider_limits(None, 'second'))['windows'][0]['used_percent'], 0)
+
+    async def test_auto_reset_respects_opt_out_cooldown_and_retries_with_same_key(self):
+        opted_out = account(id='opted-out', allow_team_resets=False)
+        empty = account(id='still-empty')
+        limits = codex_limits(used=100, credits=[coupon('coupon', 600)])
+        consume = AsyncMock(side_effect=[RuntimeError('connection lost'), 'reset'])
+        with (
+            patch.object(codex_accounts, 'refresh_account', AsyncMock(return_value=({}, limits))),
+            patch.object(codex_accounts, 'consume_reset_credit', consume),
+        ):
+            self.assertIsNone(await codex_accounts.auto_reset([opted_out], OWNER.id))
+            consume.assert_not_awaited()
+            # Redeemed, yet the account still reports empty: no further coupon inside the cooldown.
+            self.assertIsNone(await codex_accounts.auto_reset([opted_out, empty], OWNER.id))
+            self.assertEqual(consume.await_count, 2)
+            first_try, retry = consume.await_args_list
+            self.assertEqual(first_try.args[0].id, 'still-empty')
+            self.assertEqual(first_try.args[1], retry.args[1])
+            self.assertIsNone(await codex_accounts.auto_reset([empty], OWNER.id))
+            self.assertEqual(consume.await_count, 2)
+        self.assertTrue(await LimitResetEvents.recent('codex', codex_accounts.RESET_COOLDOWN))
+        self.assertFalse(await LimitResetEvents.recent('codex', 0))
+
+    async def test_reset_coupon_count_survives_header_updates(self):
+        await record_codex_snapshot(None, 'coupon-count', codex_limits(credits=[coupon('a', 600), coupon('b', 900)]))
+        await record_provider_limits(None, 'coupon-count', {'x-codex-primary-used-percent': '40'})
+        snapshot = await get_provider_limits(None, 'coupon-count')
+        self.assertEqual(snapshot['windows'][0]['used_percent'], 40)
+        self.assertEqual(snapshot['reset_credits'], 2)
+
     async def test_real_appserver_protocol_device_login_with_fake_provider(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / 'fake-codex'
@@ -313,6 +445,9 @@ for raw in sys.stdin:
     elif method == 'account/read': result = {'account': {'type': 'chatgpt', 'planType': 'plus'}}
     elif method == 'model/list': result = {'data': [{'id': 'test-model', 'model': 'test-model', 'displayName': 'Test'}]}
     elif method == 'account/rateLimits/read': result = {'rateLimits': {'primary': {'usedPercent': 10}}}
+    elif method == 'account/rateLimitResetCredit/consume':
+        expected = {'idempotencyKey': 'attempt-1', 'creditId': 'credit-1'}
+        result = {'outcome': 'reset' if request['params'] == expected else 'noCredit'}
     print(json.dumps({'id': request['id'], 'result': result}), flush=True)
     if method == 'account/login/start':
         print(json.dumps({'method': 'account/login/completed', 'params': {'loginId': 'login-1', 'success': True}}), flush=True)
@@ -339,6 +474,8 @@ for raw in sys.stdin:
                 self.assertEqual(stat.S_IMODE((home / 'auth.json').stat().st_mode), 0o600)
                 tokens, _ = await codex_accounts.refresh_account(saved)
                 self.assertEqual(tokens['account_id'], 'fake-chatgpt-id')
+                outcome = await codex_accounts.consume_reset_credit(saved, 'attempt-1', 'credit-1')
+                self.assertEqual(outcome, 'reset')
                 # A second login to the same provider account must not register another owner.
                 duplicate = await codex_accounts.start_login(OTHER, 'Duplicate', 'shared')
                 duplicate_task = codex_accounts._tasks.get(duplicate)
@@ -385,6 +522,29 @@ class RouterTests(unittest.TestCase):
             self.assertEqual(result.status_code, 200)
             self.assertNotIn('secret', result.json())
             self.assertNotIn('external_account_id', result.json())
+
+    def test_any_member_switches_auto_reset_for_everyone(self):
+        stored = {}
+
+        async def get(key, default=None):
+            return stored.get(key, default)
+
+        async def upsert(values):
+            stored.update(values)
+
+        with (
+            patch.object(routes.Config, 'get', AsyncMock(side_effect=get)),
+            patch.object(routes.Config, 'upsert', AsyncMock(side_effect=upsert)),
+        ):
+            self.assertTrue(self.client.get('/accounts/auto-reset').json()['enabled'])
+            response = self.client.put('/accounts/auto-reset', json={'enabled': False})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['enabled'], False)
+            self.assertEqual(response.json()['changed_by'], 'Owner')
+            self.assertIs(stored['mologate.auto_reset'], False)
+            self.assertEqual(
+                self.client.put('/accounts/auto-reset', json={'enabled': True, 'by': 'other'}).status_code, 422
+            )
 
     def test_budget_required_and_no_owner_spoofing(self):
         form = {'provider': 'openai_api', 'label': 'test', 'api_key': 'test-secret'}
@@ -514,7 +674,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         upstream = Response(events=[{'type': 'response.completed', 'response': result}])
         session = SimpleNamespace(post=AsyncMock(return_value=upstream))
         with (
-            patch.object(proxy, 'select_account', AsyncMock(return_value=account())),
+            patch.object(proxy, 'select_accounts', AsyncMock(return_value=[account()])),
             patch.object(
                 proxy,
                 'refresh_account',
@@ -536,6 +696,89 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as error:
                 await proxy.account_completion(request, {'model': 'account:codex:test-model'}, OWNER)
             self.assertNotIn('secret-token', error.exception.detail)
+
+    def codex_patches(self, accounts, limits, session, resets_enabled=True, reset=None):
+        def refresh(account):
+            return {'access_token': 'token-' + account.id, 'account_id': account.id}, limits[account.id]
+
+        return (
+            patch.object(proxy, 'select_accounts', AsyncMock(return_value=accounts)),
+            patch.object(proxy, 'refresh_account', AsyncMock(side_effect=refresh)),
+            patch.object(proxy, 'get_session', AsyncMock(return_value=session)),
+            patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=resets_enabled)),
+            patch.object(proxy, 'auto_reset', reset or AsyncMock(return_value=None)),
+        )
+
+    def completed(self):
+        result = {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'Hello'}]}]}
+        return Response(events=[{'type': 'response.completed', 'response': result}])
+
+    async def test_empty_account_hands_request_to_next_account(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        own = account(id='own-empty')
+        shared = account(id='shared-with-quota', owner_user_id=OTHER.id, sharing='shared')
+        limits = {'own-empty': codex_limits(used=100), 'shared-with-quota': codex_limits(used=20)}
+        session = SimpleNamespace(post=AsyncMock(return_value=self.completed()))
+        patches = self.codex_patches([own, shared], limits, session)
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+            form = {'model': 'account:codex:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+            answer = await proxy.account_completion(request, form, OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Hello')
+        session.post.assert_awaited_once()
+        self.assertEqual(session.post.call_args.kwargs['headers']['ChatGPT-Account-Id'], 'shared-with-quota')
+        reset.assert_not_awaited()
+        # Next time the known-empty account is tried last.
+        ordered = await proxy.order_by_headroom(None, [own, shared])
+        self.assertEqual([item.id for item in ordered], ['shared-with-quota', 'own-empty'])
+
+    async def test_rate_limited_account_fails_over_with_the_full_conversation(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        first = account(id='limited-first')
+        second = account(id='limited-second', owner_user_id=OTHER.id, sharing='shared')
+        limits = {'limited-first': codex_limits(), 'limited-second': codex_limits()}
+        limited = Response(status=429)
+        session = SimpleNamespace(post=AsyncMock(side_effect=[limited, self.completed()]))
+        patches = self.codex_patches([first, second], limits, session)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            form = {'model': 'account:codex:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+            await proxy.account_completion(request, form, OWNER)
+        first_call, second_call = session.post.call_args_list
+        self.assertEqual(second_call.kwargs['headers']['ChatGPT-Account-Id'], 'limited-second')
+        # The Responses conversion consumes messages; the retry must still send the conversation.
+        self.assertEqual(first_call.kwargs['json']['input'], second_call.kwargs['json']['input'])
+        self.assertTrue(second_call.kwargs['json']['input'])
+        self.assertEqual(form['messages'], [{'role': 'user', 'content': 'Hi'}])
+        self.assertTrue(limited.closed)
+
+    async def test_every_account_empty_redeems_a_reset_then_serves(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        only = account(id='refilled')
+        limits = {'refilled': codex_limits(used=100)}
+
+        async def redeem(accounts, user_id, redis):
+            limits['refilled'] = codex_limits(used=0)
+            return accounts[0]
+
+        session = SimpleNamespace(post=AsyncMock(return_value=self.completed()))
+        patches = self.codex_patches([only], limits, session, reset=AsyncMock(side_effect=redeem))
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+            await proxy.account_completion(request, {'model': 'account:codex:test-model', 'messages': []}, OWNER)
+        reset.assert_awaited_once_with([only], OWNER.id, None)
+        session.post.assert_awaited_once()
+
+    async def test_every_account_empty_with_resets_off_reports_the_wait(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        only = account(id='empty-no-resets')
+        session = SimpleNamespace(post=AsyncMock())
+        patches = self.codex_patches([only], {only.id: codex_limits(used=100)}, session, resets_enabled=False)
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+            with self.assertRaises(HTTPException) as error:
+                await proxy.account_completion(request, {'model': 'account:codex:test-model', 'messages': []}, OWNER)
+        self.assertEqual(error.exception.status_code, 429)
+        self.assertIn('resets in 1 h.', error.exception.detail)
+        self.assertIn('turned off', error.exception.detail)
+        reset.assert_not_awaited()
+        session.post.assert_not_awaited()
 
     async def test_chat_responses_and_proxy_use_account_route(self):
         request = SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace()), method='POST')

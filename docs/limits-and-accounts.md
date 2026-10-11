@@ -71,8 +71,9 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
-9. **Reset button.** When the pool is empty, members get a button that redeems a provider limit reset
-   on a pool account, through the provider's own CLI tooling.
+9. **Automatic reset.** Only when every account that can serve a request is empty, Mologate
+   redeems a provider limit-reset coupon on one of them by itself, through the provider's own
+   CLI tooling. There is no button. Any team member can turn this off for everyone.
 
 ---
 
@@ -210,8 +211,10 @@ Unique: (`provider`, `external_account_id`), which is what stops credit farming.
 **`limit_override`**
 `id`, `user_id`, `granted_by`, `extra_points`, `until`, `reason`.
 
-**`limit_reset_event`**
-`id`, `account_id`, `pressed_by`, `credit_id` (provider's), `result`, `windows_reset`, `ts`.
+**`limit_reset_event`** (one automatic redemption; kept after the account is removed)
+`id`, `account_id`, `provider`, `triggered_by` (the member whose request found every account
+empty), `credit_id` (provider's), `idempotency_key`, `outcome` (`pending` | `reset` |
+`nothingToReset` | `noCredit` | `alreadyRedeemed` | `error`), `created_at`, `updated_at`.
 
 Personal API keys stay in the existing `api_key` table. Allow several named keys per user, with
 `data = {name, limits: {rpm, concurrency, models, efforts, daily_points}, revoked_at}`.
@@ -259,8 +262,9 @@ used_u   = units of u's pool use in this window (tiers pool, credit, worker, own
 4. **Worker:** past all of the above, but some account still has pool headroom. Only worker models.
    If a big model was asked for, the gate swaps to the provider's worker model and the UI says so
    ("Your share is used up, so this reply uses Luna. Resets in 3 h 12 min.").
-5. **Empty:** no account of this provider has pool headroom. Return a limit error with the reset
-   time, and offer a worker on another provider and the reset button (§10).
+5. **Empty:** no account of this provider has pool headroom, and the automatic reset (§10) could
+   not refill one. Return a limit error with the reset time, and offer a worker on another
+   provider.
 
 ### 7.4 Choosing the account (tiers 2 to 4)
 
@@ -364,26 +368,41 @@ for step 4. Token presence or an `oauthAccount` JSON file is insufficient. The f
 [runner plan](claude-runners.md) defines this dependency, APIs, alternatives and acceptance tests.
 
 **Account card:** owner, provider, plan, windows as two-part bars (owner reserve and pool), status,
-sharing toggle (shared, private, paused), "allow team resets", disconnect.
+sharing toggle (shared, private, paused), "allow automatic resets", reset coupons available, last
+automatic reset, disconnect.
 
 **Disconnecting:** unspent credits from that account's grant are forfeited (`credit_entry.forfeit`).
 Reconnecting the same account doesn't grant again.
 
 ---
 
-## 10. Reset button
+## 10. Automatic limit reset
 
-- **Codex only.** No reset mechanism exists for the other providers.
-- **Shown when** the requester is in tier 5 for Codex and at least one pool account has
-  `allow_team_resets` and an unredeemed reset (`account/rateLimits/read` returns
-  `rateLimitResetCredits`).
-- **Pressing it:** a confirmation names the account, its owner, what will reset and when the reset
-  coupon expires. It picks the coupon that expires soonest, calls
-  `account/rateLimitResetCredit/consume` with a fresh idempotency key (reuse it on retries), and
-  writes a `limit_reset_event`.
-- **Rules:** a redemption is irreversible and can't be transferred. Any team member can turn
-  resets off globally (existing roadmap item). The account owner can turn them off per account.
-- The refilled window is split 50/50 like any other.
+Implemented on 2026-10-11 in `utils/provider_account_proxy.py` and `utils/codex_accounts.py`.
+There is no reset button: members never redeem a coupon by hand.
+
+- **Account switching first.** A request tries the accounts that can serve its model: the
+  member's own, then shared ones, with accounts known to be empty last. An account is skipped
+  when Codex reports it empty (`ordinaryUsageAllowed=false`, or a window at 100% when that field
+  is unavailable) or when the provider answers 429. Unknown quota never counts as empty.
+- **Codex only.** No reset mechanism exists for the other providers. The pinned app-server
+  (0.162.1) reports coupons in `account/rateLimits/read` → `rateLimitResetCredits`, and redeems
+  them with `account/rateLimitResetCredit/consume {idempotencyKey, creditId}`.
+- **When:** only after every eligible account is empty. Accounts whose owner turned off "allow
+  automatic resets" (`allow_team_resets`) are left out. It runs in `observe` and `enforce`: an
+  empty account is provider availability, not an allowance decision.
+- **What it does:** under a lock, read every candidate again (a concurrent request may already
+  have refilled one), pick the unexpired coupon that expires soonest, write a pending
+  `limit_reset_event`, and consume it with that event's idempotency key, reusing the key for one
+  retry. After `reset` (or `nothingToReset`), read the account again and send the request there.
+- **Guards:** a pending, successful or failed redemption blocks another one for 10 minutes on
+  every worker, so a refill that does not take never spends a second coupon. If no reset is
+  possible, the request gets a limit error with the time until the first account resets.
+- **Global switch:** `mologate.auto_reset` (env `MOLOGATE_AUTO_RESET`, default on). Any approved
+  member turns it off or on for everyone in **Settings → Provider accounts**
+  (`GET`/`PUT /api/v1/provider-accounts/auto-reset`); the page shows who changed it last.
+- **Rules:** a redemption is irreversible and can't be transferred. The refilled window is split
+  50/50 like any other once the allowance engine ships.
 
 ---
 
@@ -463,7 +482,8 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 ### Phase 4: enforcement
 
 - [ ] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
-- [ ] Failover on 429 or limit errors to another account in the same tier.
+- [ ] Failover on 429 or limit errors to another account in the same tier. Account-level
+      failover already ships with §10; tier-aware selection remains.
 - [ ] Per-user concurrency cap (3 chats generating, from ROADMAP.md) and per-account concurrency
       cap.
 - [ ] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
@@ -474,8 +494,9 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 ### Phase 5: credits and resets
 
 - [ ] Grants on connect, forfeit on disconnect, spending in tier 3, balance in the UI.
-- [ ] Reset button (§10).
-- [ ] Done when: a reset is redeemed from the browser on a test account and the windows refill.
+- [x] Automatic limit reset (§10), with a global off switch for any member.
+- [ ] Done when: an automatic reset is redeemed on a real account once every account is empty,
+      and the windows refill.
 
 ### Phase 6: personal API keys (§11)
 
@@ -499,7 +520,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
       events, identity deduplication and account status notifications.
 - [ ] 7.4: usage ledger and verified account-window observations; unknown quota stays unknown.
 - [ ] 7.5: allowance-engine integration, account/session affinity, background-work exclusion,
-      Phase 5 credit grants and tier-5 reset-time display without a reset button.
+      Phase 5 credit grants and tier-5 reset-time display without an automatic reset.
 - [ ] 7.6: lifecycle reconciliation, idle LRU stop, cooldown/circuit breaker and restart/load tests.
 - [ ] 7.7: Connect UI, runner status on account cards and context/usage indicators.
 - [ ] 7.8: at least one week of real `observe` traffic; enable enforcement only after
@@ -562,6 +583,9 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
   verified stable identity and a permanent grant record. The proposed token relay handles a
   credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
+- 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
+  account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
+  for the team.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

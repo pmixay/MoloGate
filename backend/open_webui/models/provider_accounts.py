@@ -5,7 +5,7 @@ import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import BigInteger, Boolean, Column, Float, Index, String, Text, UniqueConstraint, delete, select
+from sqlalchemy import BigInteger, Boolean, Column, Float, Index, String, Text, UniqueConstraint, delete, func, select
 
 from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.oauth_sessions import OAuthSessions
@@ -54,6 +54,23 @@ class ProviderLogin(Base):
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
     __table_args__ = (Index('ix_provider_login_owner', 'owner_user_id'),)
+
+
+class LimitResetEvent(Base):
+    """One automatic redemption of a provider reset coupon. Kept after the account is removed."""
+
+    __tablename__ = 'limit_reset_event'
+
+    id = Column(Text, primary_key=True)
+    account_id = Column(Text, nullable=False)
+    provider = Column(String(32), nullable=False)
+    triggered_by = Column(Text, nullable=True)
+    credit_id = Column(Text, nullable=True)
+    idempotency_key = Column(Text, nullable=False)
+    outcome = Column(String(32), nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    __table_args__ = (Index('ix_limit_reset_event_provider', 'provider', 'created_at'),)
 
 
 class AccountView(BaseModel):
@@ -124,3 +141,61 @@ class ProviderAccountsTable:
 
 
 ProviderAccounts = ProviderAccountsTable()
+
+# A pending or failed attempt may still have spent the coupon, so it blocks a retry too.
+RESET_BLOCKING_OUTCOMES = ('pending', 'reset', 'error')
+
+
+class LimitResetEventsTable:
+    async def start(self, account, triggered_by: str | None, credit_id: str | None):
+        now = int(time.time())
+        event = LimitResetEvent(
+            id=str(uuid.uuid4()),
+            account_id=account.id,
+            provider=account.provider,
+            triggered_by=triggered_by,
+            credit_id=credit_id,
+            idempotency_key=str(uuid.uuid4()),
+            outcome='pending',
+            created_at=now,
+            updated_at=now,
+        )
+        async with get_async_db_context() as db:
+            db.add(event)
+            await db.commit()
+            await db.refresh(event)
+            return event
+
+    async def finish(self, event_id: str, outcome: str):
+        async with get_async_db_context() as db:
+            event = await db.get(LimitResetEvent, event_id)
+            if event is not None:
+                event.outcome = outcome
+                event.updated_at = int(time.time())
+                await db.commit()
+
+    async def recent(self, provider: str, seconds: int) -> bool:
+        async with get_async_db_context() as db:
+            result = await db.execute(
+                select(LimitResetEvent.id)
+                .where(
+                    LimitResetEvent.provider == provider,
+                    LimitResetEvent.outcome.in_(RESET_BLOCKING_OUTCOMES),
+                    LimitResetEvent.created_at > int(time.time()) - seconds,
+                )
+                .limit(1)
+            )
+            return result.first() is not None
+
+    async def last_resets(self) -> dict[str, int]:
+        """The latest successful automatic reset per account."""
+        async with get_async_db_context() as db:
+            result = await db.execute(
+                select(LimitResetEvent.account_id, func.max(LimitResetEvent.created_at))
+                .where(LimitResetEvent.outcome == 'reset')
+                .group_by(LimitResetEvent.account_id)
+            )
+            return {account_id: created_at for account_id, created_at in result.all()}
+
+
+LimitResetEvents = LimitResetEventsTable()

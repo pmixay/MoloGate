@@ -49,7 +49,7 @@ def split_model_id(value: str):
     return parts[1], parts[2]
 
 
-def choose_account(accounts, provider, upstream_id, user):
+def eligible_accounts(accounts, provider, upstream_id, user):
     candidates = [
         account
         for account in accounts
@@ -59,14 +59,27 @@ def choose_account(accounts, provider, upstream_id, user):
     ]
     if not candidates:
         raise HTTPException(404, 'No connected account is available for this model.')
-    # Phase 1 selects credentials, without applying the later quota/credit rules.
-    return min(candidates, key=lambda account: (account.owner_user_id != user.id, account.created_at, account.id))
+    # The requester's own accounts come first, then shared ones; quota rules come in later phases.
+    return sorted(candidates, key=lambda account: (account.owner_user_id != user.id, account.created_at, account.id))
+
+
+def choose_account(accounts, provider, upstream_id, user):
+    return eligible_accounts(accounts, provider, upstream_id, user)[0]
+
+
+async def select_accounts(value: str, user):
+    await require_accounts_enabled()
+    provider, upstream_id = split_model_id(value)
+    return eligible_accounts(await ProviderAccounts.list(), provider, upstream_id, user)
 
 
 async def select_account(value: str, user):
-    await require_accounts_enabled()
-    provider, upstream_id = split_model_id(value)
-    return choose_account(await ProviderAccounts.list(), provider, upstream_id, user)
+    return (await select_accounts(value, user))[0]
+
+
+async def auto_reset_enabled() -> bool:
+    """Any approved member can turn automatic coupon resets off for the whole team."""
+    return await Config.get('mologate.auto_reset', True) is not False
 
 
 async def account_models(user=None):

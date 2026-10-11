@@ -5,6 +5,7 @@ import base64
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import shutil
 import time
@@ -17,12 +18,23 @@ from sqlalchemy import delete, select
 
 from open_webui.env import DATA_DIR
 from open_webui.internal.db import get_async_db_context
-from open_webui.models.provider_accounts import ProviderAccounts, ProviderLogin, open_secret, seal_secret
+from open_webui.models.provider_accounts import (
+    LimitResetEvents,
+    ProviderAccounts,
+    ProviderLogin,
+    open_secret,
+    seal_secret,
+)
+
+log = logging.getLogger(__name__)
 
 ACCOUNT_ROOT = Path(DATA_DIR) / 'provider_accounts' / 'codex'
 LOGIN_TTL = 15 * 60
+# After a redemption, wait this long before spending another coupon on any account.
+RESET_COOLDOWN = 10 * 60
 _tasks: dict[str, asyncio.Task] = {}
 _login_lock = asyncio.Lock()
+_reset_lock = asyncio.Lock()
 
 
 def account_home(identifier: str) -> Path:
@@ -219,12 +231,10 @@ async def _complete_login(identifier, owner_id, label, sharing, ready, redis=Non
             )
             keep_home = True
             await _save_login(identifier, status='completed', account_id=account.id, secret=seal_secret({}))
-            from open_webui.utils.provider_limits import parse_codex_rate_limits, record_provider_snapshot
+            from open_webui.utils.provider_limits import record_codex_snapshot
 
             with contextlib.suppress(RuntimeError, TimeoutError):
-                windows = parse_codex_rate_limits(await server.call('account/rateLimits/read'))
-                if windows:
-                    await record_provider_snapshot(redis, account.id, windows)
+                await record_codex_snapshot(redis, account.id, await server.call('account/rateLimits/read'))
     except (Exception, asyncio.CancelledError) as error:
         message = 'Sign-in expired or failed. Start a new connection.'
         if isinstance(error, IntegrityError):
@@ -334,6 +344,63 @@ async def refresh_account(account):
         raise HTTPException(401, 'This ChatGPT account needs to be reconnected.') from None
     except (RuntimeError, TimeoutError):
         raise HTTPException(502, 'The Codex account service is unavailable. Try again shortly.') from None
+
+
+async def consume_reset_credit(account, idempotency_key: str, credit_id: str | None = None) -> str:
+    params = {'idempotencyKey': idempotency_key}
+    if credit_id:
+        params['creditId'] = credit_id
+    async with AppServer(open_secret(account.secret)['home_id']) as server:
+        result = await server.call('account/rateLimitResetCredit/consume', params)
+    return result.get('outcome') or 'unknown'
+
+
+async def auto_reset(accounts, triggered_by: str | None, redis=None):
+    """Redeem one reset coupon once every eligible account is empty. Returns a usable account."""
+    from open_webui.utils.provider_limits import codex_exhausted, codex_reset_credits, record_codex_snapshot
+
+    accounts = [account for account in accounts if account.provider == 'codex' and account.allow_team_resets]
+    if not accounts:
+        return None
+    async with _reset_lock:
+        coupons = []
+        for account in accounts:
+            # Read again under the lock: a concurrent request may already have refilled an account.
+            try:
+                _, limits = await refresh_account(account)
+            except HTTPException:
+                continue
+            await record_codex_snapshot(redis, account.id, limits)
+            if not codex_exhausted(limits):
+                return account
+            coupons += [(credit, account) for credit in codex_reset_credits(limits)]
+        # The database also guards workers that do not share this lock.
+        if not coupons or await LimitResetEvents.recent('codex', RESET_COOLDOWN):
+            return None
+        # Spend the coupon that would expire first.
+        credit, account = min(coupons, key=lambda coupon: coupon[0].get('expiresAt') or float('inf'))
+        event = await LimitResetEvents.start(account, triggered_by, credit['id'])
+        outcome = 'error'
+        try:
+            for attempt in range(2):
+                try:
+                    # The same idempotency key makes a retried attempt redeem at most one coupon.
+                    outcome = await consume_reset_credit(account, event.idempotency_key, credit['id'])
+                    break
+                except (HTTPException, OSError, RuntimeError, TimeoutError):
+                    if attempt:
+                        log.warning('Automatic limit reset failed for account %s.', account.id)
+        finally:
+            await LimitResetEvents.finish(event.id, outcome)
+        log.info('Automatic limit reset on account %s: %s.', account.id, outcome)
+        if outcome not in ('reset', 'nothingToReset'):
+            return None
+        try:
+            _, limits = await refresh_account(account)
+        except HTTPException:
+            return None
+        await record_codex_snapshot(redis, account.id, limits)
+        return None if codex_exhausted(limits) else account
 
 
 async def disconnect(account):

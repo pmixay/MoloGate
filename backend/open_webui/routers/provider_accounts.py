@@ -1,5 +1,7 @@
 """Authenticated provider account management. Credentials are write-only."""
 
+import logging
+import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,11 +10,25 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy.exc import IntegrityError
 
-from open_webui.models.provider_accounts import AccountView, ProviderAccounts, Sharing, open_secret, seal_secret
+from open_webui.models.config import Config
+from open_webui.models.provider_accounts import (
+    AccountView,
+    LimitResetEvents,
+    ProviderAccounts,
+    Sharing,
+    open_secret,
+    seal_secret,
+)
 from open_webui.models.users import Users
 from open_webui.utils import codex_accounts
 from open_webui.utils.auth import get_verified_user
-from open_webui.utils.provider_accounts import can_manage, key_fingerprint, require_accounts_enabled, verify_api_key
+from open_webui.utils.provider_accounts import (
+    auto_reset_enabled,
+    can_manage,
+    key_fingerprint,
+    require_accounts_enabled,
+    verify_api_key,
+)
 from open_webui.utils.provider_accounts import refresh_zai_limits
 from open_webui.utils.provider_limits import get_provider_limits
 from open_webui.utils.rate_limit import RateLimiter
@@ -33,6 +49,7 @@ class CredentialRoute(APIRoute):
         return handle
 
 
+log = logging.getLogger(__name__)
 router = APIRouter(route_class=CredentialRoute, dependencies=[Depends(require_accounts_enabled)])
 verification_limiter = RateLimiter(limit=10, window=300)
 
@@ -68,6 +85,11 @@ class AccountUpdateForm(BaseModel):
     allow_team_resets: bool | None = None
 
 
+class AutoResetForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: bool
+
+
 async def owned_account(account_id, user):
     account = await ProviderAccounts.get(account_id)
     if not account or not can_manage(account, user):
@@ -80,9 +102,34 @@ async def check_rate(request, user):
         raise HTTPException(429, 'Too many connection attempts. Try again in a few minutes.')
 
 
+async def auto_reset_view():
+    changed = await Config.get('mologate.auto_reset_changed', None)
+    changed = changed if isinstance(changed, dict) else {}
+    return {'enabled': await auto_reset_enabled(), 'changed_by': changed.get('by'), 'changed_at': changed.get('at')}
+
+
+@router.get('/auto-reset')
+async def get_auto_reset(user=Depends(get_verified_user)):
+    return await auto_reset_view()
+
+
+@router.put('/auto-reset')
+async def set_auto_reset(form: AutoResetForm, user=Depends(get_verified_user)):
+    # The roadmap lets any approved member switch automatic resets off, or back on, for everyone.
+    await Config.upsert(
+        {
+            'mologate.auto_reset': form.enabled,
+            'mologate.auto_reset_changed': {'by': user.name, 'by_id': user.id, 'at': int(time.time())},
+        }
+    )
+    log.info('Automatic limit resets turned %s by user %s.', 'on' if form.enabled else 'off', user.id)
+    return await auto_reset_view()
+
+
 @router.get('')
 async def list_accounts(request: Request, user=Depends(get_verified_user)):
     result = []
+    last_resets = await LimitResetEvents.last_resets()
     for account in await ProviderAccounts.list():
         managed = can_manage(account, user)
         if not managed and account.sharing != 'shared':
@@ -90,7 +137,12 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
         owner = await Users.get_user_by_id(account.owner_user_id)
         limits = await get_provider_limits(getattr(request.app.state, 'redis', None), account.id)
         item = AccountView.model_validate(account).model_dump()
-        item.update(owner_name=owner.name if owner else 'Former member', can_manage=managed, limits=limits)
+        item.update(
+            owner_name=owner.name if owner else 'Former member',
+            can_manage=managed,
+            limits=limits,
+            last_auto_reset_at=last_resets.get(account.id),
+        )
         result.append(item)
     return {'data': result}
 

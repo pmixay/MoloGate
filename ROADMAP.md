@@ -13,11 +13,17 @@ The full design and phased plan for accounts, limits, credits and personal API k
       whole team.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
-- [ ] **Account switching and limit resets:**
+- [x] **Account switching and limit resets:**
   - When an account reaches 0%, switch automatically to another shared account that still has quota.
   - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
     these).
   - Any team member can turn coupon auto-reset off globally.
+  - Done: a request that finds an account empty, or gets a 429 from it, moves on to the next account
+    that can serve the model: the member's own first, then shared ones. When every one is empty,
+    Mologate redeems the Codex reset coupon that expires soonest and retries, at most once every
+    10 minutes. Any member turns this off for everyone in Settings → Provider accounts, and an owner
+    can keep their account's coupons out of it. Each account shows its coupons and last reset.
+    Details in [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-automatic-limit-reset).
 - [ ] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and

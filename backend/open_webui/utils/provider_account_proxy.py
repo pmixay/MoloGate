@@ -1,22 +1,33 @@
 """Route a provider model through an eligible account without exposing its credentials."""
 
+import copy
 import json
+import math
 import time
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
-from open_webui.utils.codex_accounts import refresh_account
-from open_webui.utils.provider_accounts import select_account, split_model_id
-from open_webui.utils.provider_limits import parse_codex_rate_limits, record_provider_limits, record_provider_snapshot
+from open_webui.utils.codex_accounts import auto_reset, refresh_account
+from open_webui.utils.provider_accounts import auto_reset_enabled, select_accounts, split_model_id
+from open_webui.utils.provider_limits import (
+    codex_exhausted,
+    get_provider_limits,
+    record_codex_snapshot,
+    record_provider_limits,
+    snapshot_exhausted,
+    window_exhausted,
+)
 from open_webui.utils.session_pool import cleanup_response, get_client_timeout, get_session, stream_wrapper
 
 
+class AccountExhausted(Exception):
+    """The provider reports this account's quota as used up; another account may still serve."""
+
+
 async def record_codex_limits(request, account_id, result):
-    windows = parse_codex_rate_limits(result)
-    if windows:
-        await record_provider_snapshot(getattr(request.app.state, 'redis', None), account_id, windows)
+    await record_codex_snapshot(getattr(request.app.state, 'redis', None), account_id, result)
 
 
 def codex_payload(payload):
@@ -138,22 +149,85 @@ async def codex_chat_stream(response, model):
         await cleanup_response(response)
 
 
+async def order_by_headroom(redis, accounts):
+    """Accounts known to be empty go last; otherwise the owner-first order is kept."""
+    now = time.time()
+    empty = {account.id: snapshot_exhausted(await get_provider_limits(redis, account.id), now) for account in accounts}
+    return sorted(accounts, key=lambda account: empty[account.id])
+
+
+def wait_text(seconds):
+    minutes = max(1, math.ceil(seconds / 60))
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f'{days} d {hours} h'
+    if not hours:
+        return f'{minutes} min'
+    return f'{hours} h {minutes} min' if minutes else f'{hours} h'
+
+
+async def limit_error(redis, accounts, resets_enabled):
+    now = time.time()
+    ready_at = []
+    for account in accounts:
+        windows = [
+            window
+            for window in ((await get_provider_limits(redis, account.id)) or {}).get('windows', [])
+            if window_exhausted(window, now)
+        ]
+        # An account is usable again once every one of its empty windows has reset.
+        if windows and all(window.get('resets_at') for window in windows):
+            ready_at.append(max(window['resets_at'] for window in windows))
+    message = 'Every account for this model has reached its usage limit.'
+    if ready_at:
+        message += f' The first one resets in {wait_text(min(ready_at) - now)}.'
+    if not resets_enabled and any(account.provider == 'codex' for account in accounts):
+        message += ' Automatic limit resets are turned off.'
+    return HTTPException(429, message)
+
+
 async def account_completion(request, form_data, user, endpoint='chat/completions'):
     # Always select and authorize again, including direct /openai routes and API-key requests.
     model = form_data.get('model', '')
-    account = await select_account(model, user)
-    _, upstream_id = split_model_id(model)
-    payload = {key: value for key, value in form_data.items() if key not in ('metadata', 'model')}
-    payload['model'] = upstream_id
-    wants_stream = bool(payload.get('stream'))
+    accounts = await select_accounts(model, user)
     if endpoint not in ('chat/completions', 'responses'):
         raise HTTPException(403, 'This account route only supports model inference.')
+    redis = getattr(request.app.state, 'redis', None)
+    exhausted = []
+    # Mologate: an empty account hands the request to the next one that still has quota.
+    for account in await order_by_headroom(redis, accounts):
+        try:
+            return await account_request(request, account, form_data, endpoint)
+        except AccountExhausted:
+            exhausted.append(account)
+    # Only when every account is empty: redeem a reset coupon, unless a member turned this off.
+    resets_enabled = await auto_reset_enabled()
+    if resets_enabled:
+        account = await auto_reset(exhausted, user.id, redis)
+        if account is not None:
+            try:
+                return await account_request(request, account, form_data, endpoint)
+            except AccountExhausted:
+                pass
+    raise await limit_error(redis, exhausted, resets_enabled)
+
+
+async def account_request(request, account, form_data, endpoint):
+    model = form_data.get('model', '')
+    _, upstream_id = split_model_id(model)
+    # Each attempt gets its own copy: the Responses conversion consumes the messages.
+    payload = copy.deepcopy({key: value for key, value in form_data.items() if key not in ('metadata', 'model')})
+    payload['model'] = upstream_id
+    wants_stream = bool(payload.get('stream'))
     headers = {}
     if account.provider == 'codex':
         from open_webui.routers.openai import convert_to_responses_payload
 
         tokens, limits = await refresh_account(account)
         await record_codex_limits(request, account.id, limits)
+        if codex_exhausted(limits):
+            raise AccountExhausted()
         headers = {
             'Authorization': 'Bearer ' + tokens['access_token'],
             'ChatGPT-Account-Id': tokens['account_id'],
@@ -182,6 +256,8 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
             timeout=get_client_timeout(stream=bool(payload.get('stream'))),
         )
         await record_provider_limits(getattr(request.app.state, 'redis', None), account.id, response.headers)
+        if response.status == 429:
+            raise AccountExhausted()
         if response.status >= 300:
             if response.status in (401, 403):
                 await ProviderAccounts.update(
@@ -218,7 +294,7 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
             streaming = True
             return StreamingResponse(stream_wrapper(response), media_type='text/event-stream')
         return await response.json()
-    except HTTPException:
+    except (HTTPException, AccountExhausted):
         raise
     except Exception:
         raise HTTPException(502, 'The provider request failed. Try again shortly.') from None

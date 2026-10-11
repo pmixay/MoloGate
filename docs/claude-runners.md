@@ -353,7 +353,7 @@ do not consume a Claude subscription for automated fallback work. Record the act
 provider and present model changes according to the global mode. In `observe`, record a
 quota-driven swap without performing it; the always-on background exclusion still applies.
 
-No Claude reset button. Tier 5 displays a provider-observed reset time when available, otherwise
+No automatic Claude reset. Tier 5 displays a provider-observed reset time when available, otherwise
 an explicit unknown/retry status and available alternatives. Never invent a reset time from an
 estimated token count. The roadmap's reset redemption remains Codex-only.
 
@@ -494,7 +494,7 @@ Do not deploy a credential-bearing service before authentication, caps and disab
 | 7.2 | Official runner image and wrapper                                | A connected test runner streams text and correct usage; concurrency, watchdog and disconnect cleanup pass.                                                      |
 | 7.3 | Backend API, redaction, registrations/events, notifications      | Owner connects through the API to a verified `ok` account; duplicate/replayed events and identities have no duplicate effects.                                  |
 | 7.4 | Metering/account-window integration, after Phase 2               | Ledger reconciles against available provider readings within ±10%; missing authoritative readings are an explicit unresolved criterion.                         |
-| 7.5 | Selection/stickiness, worker rules and credits, after Phases 3–5 | Roadmap-style scenarios pass in observe, no background subscription use, grants persist across reconnects, no reset button.                                     |
+| 7.5 | Selection/stickiness, worker rules and credits, after Phases 3–5 | Roadmap-style scenarios pass in observe, no background subscription use, grants persist across reconnects, no automatic reset.                                  |
 | 7.6 | Reconciliation, LRU and circuit-breaker resilience               | Three accounts never exceed the live ceiling, off stops runners, restart races and provider failure storms preserve state.                                      |
 | 7.7 | Connect UI and account/context status                            | Owner completes the selected flow without SSH; flow A still requires local `claude setup-token`. Status and unknown quota are clear.                            |
 | 7.8 | Observe and rollout                                              | At least one week of real traffic, accepted metering/isolation/load evidence, rollback procedure verified, then configured enforcement.                         |
