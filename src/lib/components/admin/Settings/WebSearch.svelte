@@ -50,7 +50,14 @@
 		'linkup',
 		'openserp'
 	];
-	let webLoaderEngines = ['playwright', 'firecrawl', 'tavily', 'microsoft_web_iq', 'external'];
+	let webLoaderEngines = [
+		'exa',
+		'playwright',
+		'firecrawl',
+		'tavily',
+		'microsoft_web_iq',
+		'external'
+	];
 
 	let webConfig: any = null;
 	const inputClass =
@@ -1335,6 +1342,21 @@
 							/>
 						</div>
 					</div>
+				{:else if webConfig.WEB_LOADER_ENGINE === 'exa'}
+					<!-- Mologate: Exa reads pages with the same key it searches with. -->
+					{#if webConfig.WEB_SEARCH_ENGINE !== 'exa'}
+						<div class="mb-2.5 flex w-full flex-col">
+							<div class=" self-center text-xs text-gray-600 dark:text-gray-400 mb-1">
+								{$i18n.t('settings.admin.web.exaApiKey.label')}
+							</div>
+
+							<SensitiveInput
+								variant="settings"
+								placeholder={$i18n.t('Enter Exa API Key')}
+								bind:value={webConfig.EXA_API_KEY}
+							/>
+						</div>
+					{/if}
 				{:else if webConfig.WEB_LOADER_ENGINE === 'tavily'}
 					<div class="mb-2.5 flex w-full flex-col">
 						<div>

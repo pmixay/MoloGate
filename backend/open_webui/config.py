@@ -1201,7 +1201,8 @@ WEB_FETCH_MAX_CONTENT_LENGTH = (
     int(os.getenv('WEB_FETCH_MAX_CONTENT_LENGTH')) if os.getenv('WEB_FETCH_MAX_CONTENT_LENGTH') else None
 )
 
-WEB_LOADER_ENGINE = os.getenv('WEB_LOADER_ENGINE', '')
+# Mologate: pages are read through Exa (its Contents API) by default; without an Exa key, directly.
+WEB_LOADER_ENGINE = os.getenv('WEB_LOADER_ENGINE', 'exa')
 
 
 WEB_LOADER_CONCURRENT_REQUESTS = int(os.getenv('WEB_LOADER_CONCURRENT_REQUESTS', '10'))

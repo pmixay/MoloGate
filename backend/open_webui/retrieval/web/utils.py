@@ -37,6 +37,7 @@ from langchain_core.documents import Document
 from open_webui.config import (
     ENABLE_LOCAL_WEB_FETCH,
     EXTERNAL_WEB_LOADER_API_KEY,
+    EXA_API_KEY,
     EXTERNAL_WEB_LOADER_URL,
     FIRECRAWL_API_BASE_URL,
     FIRECRAWL_API_KEY,
@@ -585,6 +586,52 @@ class SafeTavilyLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
                 raise e
 
 
+class SafeExaLoader(BaseLoader, RateLimitMixin):
+    """Mologate: pages read through Exa's Contents API (retrieval/web/exa.py), which also handles
+    pages a plain request can't, such as JavaScript-rendered or bot-protected sites. Exa fetches
+    the pages, not this server, so the direct certificate check other loaders make is skipped;
+    get_web_loader has already refused private and blocked addresses."""
+
+    def __init__(
+        self,
+        web_paths: Union[str, List[str]],
+        api_key: str,
+        continue_on_failure: bool = True,
+        requests_per_second: Optional[float] = None,
+        verify_ssl: bool = True,
+        trust_env: bool = False,
+    ):
+        self.web_paths = web_paths if isinstance(web_paths, list) else [web_paths]
+        self.api_key = api_key
+        self.continue_on_failure = continue_on_failure
+        self.requests_per_second = requests_per_second
+        self.last_request_time = None
+
+    def _documents(self) -> list[Document]:
+        from open_webui.retrieval.web.exa import get_exa_contents  # exa imports this module
+
+        try:
+            pages = get_exa_contents(self.api_key, self.web_paths)
+        except Exception as e:
+            if not self.continue_on_failure:
+                raise e
+            log.exception(f'Error reading URLs through Exa: {e}')
+            return []
+        return [
+            Document(page_content=page['text'], metadata={'source': page['url'], 'title': page['title']})
+            for page in pages
+        ]
+
+    def lazy_load(self) -> Iterator[Document]:
+        self._sync_wait_for_rate_limit()
+        yield from self._documents()
+
+    async def alazy_load(self) -> AsyncIterator[Document]:
+        await self._wait_for_rate_limit()
+        for document in await run_in_threadpool(self._documents):
+            yield document
+
+
 class SafeMicrosoftWebIQLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
     def __init__(
         self,
@@ -1080,6 +1127,15 @@ def get_web_loader(
 
     WebLoaderClass = None
 
+    if engine == 'exa':
+        exa_api_key = cfg('exa_api_key', EXA_API_KEY)
+        if exa_api_key:
+            WebLoaderClass = SafeExaLoader
+            web_loader_args['api_key'] = exa_api_key
+        else:
+            # Mologate: until an Exa key is set, read pages directly.
+            engine = 'safe_web'
+
     if engine == '' or engine == 'safe_web':
         WebLoaderClass = SafeWebBaseLoader
 
@@ -1148,5 +1204,5 @@ def get_web_loader(
     else:
         raise ValueError(
             f'Invalid WEB_LOADER_ENGINE: {engine}. '
-            "Please set it to 'safe_web', 'playwright', 'firecrawl', 'tavily', 'external', or 'microsoft_web_iq'."
+            "Please set it to 'safe_web', 'exa', 'playwright', 'firecrawl', 'tavily', 'external', or 'microsoft_web_iq'."
         )

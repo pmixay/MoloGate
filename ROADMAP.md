@@ -43,6 +43,9 @@ are not in priority order. Tick an item off when it ships.
     offered the search tool, only `fetch_url` for pages it is given. Each result brings up to 3,000
     characters of the page's text (`EXA_MAX_CONTENT_LENGTH`). Existing installs are switched on once,
     and an engine an admin already picked is kept.
+  - Done: pages are read through Exa too (its Contents API), for `fetch_url` and links added to a
+    chat. It returns clean text and gets through JavaScript-rendered and bot-protected pages that a
+    direct request can't read. It uses the same `EXA_API_KEY`; without it, pages are read directly.
 
 ### Container nodes
 
