@@ -5,6 +5,9 @@ are not in priority order. Tick an item off when it ships.
 
 ## Limits
 
+The full design and phased plan for accounts, limits, credits and personal API keys is in
+[docs/limits-and-accounts.md](docs/limits-and-accounts.md). It replaces the fair-use proposal below.
+
 - [ ] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
       the subscription type, and whether it is an API key or a full account. Accounts are shared by the
       whole team.
@@ -24,8 +27,9 @@ are not in priority order. Tick an item off when it ships.
     limits). They are kept per connection, so every model on a shared account shows the same ones.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
-- [ ] **Fair use:** wide per-person limits on the shared accounts, so one person can't use up the
-      quota for everyone. Proposed defaults under [Proposed limits](#proposed-limits).
+- [ ] **Fair use:** each shared account is split 50/50 between its owner and a public pool; members
+      past their share keep working on cheap worker models. See
+      [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
 - [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
@@ -394,15 +398,5 @@ use their own limits in this section.
 
 ### Fair use of shared accounts
 
-Deliberately wide, so they only stop real overuse.
-
-| Limit                                                 | Default | Range   |
-| ----------------------------------------------------- | ------- | ------- |
-| Share of the team's combined 5-hour quota, per person | 70%     | 30–100% |
-| Share of the team's combined weekly quota, per person | 50%     | 20–100% |
-
-- **Warning:** a person sees a warning at 80% of their share.
-- **At the limit:** their new requests wait until the window moves on.
-- **Solo use:** the limit doesn't apply while nobody else on the team has used Mologate in the last
-  24 hours, so a person working alone is never blocked.
-- **Overrides:** any team member can lift the limit for someone temporarily.
+Replaced by the owner reserve, public pool and worker tier in
+[docs/limits-and-accounts.md](docs/limits-and-accounts.md).
