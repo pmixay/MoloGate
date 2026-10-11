@@ -209,9 +209,12 @@ while idle, disable its backup cron entry until it is running again.
 The live staging stack follows `limits-and-accounts-slim`, published by the
 [successful branch build](https://github.com/pmixay/MoloGate/actions/runs/38131457642)
 at `fdbce1c`. `IMAGE` also accepts a digest for a pinned deployment.
-Its admin uses the production admin's email with a separate password
-stored in `/opt/mologate-staging/admin-password` (root only). It has a fresh
-database; production's provider keys and chat history were not copied.
+The owner's two admin accounts also exist on staging. Their password hashes
+were copied once from production at the owner's request, so the same passwords
+work on both sites. Future registrations, password changes and role changes
+remain separate. The original admin's recovery password is stored in
+`/opt/mologate-staging/admin-password` (root only). Production's provider keys
+and chat history were not copied.
 
 ## Evidence from this session
 
