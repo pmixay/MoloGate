@@ -2034,13 +2034,21 @@ ENABLE_CALENDAR = os.getenv('ENABLE_CALENDAR', 'True').lower() == 'true'
 
 ENABLE_AUTOMATIONS = os.getenv('ENABLE_AUTOMATIONS', 'True').lower() == 'true'
 
-ENABLE_SUBAGENTS = os.getenv('ENABLE_SUBAGENTS', 'False').lower() == 'true'
-SUBAGENTS_BACKGROUND_ENABLED = os.getenv('SUBAGENTS_BACKGROUND_ENABLED', 'False').lower() == 'true'
+# Mologate: sub-agents, background sub-agents included, are on by default.
+ENABLE_SUBAGENTS = os.getenv('ENABLE_SUBAGENTS', 'True').lower() == 'true'
+SUBAGENTS_BACKGROUND_ENABLED = os.getenv('SUBAGENTS_BACKGROUND_ENABLED', 'True').lower() == 'true'
 SUBAGENTS_MAX_CONCURRENT = int(os.getenv('SUBAGENTS_MAX_CONCURRENT', '20'))
 SUBAGENTS_MAX_ASYNC = int(os.getenv('SUBAGENTS_MAX_ASYNC', '20'))
 SUBAGENTS_MAX_ITERATIONS = int(os.getenv('SUBAGENTS_MAX_ITERATIONS', '30'))
 SUBAGENTS_MAX_OUTPUT = int(os.getenv('SUBAGENTS_MAX_OUTPUT', '30000'))
 SUBAGENTS_SYSTEM_PROMPT = os.getenv('SUBAGENTS_SYSTEM_PROMPT', '')
+
+# Mologate: admin-defined sub-agent profiles, on top of the built-in ones
+# (utils/subagent_profiles.py): a JSON list of {name, description, prompt, model}.
+try:
+    SUBAGENTS_PROFILES = JSONCodec.loads(os.getenv('SUBAGENTS_PROFILES', '[]'))
+except Exception:
+    SUBAGENTS_PROFILES = []
 
 AUTOMATION_MAX_COUNT = os.getenv('AUTOMATION_MAX_COUNT', '')
 
@@ -3126,6 +3134,7 @@ DEFAULT_CONFIG = {
     'subagents.max_iterations': SUBAGENTS_MAX_ITERATIONS,
     'subagents.max_output': SUBAGENTS_MAX_OUTPUT,
     'subagents.system_prompt': SUBAGENTS_SYSTEM_PROMPT,
+    'subagents.profiles': SUBAGENTS_PROFILES,
     'automations.max_count': AUTOMATION_MAX_COUNT,
     'automations.min_interval': AUTOMATION_MIN_INTERVAL,
     'automations.auth_token_expires_in': AUTOMATION_AUTH_TOKEN_EXPIRES_IN,

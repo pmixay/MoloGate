@@ -69,9 +69,16 @@ are not in priority order. Tick an item off when it ships.
 
 ### Agents and tasks
 
-- [ ] **Subagents:**
+- [x] **Subagents:**
   - Users can open and read each subagent's conversation.
   - Preconfigured subagent profiles, such as "general purpose".
+  - Done: sub-agents, background ones included, are on by default, and existing installs are switched
+    on once. Each `delegate_task` call, background result and agent message links to the sub-agent's
+    conversation. The conversation opens read-only, even while the sub-agent is still working, with
+    its profile and a link back to the main conversation. Anyone who can read the main chat can read
+    its sub-agents. `delegate_task` takes a profile: `general-purpose` (the default), `explore`,
+    `plan` or `reviewer`. Each adds role instructions to the sub-agent. Admins add their own profiles
+    under Settings → Sub-agents, optionally on another model.
 - [ ] **Team-wide and system-wide skills:**
   - **Open WebUI today:**
     - Workspace → Skills holds skills made of a name, a description and one markdown text.
@@ -109,8 +116,13 @@ are not in priority order. Tick an item off when it ships.
   - **Control and reuse:** workflows can be cancelled, and resumed after a failure without re-running
     finished steps. Saved workflows can be shared with the team, e.g. "code review", "research a
     topic", "implement + test + review".
-- [ ] **Agent-to-agent messaging:** agents in the same chat can message each other, including the main
+- [x] **Agent-to-agent messaging:** agents in the same chat can message each other, including the main
       agent.
+  - Done: the main agent and its sub-agents get `send_message` (to `main` or a sub-agent's id) and
+    `list_agents`. A running agent reads a message after its current tool call. An idle main agent
+    starts a new turn for it. The main agent can restart a finished sub-agent with a message, up to
+    10 times, and the answer comes back as a reply. Sub-agents can message running sub-agents, but
+    not restart finished ones. Messages show in both conversations as "Message from…" rows.
 - [ ] **Background tasks:**
   - A task moves to the background automatically after a set time.
   - Users can see the list of running tasks and stop any of them.

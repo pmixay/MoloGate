@@ -2,6 +2,7 @@
 	import Collapsible from '$lib/components/common/Collapsible.svelte';
 	import ToolCallDisplay from '$lib/components/common/ToolCallDisplay.svelte';
 	import TerminalOutputFile from './TerminalOutputFile.svelte';
+	import AgentMessageRow from './AgentMessageRow.svelte';
 	import { resolveChatMessageToolCall } from '$lib/apis/chats';
 	import { settings } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
@@ -118,6 +119,8 @@
 						<ToolCallDisplay
 							id={`${id}-${displayItem.id}-${detailIndex}-tool-call`}
 							attributes={detailToken.attributes}
+							{chatId}
+							{messageId}
 							resultContent={detailToken.text}
 							grouped={true}
 							resolvable={!!chatId && !!messageId && save}
@@ -169,6 +172,14 @@
 				{/each}
 			</div>
 		</ConsecutiveDetailsGroup>
+	{:else if displayItem.type === 'agent_message'}
+		<AgentMessageRow
+			content={String(displayItem.item.content ?? '')}
+			from={String(displayItem.item.from ?? '')}
+			fromName={String(displayItem.item.from_name ?? '')}
+			fromChatId={String(displayItem.item.from_chat_id ?? '')}
+			{chatId}
+		/>
 	{:else if displayItem.type === 'file'}
 		{#if displayItem.item?.displayed || $settings?.terminalFileDisplay === 'inline'}
 			<TerminalOutputFile item={displayItem.item} {chatId} />
@@ -179,6 +190,8 @@
 			<ToolCallDisplay
 				id={`${id}-${displayItem.id}-tool-call`}
 				attributes={detailToken.attributes}
+				{chatId}
+				{messageId}
 				resultContent={detailToken.text}
 				{allowEmbeds}
 				resolvable={!!chatId && !!messageId && save}

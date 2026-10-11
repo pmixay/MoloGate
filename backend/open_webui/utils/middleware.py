@@ -106,6 +106,7 @@ from open_webui.utils.image_input import model_reads_images, strip_image_inputs
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.memory import add_memory_context, review_memory_after_turn
+from open_webui.utils.agent_messages import take_agent_messages
 from open_webui.utils.misc import (
     add_or_update_system_message,
     add_or_update_user_message,
@@ -6272,6 +6273,9 @@ async def streaming_chat_response_handler(response, ctx):
                                         append=False,
                                     )
                         tool_call_sources.clear()
+
+                    # Mologate: messages other agents sent this one while it worked (utils/agent_messages.py).
+                    output.extend(await take_agent_messages(metadata.get('chat_id')))
 
                     await emit_output()
 

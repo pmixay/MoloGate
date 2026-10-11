@@ -19,6 +19,7 @@
 	import Image from './Image.svelte';
 	import FullHeightIframe from './FullHeightIframe.svelte';
 	import { settings } from '$lib/stores';
+	import { getChatSubagents } from '$lib/apis/chats';
 	import PermissionPromptButtons from '$lib/components/chat/Messages/PermissionPromptButtons.svelte';
 
 	export let id: string = '';
@@ -33,7 +34,12 @@
 		done?: string;
 		status?: string;
 		permission_reason?: string;
+		tool_name?: string;
+		subagent_chat_id?: string;
 	} = {};
+	// Mologate: the chat and answer this call belongs to, to find a running sub-agent's conversation.
+	export let chatId = '';
+	export let messageId = '';
 
 	export let open = false;
 	export let grouped = false;
@@ -161,6 +167,32 @@
 	$: parsedArgs = parseArguments(args);
 	$: parsedResult = parseJSONString(result);
 
+	// Mologate: delegate_task links to the sub-agent's conversation. The result names it once the
+	// sub-agent is done; while it runs, it's found among the chat's sub-agents by answer and task.
+	let foundSubagentChatId = '';
+	let subagentLookup = false;
+	$: isDelegate = attributes?.tool_name === 'delegate_task';
+	$: subagentChatId = attributes?.subagent_chat_id || foundSubagentChatId;
+	$: if (isDelegate && !subagentChatId && !subagentLookup && chatId && messageId && !isDone) {
+		findSubagentChat();
+	}
+
+	const findSubagentChat = async () => {
+		subagentLookup = true;
+		const task = parseArguments(decode(attributes?.arguments ?? ''))?.task;
+		for (let attempt = 0; attempt < 5 && !foundSubagentChatId; attempt++) {
+			if (attempt) {
+				await new Promise((resolve) => setTimeout(resolve, 1500));
+			}
+			const subagents = await getChatSubagents(localStorage.token, chatId).catch(() => []);
+			const match = subagents
+				.filter((subagent) => subagent.parent_message_id === messageId)
+				.reverse()
+				.find((subagent) => typeof task !== 'string' || task.trim().startsWith(subagent.task));
+			foundSubagentChatId = match?.id ?? '';
+		}
+	};
+
 	const toggleOpen = () => {
 		open = !open;
 	};
@@ -253,6 +285,16 @@
 						{/if}
 					</span>
 				</div>
+
+				{#if isDelegate && subagentChatId}
+					<a
+						href={`/c/${subagentChatId}`}
+						class="shrink-0 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline"
+						on:click|stopPropagation
+					>
+						{$i18n.t('Open conversation')}
+					</a>
+				{/if}
 
 				<!-- Chevron -->
 				<div class="flex shrink-0 self-center translate-y-[1px]">

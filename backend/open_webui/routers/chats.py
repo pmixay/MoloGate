@@ -1335,6 +1335,43 @@ async def get_chat_by_id(
 
 
 ############################
+# GetChatSubagents
+############################
+
+
+@router.get('/{id}/subagents', response_model=list[dict])
+async def get_chat_subagents(
+    id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: the sub-agents a chat started, so their conversations can be opened."""
+    chat = await Chats.get_chat_by_id_for_user(id, user, db=db)
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    subagents = []
+    for subagent in await Chats.get_subagent_chats_by_parent_id(id, chat.user_id):
+        meta = subagent['meta']
+        subagents.append(
+            {
+                'id': subagent['id'],
+                'agent_id': meta.get('delegation_id'),
+                'profile': meta.get('profile') or 'general-purpose',
+                'task': meta.get('task') or subagent['title'],
+                'mode': meta.get('mode') or 'foreground',
+                'model_id': meta.get('model_id'),
+                'parent_message_id': meta.get('parent_message_id'),
+                'running': await has_active_tasks(request.app.state.redis, subagent['id']),
+                'created_at': subagent['created_at'],
+                'updated_at': subagent['updated_at'],
+            }
+        )
+    return subagents
+
+
+############################
 # UpdateChatById
 ############################
 

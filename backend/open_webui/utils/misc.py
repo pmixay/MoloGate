@@ -562,6 +562,12 @@ def convert_output_to_messages(
                 if output_text:
                     pending_content.append(f'<code_interpreter_output>\n{output_text}\n</code_interpreter_output>')
 
+        elif item_type == 'agent_message':
+            # Mologate: another agent messaged this one mid-turn (utils/agent_messages.py).
+            flush_pending()
+            if item.get('content'):
+                messages.append({'role': 'user', 'content': str(item['content'])})
+
         elif item_type.startswith('open_webui:'):
             # Skip other extension types
             pass

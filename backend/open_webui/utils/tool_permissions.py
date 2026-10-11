@@ -77,6 +77,8 @@ READ_ONLY_TOOLS = {
     'create_tasks',
     'update_task',
     'timer',
+    'list_agents',
+    'send_message',
 }
 
 # The safety net when no reviewer answers: only unmistakably destructive commands.

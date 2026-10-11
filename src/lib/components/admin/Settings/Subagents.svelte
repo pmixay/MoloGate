@@ -3,15 +3,21 @@
 	import { toast } from 'svelte-sonner';
 
 	import { getSubagentsConfig, setSubagentsConfig } from '$lib/apis/configs';
+	import { models } from '$lib/stores';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
+
+	// Mologate: preset roles the main agent picks when it delegates (backend utils/subagent_profiles.py).
+	type Profile = { name: string; description: string; prompt: string; model?: string | null };
 
 	let loading = true;
 	let saving = false;
-	let enabled = false;
-	let backgroundEnabled = false;
+	let enabled = true;
+	let backgroundEnabled = true;
+	let builtinProfiles: Profile[] = [];
+	let profiles: Profile[] = [];
 	let maxConcurrent = 20;
 	let maxAsync = 20;
 	let maxIterations = 30;
@@ -21,8 +27,13 @@
 	onMount(async () => {
 		try {
 			const config = await getSubagentsConfig(localStorage.token);
-			enabled = config?.ENABLE_SUBAGENTS ?? false;
-			backgroundEnabled = config?.SUBAGENTS_BACKGROUND_ENABLED ?? false;
+			enabled = config?.ENABLE_SUBAGENTS ?? true;
+			backgroundEnabled = config?.SUBAGENTS_BACKGROUND_ENABLED ?? true;
+			builtinProfiles = config?.SUBAGENTS_BUILTIN_PROFILES ?? [];
+			profiles = (config?.SUBAGENTS_PROFILES ?? []).map((profile: Profile) => ({
+				...profile,
+				model: profile.model ?? ''
+			}));
 			maxConcurrent = Number(config?.SUBAGENTS_MAX_CONCURRENT) || 20;
 			maxAsync = Number(config?.SUBAGENTS_MAX_ASYNC) || 20;
 			maxIterations = Number(config?.SUBAGENTS_MAX_ITERATIONS) || 30;
@@ -45,15 +56,30 @@
 				SUBAGENTS_MAX_ASYNC: maxAsync,
 				SUBAGENTS_MAX_ITERATIONS: maxIterations,
 				SUBAGENTS_MAX_OUTPUT: maxOutput,
-				SUBAGENTS_SYSTEM_PROMPT: systemPrompt
+				SUBAGENTS_SYSTEM_PROMPT: systemPrompt,
+				SUBAGENTS_PROFILES: profiles.map((profile) => ({
+					...profile,
+					model: profile.model || null
+				}))
 			});
 			toast.success($i18n.t('Settings saved successfully!'));
 		} catch (error) {
-			toast.error(`${error}`);
+			toast.error(`${(error as any)?.detail ?? error}`);
 		} finally {
 			saving = false;
 		}
 	};
+
+	const addProfile = () => {
+		profiles = [...profiles, { name: '', description: '', prompt: '', model: '' }];
+	};
+
+	const removeProfile = (index: number) => {
+		profiles = profiles.filter((_, i) => i !== index);
+	};
+
+	const inputClass =
+		'h-7 w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:focus:border-blue-500';
 </script>
 
 <form class="flex h-full flex-col justify-between text-sm" on:submit|preventDefault={save}>
@@ -180,6 +206,87 @@
 						<p class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 							{$i18n.t('settings.admin.subagents.systemPrompt.description')}
 						</p>
+					</div>
+
+					<div class="subagent-profiles">
+						<div class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('Profiles')}</div>
+						<p class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+							{$i18n.t(
+								'The main agent picks a profile when it delegates. A profile adds role instructions, and can run the sub-agent on another model.'
+							)}
+						</p>
+
+						<div class="mt-2 flex flex-col gap-1">
+							{#each builtinProfiles as profile (profile.name)}
+								<div class="flex items-baseline gap-2 text-xs">
+									<span class="font-mono text-gray-700 dark:text-gray-300 shrink-0"
+										>{profile.name}</span
+									>
+									<span class="text-gray-400 dark:text-gray-600 min-w-0 truncate"
+										>{profile.description}</span
+									>
+									<span
+										class="ml-auto shrink-0 text-[0.625rem] uppercase tracking-wide text-gray-400 dark:text-gray-600"
+										>{$i18n.t('Built-in')}</span
+									>
+								</div>
+							{/each}
+						</div>
+
+						<div class="mt-2 flex flex-col gap-2">
+							{#each profiles as profile, index}
+								<div
+									class="custom-profile flex flex-col gap-1.5 rounded-xl border border-gray-100 p-2.5 dark:border-white/[0.06]"
+								>
+									<div class="flex items-center gap-1.5">
+										<input
+											class="{inputClass} font-mono"
+											placeholder={$i18n.t('Name, e.g. researcher')}
+											aria-label={$i18n.t('Name')}
+											bind:value={profile.name}
+										/>
+										<select
+											class="{inputClass} max-w-[45%]"
+											aria-label={$i18n.t('Model')}
+											bind:value={profile.model}
+										>
+											<option value="">{$i18n.t('Same model as the main agent')}</option>
+											{#each $models ?? [] as model (model.id)}
+												<option value={model.id}>{model.name}</option>
+											{/each}
+										</select>
+										<button
+											type="button"
+											class="shrink-0 rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:hover:bg-white/5 dark:hover:text-gray-200"
+											on:click={() => removeProfile(index)}
+										>
+											{$i18n.t('Remove')}
+										</button>
+									</div>
+									<input
+										class={inputClass}
+										placeholder={$i18n.t('When the main agent should use it')}
+										aria-label={$i18n.t('Description')}
+										bind:value={profile.description}
+									/>
+									<textarea
+										rows="3"
+										class="w-full resize-y rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:focus:border-blue-500"
+										placeholder={$i18n.t('Instructions for the sub-agent in this role')}
+										aria-label={$i18n.t('Instructions')}
+										bind:value={profile.prompt}
+									></textarea>
+								</div>
+							{/each}
+						</div>
+
+						<button
+							type="button"
+							class="add-profile mt-2 rounded-lg px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100"
+							on:click={addProfile}
+						>
+							+ {$i18n.t('Add profile')}
+						</button>
 					</div>
 				{/if}
 			</div>

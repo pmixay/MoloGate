@@ -599,6 +599,30 @@ class ChatTable:
             )
             return list(result.scalars().all())
 
+    async def get_subagent_chats_by_parent_id(self, parent_chat_id: str, user_id: str) -> list[dict]:
+        """Mologate: the sub-agent chats a chat started, oldest first, without their messages."""
+        async with get_async_db_context() as session:
+            result = await session.execute(
+                select(Chat.id, Chat.title, Chat.meta, Chat.created_at, Chat.updated_at)
+                .where(
+                    Chat.user_id == user_id,
+                    Chat.meta['internal'].as_boolean().is_(True),
+                    Chat.meta['type'].as_string() == 'subagent',
+                    Chat.meta['parent_chat_id'].as_string() == parent_chat_id,
+                )
+                .order_by(Chat.created_at.asc())
+            )
+            return [
+                {
+                    'id': row.id,
+                    'title': row.title,
+                    'meta': row.meta or {},
+                    'created_at': row.created_at,
+                    'updated_at': row.updated_at,
+                }
+                for row in result.all()
+            ]
+
     async def get_internal_chat_by_note_id(
         self, note_id: str, user_id: str, db: AsyncSession | None = None
     ) -> ChatModel | None:
@@ -1820,6 +1844,13 @@ class ChatTable:
 
             folder = await Folders.get_folder_by_id(chat.folder_id, db=db)
             if folder and await has_folder_access(user.id, folder, 'read', db):
+                return chat
+
+        # Mologate: a sub-agent's conversation is readable by whoever can read the chat that started it.
+        meta = chat.meta or {}
+        if meta.get('type') == 'subagent' and meta.get('parent_chat_id') and meta['parent_chat_id'] != id:
+            parent = await self.get_chat_by_id_for_user(meta['parent_chat_id'], user, db=db)
+            if parent and parent.user_id == chat.user_id:
                 return chat
 
         return None

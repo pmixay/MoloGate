@@ -14,6 +14,7 @@ from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import bearer_auth_header, get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
+from open_webui.utils.subagent_profiles import BUILTIN_PROFILES, validate_custom_profiles
 from open_webui.utils.oauth import (
     OAuthClientInformationFull,
     apply_connection_oauth_options,
@@ -74,6 +75,7 @@ SUBAGENTS_CONFIG_KEYS = {
     'SUBAGENTS_MAX_ITERATIONS': 'subagents.max_iterations',
     'SUBAGENTS_MAX_OUTPUT': 'subagents.max_output',
     'SUBAGENTS_SYSTEM_PROMPT': 'subagents.system_prompt',
+    'SUBAGENTS_PROFILES': 'subagents.profiles',
 }
 
 
@@ -778,11 +780,23 @@ class SubagentsConfigForm(BaseModel):
     SUBAGENTS_MAX_ITERATIONS: int
     SUBAGENTS_MAX_OUTPUT: int
     SUBAGENTS_SYSTEM_PROMPT: str
+    # Mologate: the admin's own profiles; the built-in ones come back read-only.
+    SUBAGENTS_PROFILES: list[dict] = []
+    SUBAGENTS_BUILTIN_PROFILES: list[dict] = []
+
+
+async def get_subagents_config_values() -> dict:
+    values = await get_config_values(SUBAGENTS_CONFIG_KEYS)
+    return {
+        **values,
+        'SUBAGENTS_PROFILES': values.get('SUBAGENTS_PROFILES') or [],
+        'SUBAGENTS_BUILTIN_PROFILES': BUILTIN_PROFILES,
+    }
 
 
 @router.get('/subagents', response_model=SubagentsConfigForm)
 async def get_subagents_config(user=Depends(get_admin_user)):
-    return await get_config_values(SUBAGENTS_CONFIG_KEYS)
+    return await get_subagents_config_values()
 
 
 @router.post('/subagents', response_model=SubagentsConfigForm)
@@ -791,8 +805,12 @@ async def set_subagents_config(
     form_data: SubagentsConfigForm,
     user=Depends(get_admin_user),
 ):
+    try:
+        form_data.SUBAGENTS_PROFILES = validate_custom_profiles(form_data.SUBAGENTS_PROFILES)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     await Config.upsert(config_updates(form_data.model_dump(), SUBAGENTS_CONFIG_KEYS))
-    values = await get_config_values(SUBAGENTS_CONFIG_KEYS)
+    values = await get_subagents_config_values()
     await publish_event(
         request,
         EVENTS.CONFIG_UPDATED,

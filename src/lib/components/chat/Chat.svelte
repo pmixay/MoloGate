@@ -414,11 +414,14 @@
 	let generationController = null;
 	let contextCompactionToastId = null;
 
-	let chat = null;
+	let chat: any = null;
 	let tags = [];
 
-	// Read-only when viewing someone else's chat (e.g. via shared folder access)
-	$: readOnly = chat != null && chat.user_id !== $user?.id;
+	// Mologate: a sub-agent's conversation, opened from the chat that started it.
+	$: subagentChat = chat?.meta?.type === 'subagent' ? chat.meta : null;
+
+	// Read-only when viewing someone else's chat (e.g. via shared folder access), or a sub-agent's
+	$: readOnly = chat != null && (chat.user_id !== $user?.id || !!subagentChat);
 
 	let chatOwner = null;
 
@@ -433,7 +436,7 @@
 		});
 	};
 
-	$: if (readOnly && chat?.user_id) {
+	$: if (readOnly && chat?.user_id && chat.user_id !== $user?.id) {
 		void resolveChatOwner(chat.user_id);
 	} else {
 		chatOwner = null;
@@ -1133,6 +1136,27 @@
 		}
 	};
 
+	// Mologate: turns the server starts on its own (sub-agent results, agent messages) are announced
+	// with chat:reload, and a fast one can finish streaming while that reload is still fetching. Its
+	// events then name a message this page doesn't have yet, so reload once more to catch up.
+	let chatReloading = false;
+	let chatReloadAgain = false;
+	const reloadChat = async () => {
+		if (chatReloading) {
+			chatReloadAgain = true;
+			return;
+		}
+		chatReloading = true;
+		try {
+			do {
+				chatReloadAgain = false;
+				await loadChat();
+			} while (chatReloadAgain);
+		} finally {
+			chatReloading = false;
+		}
+	};
+
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
 
@@ -1140,13 +1164,21 @@
 			await tick();
 			const type = event?.data?.type ?? null;
 			if (type === 'chat:reload') {
-				await loadChat();
+				await reloadChat();
 				return;
 			}
 			if (type === 'chat:list') {
 				return;
 			}
 			let message = history.messages[event.message_id];
+
+			if (!message && event.message_id) {
+				if (chatReloading) {
+					chatReloadAgain = true;
+				} else if (type === 'chat:completion' && event?.data?.data?.done) {
+					void reloadChat();
+				}
+			}
 
 			if (message) {
 				const data = event?.data?.data ?? null;
@@ -4262,7 +4294,29 @@
 								</div>
 							</div>
 
-							{#if readOnly}
+							{#if subagentChat}
+								<div class="pb-6 z-10 px-4">
+									<div
+										class="subagent-chat-banner flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-gray-400 dark:text-gray-500 text-center"
+									>
+										<span>
+											{$i18n.t('Sub-agent conversation')} · {subagentChat.profile ??
+												'general-purpose'}
+											{#if subagentChat.delegation_id}
+												· <span class="font-mono">{subagentChat.delegation_id}</span>
+											{/if}
+										</span>
+										{#if subagentChat.parent_chat_id}
+											<a
+												href={`/c/${subagentChat.parent_chat_id}`}
+												class="text-gray-600 dark:text-gray-300 hover:underline"
+											>
+												{$i18n.t('Back to main conversation')}
+											</a>
+										{/if}
+									</div>
+								</div>
+							{:else if readOnly}
 								<div class="pb-6 z-10">
 									<div class="text-xs text-gray-400 dark:text-gray-500 text-center">
 										{$i18n.t('Read only')}
