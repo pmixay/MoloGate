@@ -25,6 +25,7 @@ from typing import Any
 from fastapi.responses import JSONResponse
 from open_webui.models.config import Config
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.model_ids import find_model_id
 
 log = logging.getLogger(__name__)
 
@@ -128,29 +129,6 @@ Actions the agent is about to take:
 Reply with JSON only, no prose. Give a reason only for "ask": one short sentence for the user on
 what could go wrong.
 {{"actions": [{{"index": 1, "decision": "allow"}}, {{"index": 2, "decision": "ask", "reason": "..."}}]}}"""
-
-
-def _normalize_model_name(value: str) -> str:
-    return re.sub(r'[\s_]+', '-', (value or '').strip().lower())
-
-
-def find_model_id(name: str, models) -> str | None:
-    """A model id for ``name``: exact, else by id ignoring case, spaces and provider prefix, else by name."""
-    if not name:
-        return None
-    if models.get(name):
-        return name
-
-    wanted = _normalize_model_name(name)
-    for model_id, model in models.items():
-        normalized = _normalize_model_name(model_id)
-        if (
-            normalized == wanted
-            or normalized.rsplit('/', 1)[-1] == wanted
-            or _normalize_model_name(str(model.get('name') or '')) == wanted
-        ):
-            return model_id
-    return None
 
 
 def is_always_allowed(params: dict | None) -> bool:

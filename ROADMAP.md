@@ -240,10 +240,22 @@ are not in priority order. Tick an item off when it ships.
   - Restricting OpenCode completely doesn't work, so a different approach to locking it down is
     needed.
 - [ ] Pull in the latest models automatically.
-- [ ] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
+- [x] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
       latest ChatGPT Luna model (currently Luna 6), and follow it automatically as new versions ship.
       If it's unavailable, they fall back to GLM-5.3 Flash.
-- [ ] **AI lab logos:** upload logos for each lab and group models by lab in the model dropdown.
+  - Done: when no task model is set, each background job picks the newest model whose id or name says
+    Luna (highest version; the plain model over mini variants and dated snapshots), so a new version
+    is used as soon as it shows up in the model list. Without one it uses GLM-5.3 Flash, then the
+    chat's own model. A task model chosen under Settings → Interface still wins, and that page shows
+    which model the default resolves to. `DEFAULT_SYSTEM_MODEL_FAMILY` and
+    `DEFAULT_SYSTEM_MODEL_FALLBACK` change the two.
+- [x] **AI lab logos:** bundle logos for each lab, assign them to models automatically, and group
+      models by lab in the model dropdown.
+  - Done: 25 lab logos ship with Mologate, drawn from the MIT-licensed lobe-icons set onto Mologate's
+    dark tile (`scripts/build-lab-logos.py` rebuilds them). Each model's lab comes from its
+    provider prefix (`z-ai/...`) or model family (`claude-...`, `glm-...`); custom models use their
+    base model's. Models without a picture of their own show their lab's logo everywhere, and the
+    model dropdown groups models under lab headers when not searching.
 - [ ] **Personal API keys:**
   - Each user gets a personal OpenAI-compatible API key.
   - With it they can use Mologate's features and every model in the interface from other apps and

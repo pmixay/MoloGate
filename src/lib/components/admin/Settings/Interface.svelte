@@ -23,6 +23,8 @@
 	let taskConfig = {
 		TASK_MODEL: '',
 		TASK_MODEL_EXTERNAL: '',
+		// Mologate: read-only; what "Default system model" resolves to right now.
+		DEFAULT_SYSTEM_MODEL: null as string | null,
 		TASK_MODEL_PARAMS: {},
 		ENABLE_TITLE_GENERATION: true,
 		TITLE_GENERATION_PROMPT_TEMPLATE: '',
@@ -193,7 +195,7 @@
 									taskConfig.TASK_MODEL = normalizeModelSelection(taskConfig.TASK_MODEL);
 								}}
 							>
-								<option value="" selected>{$i18n.t('Current Model')}</option>
+								<option value="" selected>{$i18n.t('Default system model')}</option>
 								{#each modelOptions as model}
 									<option value={model.id} class="bg-gray-100 dark:bg-gray-700">
 										{model.name}
@@ -214,7 +216,7 @@
 									);
 								}}
 							>
-								<option value="" selected>{$i18n.t('Current Model')}</option>
+								<option value="" selected>{$i18n.t('Default system model')}</option>
 								{#each modelOptions as model}
 									<option value={model.id} class="bg-gray-100 dark:bg-gray-700">
 										{model.name}
@@ -223,6 +225,22 @@
 								{/each}
 							</SettingsSelect>
 						</AdminSettingField>
+					</div>
+
+					<!-- Mologate: background jobs default to the newest GPT Luna (utils/task.py). -->
+					<div class="mt-1.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+						{$i18n.t(
+							"Default system model: the newest GPT Luna model, picked up as new versions ship, else GLM-5.3 Flash, else the chat's own model."
+						)}
+						{#if taskConfig.DEFAULT_SYSTEM_MODEL}
+							{$i18n.t('Now: {{MODEL}}.', {
+								MODEL:
+									modelOptions.find((m) => m.id === taskConfig.DEFAULT_SYSTEM_MODEL)?.name ??
+									taskConfig.DEFAULT_SYSTEM_MODEL
+							})}
+						{:else}
+							{$i18n.t("Neither is connected right now, so jobs use the chat's own model.")}
+						{/if}
 					</div>
 
 					<div class="mt-2.5">

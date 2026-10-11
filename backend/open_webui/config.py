@@ -2184,6 +2184,12 @@ ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', None)
 
 TASK_MODEL = os.getenv('TASK_MODEL', '')
 
+# Mologate: the default system model for background jobs (titles, follow-ups, tags, queries...)
+# when no task model is set: the newest model of this family, so a new version is picked up as soon
+# as it is listed, else the fallback. See get_task_model_id in utils/task.py.
+DEFAULT_SYSTEM_MODEL_FAMILY = os.getenv('DEFAULT_SYSTEM_MODEL_FAMILY', 'luna')
+DEFAULT_SYSTEM_MODEL_FALLBACK = os.getenv('DEFAULT_SYSTEM_MODEL_FALLBACK', 'glm-5.3-flash')
+
 TASK_MODEL_EXTERNAL = os.getenv('TASK_MODEL_EXTERNAL', '')
 
 try:

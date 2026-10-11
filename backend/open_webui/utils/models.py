@@ -27,6 +27,7 @@ from open_webui.utils.plugin import (
 )
 from open_webui.utils.context_window import apply_context_windows
 from open_webui.utils.image_input import apply_image_input_support
+from open_webui.utils.model_labs import apply_model_labs
 from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
@@ -275,6 +276,8 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
     apply_image_input_support(models)
     # Mologate: context window sizes for the composer's context indicator.
     apply_context_windows(models)
+    # Mologate: each model's AI lab, for bundled lab logos and grouping in the model dropdown.
+    apply_model_labs(models)
 
     # Process action_ids to get the actions
     def get_action_items_from_module(function, module):

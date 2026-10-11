@@ -34,6 +34,7 @@
 		showSettings
 	} from '$lib/stores';
 	import { toast } from 'svelte-sonner';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { capitalizeFirstLetter, sanitizeResponseContent, splitStream } from '$lib/utils';
 	import {
 		resolveLocalizedModelDescription,
@@ -262,7 +263,7 @@
 		updateFuse();
 	}
 
-	$: filteredItems = (
+	$: matchedItems = (
 		searchValue
 			? fuse
 					.search(searchValue)
@@ -310,6 +311,44 @@
 						}
 					})
 	).filter((item) => includeHidden || !(item.model?.info?.meta?.hidden ?? false));
+
+	// Mologate: without a search, models are grouped by AI lab (backend utils/model_labs.py), labs
+	// in the order their first model appears and unrecognized models last. Each group starts with a
+	// header row as tall as a model row, so the virtual list keeps one row height.
+	type LabRow =
+		| { kind: 'header'; key: string; lab: { id: string; name: string } | null }
+		| { kind: 'item'; key: string; item: any; index: number };
+
+	const groupItemsByLab = (list: any[]) => {
+		const groups = new Map<string, any[]>();
+		for (const item of list) {
+			const key = item.model?.lab?.id ?? '';
+			if (!groups.has(key)) groups.set(key, []);
+			groups.get(key)!.push(item);
+		}
+		const other = groups.get('') ?? [];
+		groups.delete('');
+		return [...[...groups.values()].flat(), ...other];
+	};
+
+	const buildRows = (list: any[], grouped: boolean): LabRow[] => {
+		const result: LabRow[] = [];
+		let previousLab: string | null = null;
+		list.forEach((item: any, index: number) => {
+			const lab = item.model?.lab ?? null;
+			if (grouped && (lab?.id ?? '') !== previousLab) {
+				result.push({ kind: 'header', key: `lab:${lab?.id ?? ''}`, lab });
+				previousLab = lab?.id ?? '';
+			}
+			result.push({ kind: 'item', key: item.value, item, index });
+		});
+		return result;
+	};
+
+	$: groupByLab =
+		!searchValue && new Set(matchedItems.map((item) => item.model?.lab?.id ?? '')).size > 1;
+	$: filteredItems = groupByLab ? groupItemsByLab(matchedItems) : matchedItems;
+	$: rows = buildRows(filteredItems, groupByLab);
 
 	$: sanitizedSearchValue = searchValue.trim();
 	$: downloadTargets =
@@ -404,7 +443,11 @@
 		}
 
 		// Set the virtual scroll position so the selected item is rendered and centered
-		const targetScrollTop = Math.max(0, selectedModelIdx * ITEM_HEIGHT - 128 + ITEM_HEIGHT / 2);
+		const selectedRow = Math.max(
+			0,
+			rows.findIndex((row) => row.kind === 'item' && row.index === selectedModelIdx)
+		);
+		const targetScrollTop = Math.max(0, selectedRow * ITEM_HEIGHT - 128 + ITEM_HEIGHT / 2);
 		listScrollTop = targetScrollTop;
 
 		await tick();
@@ -887,7 +930,7 @@
 
 	$: visibleStart = Math.max(0, Math.floor(listScrollTop / ITEM_HEIGHT) - OVERSCAN);
 	$: visibleEnd = Math.min(
-		filteredItems.length,
+		rows.length,
 		Math.ceil((listScrollTop + listViewportHeight) / ITEM_HEIGHT) + OVERSCAN
 	);
 </script>
@@ -1103,25 +1146,40 @@
 								}}
 							>
 								<div style="height: {visibleStart * ITEM_HEIGHT}px;" />
-								{#each filteredItems.slice(visibleStart, visibleEnd) as item, i (item.value)}
-									{@const index = visibleStart + i}
-									<ModelItem
-										{selectedModelIdx}
-										{item}
-										{index}
-										value={primaryValue}
-										{pinModelHandler}
-										{unloadModelHandler}
-										{deleteModelHandler}
-										{selectionOnly}
-										{compareEnabled}
-										{selectedValues}
-										onClick={() => {
-											selectItem(item, index);
-										}}
-									/>
+								{#each rows.slice(visibleStart, visibleEnd) as row (row.key)}
+									{#if row.kind === 'header'}
+										<div
+											class="flex h-8 items-end gap-2 px-2 pb-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+											role="presentation"
+										>
+											{#if row.lab}
+												<img
+													src={`${WEBUI_API_BASE_URL}/models/lab/logo?id=${row.lab.id}`}
+													alt=""
+													class="size-3.5 shrink-0 rounded-[3px]"
+												/>
+											{/if}
+											<span class="truncate">{row.lab?.name ?? $i18n.t('Other')}</span>
+										</div>
+									{:else}
+										<ModelItem
+											{selectedModelIdx}
+											item={row.item}
+											index={row.index}
+											value={primaryValue}
+											{pinModelHandler}
+											{unloadModelHandler}
+											{deleteModelHandler}
+											{selectionOnly}
+											{compareEnabled}
+											{selectedValues}
+											onClick={() => {
+												selectItem(row.item, row.index);
+											}}
+										/>
+									{/if}
 								{/each}
-								<div style="height: {(filteredItems.length - visibleEnd) * ITEM_HEIGHT}px;" />
+								<div style="height: {(rows.length - visibleEnd) * ITEM_HEIGHT}px;" />
 							</div>
 						{/if}
 
