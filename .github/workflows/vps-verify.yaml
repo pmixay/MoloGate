@@ -22,7 +22,7 @@ jobs:
           import json
           import urllib.request
 
-          base = 'https://5-83-140-221.sslip.io'
+          base = 'https://ai.arbuz.lol'
           with urllib.request.urlopen(base + '/ready', timeout=30) as response:
               assert json.load(response)['status'] is True
           with urllib.request.urlopen(base + '/api/config', timeout=30) as response:

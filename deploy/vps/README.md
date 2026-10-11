@@ -1,8 +1,10 @@
 # Phase 0: VPS hosting
 
-Production is https://5-83-140-221.sslip.io on the Ubuntu VPS at `5.83.140.221`.
-The runtime directory is `/opt/mologate`. Production uses the image built from
-`main`; the account roadmap stays on `limits-and-accounts`.
+Production is https://ai.arbuz.lol on the Ubuntu VPS at `5.83.140.221`.
+The runtime directory is `/opt/mologate`. At the owner's request, Phase 1 testing now takes
+place on this site using the image built from `limits-and-accounts`, pinned in the live `.env`.
+See [Phase 1 deployment notes](../../docs/phase1-accounts.md). All development remains on that
+single working branch.
 
 These files make the deployment reproducible. They cover hosting only; account
 tables, account connections, metering and enforcement belong to later phases.
@@ -40,7 +42,7 @@ Copy this directory to `/opt/mologate`, create the `mologate_edge` network as
 above, and copy `.env.example` to `.env` with mode 600. Set a unique
 `WEBUI_SECRET_KEY` and `POSTGRES_PASSWORD`, using separate runs of
 `openssl rand -hex 32`. Set the domain's A record to the VPS before starting
-Caddy. The temporary sslip.io domain already encodes the VPS address.
+Caddy. The current production hostname is `ai.arbuz.lol`, with an A record to `5.83.140.221`.
 
 Authenticate the existing GitHub account for the private registry without
 displaying its token:
@@ -174,7 +176,30 @@ retrieval needs a planned logical dump/restore into a **new** pgvector-backed
 volume first. Do not switch an existing Alpine data directory to a Debian
 image in place; preserve the current database for rollback.
 
-## Staging before Phase 1
+## Production domain and Phase 1 testing
+
+On 2026-10-11, the owner selected `ai.arbuz.lol` and asked to test Phase 1 directly there.
+HTTP redirects to HTTPS, and Caddy manages the certificate. The old production hostname
+`5-83-140-221.sslip.io` redirects to `https://ai.arbuz.lol`, preserving the request path and query.
+The application's `webui.url` database setting and `WEBUI_URL` environment both use the new URL.
+Users sign in on the new hostname with their existing credentials.
+
+Production runs the verified `limits-and-accounts` image from `45ec77e`, pinned as
+`ghcr.io/pmixay/mologate@sha256:bbf29556766851164e5e68ff51f1e86b4a9e171c90b09827a7166238de415113`.
+The previous database/data/config backup is
+`/opt/mologate/backups/2026-10-11T12-36-21-020692649Z`; the previous application image ID is in
+`/opt/mologate/phase1-rollback-image`. Preserve the existing PostgreSQL image, volumes and secrets.
+If reverting to pre-Phase-1 code, restore its matching database backup before starting it.
+
+To retain the old hostname on a recovered deployment, copy `legacy-production.caddy.example`
+to `/opt/mologate/caddy-sites/legacy-production.caddy`, then validate and reload Caddy. Keep
+`DOMAIN=ai.arbuz.lol` in the production `.env`.
+
+The proposed `staging.ai.arbuz.lol` migration was canceled by the owner. No DNS record or Caddy
+site for it is required. The existing separate staging stack below remains available at its
+old address, but it is not the site for the current Phase 1 acceptance test.
+
+## Existing staging stack
 
 Copy the deployment files into `/opt/mologate-staging`, create its own `.env`
 with different secrets, and set:
@@ -253,7 +278,8 @@ existing public ports remain reachable. Staging acceptance does not enable this 
 
 ## Evidence from this session
 
-On 2026-10-11, these files were installed on the VPS and checked live:
+The following initial Phase 0 checks were completed on 2026-10-11. They predate the production
+domain/Phase 1 update described above; current deployment evidence is in the Phase 1 notes.
 
 - Production runs `main-slim` at `a20a336`; staging runs the branch's slim image
   with separate PostgreSQL, Redis and data volumes. Both pass HTTPS readiness.

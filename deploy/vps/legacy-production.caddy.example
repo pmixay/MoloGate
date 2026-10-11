@@ -1,0 +1,4 @@
+# Keep old bookmarks working after the production domain migration.
+5-83-140-221.sslip.io {
+	redir https://ai.arbuz.lol{uri} 308
+}

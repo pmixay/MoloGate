@@ -426,8 +426,10 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 
 **In progress: 2026-10-11**, on the single working branch `limits-and-accounts`.
 Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
-Deployed to staging; 21 automated regressions, real Z.ai normal/streamed chats, and desktop/mobile
-browser checks pass. The remaining acceptance check is two real Codex accounts serving chats.
+Implemented and first verified on staging; 21 automated regressions, real Z.ai normal/streamed
+chats, and desktop/mobile browser checks pass. The owner now requests acceptance testing on
+[ai.arbuz.lol](https://ai.arbuz.lol/?settings=provider_accounts), where the verified Phase 1 image
+is deployed. The remaining acceptance check is two real Codex accounts serving chats.
 
 Claude Pro/Max subscription runners belong to Phase 7. They are not an additional Phase 1
 completion requirement; an isolated authentication/protocol spike can follow Phase 1 early.
@@ -521,12 +523,14 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
   was removed. The package is private, so the VPS needs a token with `read:packages`.
 - Containers: Mologate (the slim image, with the embedding model offloaded to an API, since local
   embeddings would eat the RAM), Postgres, Redis, Caddy. Add a 4 GB swap file.
-- Caddy handles HTTPS on a domain (or `5-83-140-221.sslip.io` until there is one). The firewall
-  allows only 22, 80 and 443.
+- Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
+  The firewall allows only 22, 80 and 443.
 - **Staging:** a second, smaller stack on `staging.<domain>` with its own database. Phase 0 used
   `limits-and-accounts-slim`; staging now runs `phase1-accounts-slim` as recorded in the
   [Phase 1 notes](phase1-accounts.md). Future staging builds/deployments use the consolidated
-  `limits-and-accounts-slim` tag. The team uses production; the implementer tests on staging.
+  `limits-and-accounts-slim` tag. This stack remains available for isolated work. The owner has
+  chosen the production domain for the current Phase 1 acceptance test; no new staging domain
+  is being configured.
 - Backups: nightly `pg_dump` and a copy of the data volume, kept 7 days, later off the box.
 - **Phase 7, planned:** add a separate runner-manager and private account volumes on staging.
   Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
@@ -537,6 +541,9 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 
 ## 14. Decisions log
 
+- 2026-10-11: move production to `https://ai.arbuz.lol`, retaining redirects from the old hostname.
+  The owner requests Phase 1 testing on that site and cancels the new staging-domain setup.
+  Deploy the verified `limits-and-accounts` image there after backup, preserving existing data.
 - 2026-10-11: the owner requests one working branch, `limits-and-accounts`, for every phase.
   Consolidate the Phase 1 code and Claude runner plan there; no separate phase branches.
 - 2026-10-11: personal share is the pool divided equally among all members.

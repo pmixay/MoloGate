@@ -2,21 +2,27 @@
 
 Implementation branch: **`limits-and-accounts`**, shared by all roadmap phases.
 Phase 1 remains in progress until two members connect Codex accounts in the browser and both
-complete chats. Production continues to use the Phase 0 deployment.
+complete chats. At the owner's request, perform that acceptance test on
+[ai.arbuz.lol → Provider accounts](https://ai.arbuz.lol/?settings=provider_accounts).
 
-Deployed to [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_accounts) on
-2026-10-11 from code commit `a4fce64`, using `ghcr.io/pmixay/mologate:phase1-accounts-slim`.
+Deployed to production on 2026-10-11 from `limits-and-accounts` image commit `45ec77e`, after
+[image CI and account regressions](https://github.com/pmixay/MoloGate/actions/runs/38138875262)
+passed on both architectures. The live image is pinned to
+`ghcr.io/pmixay/mologate@sha256:bbf29556766851164e5e68ff51f1e86b4a9e171c90b09827a7166238de415113`.
+Existing production users, provider connections, data and registration policy are retained.
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
-The deployed image tag above records the existing deployment; future staging builds and updates
-use `ghcr.io/pmixay/mologate:limits-and-accounts-slim` from the single working branch.
-The existing two staging admins retain their accounts and passwords.
+Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
+
+Earlier verification used [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_accounts)
+at `a4fce64`, using `ghcr.io/pmixay/mologate:phase1-accounts-slim`. That isolated stack remains
+available; the requested new staging domain was canceled in favor of testing on the main site.
 
 Anthropic API-key accounts are in this phase. Claude Pro/Max subscription containers are a
 separate [Phase 7 plan](claude-runners.md); they do not change Phase 1's completion criteria.
 
 ## Account management
 
-Open **Settings → Provider accounts** on staging. Approved members and admins can connect
+Open **Settings → Provider accounts** on https://ai.arbuz.lol. Approved members and admins can connect
 ChatGPT/Codex, Anthropic API, OpenAI API, OpenRouter, or Z.ai accounts. API-key accounts require a
 monthly USD budget; this value is stored but spending enforcement belongs to Phase 4. Z.ai coding
 plans use their dedicated endpoint. New accounts default to private. Owners and admins can verify,
@@ -74,6 +80,10 @@ change independently of the published inference API.
 
 ## Verification
 
+- Production at `https://ai.arbuz.lol` now passes trusted HTTPS, HTTP/old-hostname redirects,
+  frontend asset loading, existing administrator sign-in, the authenticated account API and a
+  real `glm-5.3-flash` chat. Migration reached `b1a7c9e4d205`; all 3 existing users and 11 model
+  records were retained. Limits mode remains `observe`, and registration still requires approval.
 - 20 backend regressions passed against an isolated PostgreSQL database; 21 passed on SQLite
   after adding the audit-redaction regression. Image CI passed all 21 on both amd64 and arm64:
   [build 38136120277](https://github.com/pmixay/MoloGate/actions/runs/38136120277).
@@ -88,8 +98,10 @@ change independently of the published inference API.
   desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no browser
   page errors. Screenshots were inspected for layout and readability.
 
-Pre-deployment backup: `/opt/mologate-staging/backups/2026-10-11T11-37-24-862036999Z`.
-The previous image ID is recorded in `/opt/mologate-staging/phase1-rollback-image`. To roll back,
+Production pre-deployment backup: `/opt/mologate/backups/2026-10-11T12-36-21-020692649Z`.
+The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`.
+The earlier staging backup remains `/opt/mologate-staging/backups/2026-10-11T11-37-24-862036999Z`,
+with its previous image in `/opt/mologate-staging/phase1-rollback-image`. To roll back either stack,
 restore the matching database backup before starting the old image, because its Alembic code does
 not know the new revision. The data volume and encryption secret must be restored together.
 
