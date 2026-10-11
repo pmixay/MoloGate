@@ -5,10 +5,10 @@ Phase 1 remains in progress until two members connect Codex accounts in the brow
 complete chats. At the owner's request, perform that acceptance test on
 [ai.arbuz.lol → Provider accounts](https://ai.arbuz.lol/?settings=provider_accounts).
 
-Deployed to production on 2026-10-11 from `limits-and-accounts` image commit `45ec77e`, after
-[image CI and account regressions](https://github.com/pmixay/MoloGate/actions/runs/38138875262)
+Deployed to production on 2026-10-11 from `limits-and-accounts` image commit `05a3311`, after
+[image CI and account regressions](https://github.com/pmixay/MoloGate/actions/runs/38141648967)
 passed on both architectures. The live image is pinned to
-`ghcr.io/pmixay/mologate@sha256:bbf29556766851164e5e68ff51f1e86b4a9e171c90b09827a7166238de415113`.
+`ghcr.io/pmixay/mologate@sha256:d983bdc3081560bc0312f46591b5f72d2646dc44a7960bcbf8bb555582716abd`.
 Existing production users, provider connections, data and registration policy are retained.
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
 Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
@@ -82,6 +82,18 @@ change independently of the published inference API.
 
 ## Verification
 
+- Shared-account visibility regression: all 24 backend tests pass, including mixed private/shared
+  pools in either order, unhealthy accounts, pending users, sharing revocation, and saved model ACLs.
+  An ordinary temporary member saw all seven models from the owner's connected Codex account and
+  completed a real chat with reported usage on `https://ai.arbuz.lol`; the test member was removed.
+  This verifies shared use of one real account. Acceptance still requires a second member to
+  connect a distinct real Codex account and complete a chat.
+- Image `05a3311` passed account regressions on amd64 and arm64 and was deployed on the main site.
+  Live desktop/mobile Chromium checks confirm all seven Codex models display **Public** and the
+  sharing shortcut opens Provider accounts. Browser-only response fixtures verify that saved
+  private/public model ACLs cannot override current account sharing. No browser errors occurred.
+  A fresh ordinary member also saw all seven models with shared visibility after deployment;
+  this temporary member was removed.
 - Production at `https://ai.arbuz.lol` now passes trusted HTTPS, HTTP/old-hostname redirects,
   frontend asset loading, existing administrator sign-in, the authenticated account API and a
   real `glm-5.3-flash` chat. Migration reached `b1a7c9e4d205`; all 3 existing users and 11 model
@@ -103,6 +115,11 @@ change independently of the published inference API.
 
 Production pre-deployment backup: `/opt/mologate/backups/2026-10-11T12-36-21-020692649Z`.
 The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`.
+
+Before the sharing-label fix, a further backup was taken at
+`/opt/mologate/backups/2026-10-11T13-01-40-451168846Z`, including the connected Codex account.
+Its previous Phase 1 image reference is in `/opt/mologate/sharing-rollback-image`; this fix adds
+no database migration.
 To roll back, restore the matching database backup before starting the old image, because its
 Alembic code does not know the new revision. The data volume and encryption secret must be
 restored together.
