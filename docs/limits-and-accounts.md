@@ -51,16 +51,19 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 5. **Anyone can use big models** from the pool, up to their personal share.
 6. **Worker tier.** Members who have used up what they were given keep access to the pool through
    cheap worker models only (GPT Luna, Claude Haiku 5.5, GLM-5.3 Flash class).
-7. **Credits** are a one-time reward for each account a member adds. Members who add no account get
-   none. A credit is worth 1/2.5 = 0.4 percentage points of extra pool use. Plan table:
+7. **Credits** are a one-time reward for each account a member adds to the pool. Members who add
+   no account get none. A credit is worth 1/2.5 = 0.4 percentage points of extra pool use.
+   Formula: **credits = 10 × the plan's usage multiplier**, where the provider's base paid tier is 1x.
 
-   | Plan added | Credits | Extra pool points |
-   | --- | --- | --- |
-   | ChatGPT Plus | 10 | 4 |
-   | Claude Pro (see [§3](#3-providers-and-what-their-terms-allow)) | 10 | 4 |
-   | Claude Max 5x | 50 | 20 |
-   | Claude Max 20x | 200 | 80 |
-   | ChatGPT Pro | open question | — |
+   | Account added | Multiplier | Credits | Extra pool points |
+   | --- | --- | --- | --- |
+   | ChatGPT Plus | 1x | 10 | 4 |
+   | ChatGPT Pro tiers (for example 5x, 20x) | the tier's multiplier | 50, 200 | 20, 80 |
+   | GLM coding plan (Lite, Pro, Max) | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier |
+   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20 | 10 × multiplier | 4 × multiplier |
+
+   The admin keeps the multiplier table in settings. Read the plan from the provider when possible
+   (Codex `account/read`); otherwise the member picks it when connecting and an admin can correct it.
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
@@ -93,8 +96,10 @@ complete through Anthropic's own flow". Anthropic enforces this without notice. 
   for example in their own runner container. Mologate never sees or stores that token. This is a
   later, runner-phase feature and is outside the pool.
 
-So Claude Pro and Max subscriptions earn credits only if the team decides they should (open
-question 1).
+The team wants Claude subscriptions in the pool as well and has said it will handle that risk
+itself. This spec does not cover that: it would mean storing Claude.ai credentials and routing other
+members' requests through them, which Anthropic forbids as quoted above. Until the team decides
+otherwise, Claude subscriptions are not connectable accounts and earn no credits.
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
 make their account available to others. The team has accepted this risk (PLAN.md, risk 1). Lower
@@ -146,8 +151,6 @@ There are **no** account, ledger or credit tables, and no account UI.
   in phase 2. It lets the gate estimate a request's cost before the provider reports it.
 - **Worker model:** a model on the admin's worker list, for example `gpt-luna`, `claude-haiku-5-5`
   and `glm-5.3-flash`. Each provider can have its own.
-- **Active member:** a member with any usage in the last 24 hours. The requester always counts as
-  active.
 
 ---
 
@@ -198,7 +201,7 @@ Personal API keys stay in the existing `api_key` table. Allow several named keys
 ## 7. Allowance engine
 
 A pure function: `decide(request, state) -> Decision`. `state` holds the accounts, their windows,
-the requester's usage in each window, active members, credits and overrides. `Decision` holds the
+the requester's usage in each window, the member count, credits and overrides. `Decision` holds the
 tier, the chosen account, the model to use (possibly swapped to a worker), the estimated cost and
 a human-readable reason.
 
@@ -220,7 +223,7 @@ toward their personal share, like anyone else's.
 
 ```
 C        = sum over shared accounts a of  c_a * (50 + L_a)          pool capacity, units
-N        = number of active members (min 1)
+N        = number of team members (all, active or not; min 1)
 share_u  = C / N                                                    units
 extra_u  = credits_u * 0.004 * C  +  active overrides               units
 used_u   = units of u's pool use in this window (tiers pool, credit, worker, owner overflow)
@@ -251,11 +254,11 @@ per-account concurrency cap (phase 4) is full.
 Accounts: **A** is ChatGPT Plus owned by Ann (`c=1`); **B** is ChatGPT Plus owned by Bob (`c=1`).
 Members: Ann, Bob, Cat (no account). Weekly window unless stated.
 
-1. Everyone active, nothing used. `C = 50 + 50 = 100`, `N = 3`, `share = 33.3` units each. Cat uses
+1. Nothing used yet. `C = 50 + 50 = 100`, `N = 3`, `share = 33.3` units each. Cat uses
    big models until her pool use reaches 33.3 units. The next request is tier 4 and gets Luna.
 2. Ann has used 10% of A. `lock_A = 40`, so the pool may use A until `u_A` reaches 60.
-3. Ann hasn't touched A for 24 h and has used 0 this window. `L_A = 25`, `C = 125`. Ann isn't
-   active, so `N = 2` and `share = 62.5`.
+3. Ann hasn't touched A for 24 h and has used 0 this window. `L_A = 25`, `C = 125`, `N = 3`, so
+   `share = 41.7` units each.
 4. Ann then sends a request. `L_A` drops to 0. If the pool had already pushed `u_A` to 70, Ann is
    left with 30% of A, not 50%. This follows decision 3.
 5. Ann's own Codex app use moves `u_A` from 20 to 35 with no matching Mologate traffic. That counts
@@ -439,14 +442,13 @@ Each phase lists what must be true to call it done.
 
 ---
 
-## 14. Open questions
+## 14. Decisions log
 
-1. Claude Pro and Max subscriptions can't join the pool (§3). Do their owners still get credits for
-   them, or only accounts that join the pool?
-2. How many credits for ChatGPT Pro (and Business seats, API keys)?
-3. Which domain should the site use?
-4. Personal share default: the pool divided equally among members active in the last 24 hours
-   (§7.2). Keep it, or weight it?
+- 2026-10-11: personal share is the pool divided equally among all members.
+- 2026-10-11: credits = 10 × plan multiplier for every poolable account; API keys by budget.
+- 2026-10-11: idle owner loan: no owner use for 24 hours lends up to 25 points.
+- 2026-10-11: hosting on the VPS from the start: https://5-83-140-221.sslip.io, compose stack in
+  `/opt/mologate`; GLM coding plan connected and Exa web search on.
 
 ---
 
