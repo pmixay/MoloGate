@@ -45,6 +45,12 @@ healthy shared account. Private access is checked again during inference, includ
 direct OpenAI routes, API-key requests, and model presets. Admin management permission does not
 permit inference through another member's private account.
 
+Admin → Models labels an account-backed model **Public** while at least one healthy account
+offering it is shared with approved members. Otherwise it is **Private** to its eligible owner.
+This label follows current account sharing, including when multiple accounts offer the same model;
+saved model ACLs do not override it. Its sharing controls open **Provider accounts**. Public here
+means available to approved team members; it does not grant anonymous or pending users access.
+
 The new catalog is refreshed separately from legacy connection caches. Existing configured
 connections remain usable. New snapshots use provider-account UUIDs; legacy snapshots use a hash
 of their URL and credential so reordering a connection cannot attach another account's limits.

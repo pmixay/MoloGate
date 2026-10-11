@@ -953,6 +953,10 @@ async def get_models(request: Request, refresh: bool = False, user=Depends(get_v
 @app.get('/api/models/base')
 async def get_base_models(request: Request, user=Depends(get_admin_user)):
     models = await get_all_base_models(request, user=user)
+    # Mologate: disabled account models still need live sharing metadata in admin settings.
+    from open_webui.utils.provider_accounts import account_models
+
+    models += await account_models(user)
     return {'data': models}
 
 

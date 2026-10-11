@@ -222,13 +222,57 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await account_models(ADMIN), [])
         own_models = await account_models(OWNER)
         self.assertEqual(own_models[0]['id'], 'account:openai_api:test-model')
+        self.assertEqual(own_models[0]['provider_account_sharing'], 'private')
         await ProviderAccounts.update(original.id, {'sharing': 'shared'})
+        self.assertEqual((await account_models(OTHER))[0]['provider_account_sharing'], 'shared')
         self.assertEqual((await select_account(own_models[0]['id'], OTHER)).id, original.id)
+        await ProviderAccounts.update(original.id, {'sharing': 'private'})
+        self.assertEqual((await account_models(OWNER))[0]['provider_account_sharing'], 'private')
+        self.assertEqual(await account_models(OTHER), [])
         await ProviderAccounts.update(original.id, {'sharing': 'paused'})
+        self.assertEqual(await account_models(OWNER), [])
         with self.assertRaises(HTTPException):
             await select_account(own_models[0]['id'], OWNER)
         await ProviderAccounts.delete(original.id)
         self.assertIsNone(await ProviderAccounts.get(original.id))
+
+    async def test_catalog_sharing_aggregates_only_healthy_accounts_in_any_order(self):
+        private = account()
+        shared = account(id='shared', sharing='shared', owner_user_id=OTHER.id)
+        for accounts in ([private, shared], [shared, private]):
+            with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=accounts)):
+                for user in (None, OWNER, OTHER, ADMIN):
+                    catalog = await account_models(user)
+                    self.assertEqual(len(catalog), 1)
+                    self.assertEqual(catalog[0]['provider_account_sharing'], 'shared')
+                self.assertEqual(await account_models(SimpleNamespace(id='pending', role='pending')), [])
+        for unavailable in (account(sharing='paused'), account(sharing='shared', status='needs_login')):
+            with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[private, unavailable])):
+                self.assertEqual((await account_models())[0]['provider_account_sharing'], 'private')
+                self.assertEqual(await account_models(OTHER), [])
+
+    async def test_catalog_and_chat_access_follow_sharing_despite_saved_model_acl(self):
+        from open_webui.utils import models as model_utils
+
+        original = await self.create_account(sharing='shared')
+        catalog = await account_models()
+        # A saved base-model override must not make a shared account private.
+        catalog[0]['info'] = {'id': catalog[0]['id'], 'user_id': OWNER.id, 'access_grants': []}
+        with (
+            patch.object(model_utils, 'BYPASS_MODEL_ACCESS_CONTROL', False),
+            patch.object(model_utils.Groups, 'get_groups_by_member_id', AsyncMock(return_value=[])),
+            patch.object(model_utils.AccessGrants, 'get_accessible_resource_ids', AsyncMock(return_value=[])),
+        ):
+            self.assertEqual(await model_utils.get_filtered_models(catalog, OTHER), catalog)
+            await model_utils.check_model_access(OTHER, catalog[0])
+            await ProviderAccounts.update(original.id, {'sharing': 'private'})
+            # Even an old public catalog and stale grants cannot keep credentials shared.
+            catalog[0]['info']['access_grants'] = [
+                {'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}
+            ]
+            self.assertEqual(await model_utils.get_filtered_models(catalog, OTHER), [])
+            with self.assertRaises(HTTPException):
+                await model_utils.check_model_access(OTHER, catalog[0])
 
     async def test_off_switch(self):
         with patch('open_webui.models.config.Config.get', AsyncMock(return_value='off')):
@@ -376,6 +420,19 @@ class Response:
 
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_account_model_acl_update_redirects_to_account_sharing(self):
+        from open_webui.routers.models import ModelAccessGrantsForm, update_model_access_by_id
+
+        with self.assertRaises(HTTPException) as error:
+            await update_model_access_by_id(
+                SimpleNamespace(),
+                ModelAccessGrantsForm(id='account:codex:test-model', access_grants=[]),
+                user=ADMIN,
+                db=None,
+            )
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertIn('Provider accounts', error.exception.detail)
+
     async def test_audit_body_logging_redacts_keys_and_device_codes(self):
         from starlette.requests import Request
         from open_webui.utils.audit import AuditContext, AuditLevel, AuditLoggingMiddleware

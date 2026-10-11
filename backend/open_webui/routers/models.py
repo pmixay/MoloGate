@@ -1124,6 +1124,9 @@ async def update_model_access_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    # Mologate: model ACLs cannot change access to provider-account credentials.
+    if form_data.id.startswith('account:'):
+        raise HTTPException(400, 'Manage sharing in Settings > Provider accounts.')
     model = await Models.get_model_by_id(form_data.id, db=db)
 
     # Non-preset models (e.g. direct Ollama/OpenAI models) may not have a DB

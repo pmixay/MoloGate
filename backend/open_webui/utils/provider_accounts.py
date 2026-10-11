@@ -80,6 +80,8 @@ async def account_models(user=None):
             continue
         for model in account.models:
             value = model_id(account.provider, model['id'])
+            # Visibility belongs to the pool, not whichever account is listed last.
+            shared = account.sharing == 'shared' or catalog.get(value, {}).get('provider_account_sharing') == 'shared'
             catalog[value] = {
                 'id': value,
                 'name': model.get('name') or model['id'],
@@ -87,6 +89,7 @@ async def account_models(user=None):
                 'created': 0,
                 'owned_by': 'openai',
                 'provider_account_provider': account.provider,
+                'provider_account_sharing': 'shared' if shared else 'private',
                 'upstream_model_id': model['id'],
             }
     return list(catalog.values())

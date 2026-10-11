@@ -52,6 +52,8 @@
 	import PinSlash from '$lib/components/icons/PinSlash.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
+	// Mologate: account sharing is managed on its settings page.
+	import Link from '$lib/components/icons/Link.svelte';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
@@ -107,12 +109,19 @@
 	}
 
 	const isPublicModel = (model) => {
+		// Mologate: provider account sharing controls access, including saved model overrides.
+		if (model?.id?.startsWith('account:')) {
+			return model.provider_account_sharing === 'shared';
+		}
 		return (model?.access_grants ?? []).some(
 			(g) => g.principal_type === 'user' && g.principal_id === '*' && g.permission === 'read'
 		);
 	};
 
-	const isSharedModel = (model) => (model?.access_grants ?? []).length > 0 && !isPublicModel(model);
+	const isSharedModel = (model) =>
+		!model?.id?.startsWith('account:') &&
+		(model?.access_grants ?? []).length > 0 &&
+		!isPublicModel(model);
 
 	const isPresetModel = (model: any) =>
 		!!(model?.preset || model?.base_model_id || model?.info?.base_model_id);
@@ -562,6 +571,11 @@
 	};
 
 	const toggleModelPrivacyHandler = async (model) => {
+		// Mologate: avoid a second, ineffective privacy setting for account-backed models.
+		if (model?.id?.startsWith('account:')) {
+			window.location.href = `${WEBUI_BASE_URL}/?settings=provider_accounts`;
+			return;
+		}
 		const nextAccessGrants = isPublicModel(model)
 			? []
 			: [
@@ -1179,21 +1193,27 @@
 										</Tooltip>
 
 										<Tooltip
-											content={isPublicModel(model)
-												? $i18n.t('Make Private')
-												: $i18n.t('Make Public')}
+											content={model?.id?.startsWith('account:')
+												? $i18n.t('Provider accounts')
+												: isPublicModel(model)
+													? $i18n.t('Make Private')
+													: $i18n.t('Make Public')}
 										>
 											<button
 												class="self-center w-fit text-sm p-1.5 rounded-xl text-gray-500 hover:bg-black/5 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white"
 												type="button"
-												aria-label={isPublicModel(model)
-													? $i18n.t('Make Private')
-													: $i18n.t('Make Public')}
+												aria-label={model?.id?.startsWith('account:')
+													? $i18n.t('Provider accounts')
+													: isPublicModel(model)
+														? $i18n.t('Make Private')
+														: $i18n.t('Make Public')}
 												on:click={() => {
 													toggleModelPrivacyHandler(model);
 												}}
 											>
-												{#if isPublicModel(model)}
+												{#if model?.id?.startsWith('account:')}
+													<Link className="size-3.5" />
+												{:else if isPublicModel(model)}
 													<LockClosed className="size-3.5" />
 												{:else}
 													<GlobeAlt className="size-3.5" />
