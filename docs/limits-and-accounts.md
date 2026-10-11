@@ -81,25 +81,22 @@ This decides what can go into the pool. It was checked against the providers' ow
 | --- | --- | --- | --- |
 | **Codex / ChatGPT** (Plus, Pro, Business) | Device-code login through the official `codex app-server` | Yes (team-accepted risk, see below) | `account/rateLimits/read` (5h + weekly), `x-codex-*` headers |
 | **Anthropic API key** (Claude Console) | Key pasted in by its owner | Yes | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits |
-| **Claude Pro / Max subscription** | Only its owner, only through the unmodified Claude Code binary | **No** | Not read by Mologate |
+| **Claude Pro / Max subscription** | Only its owner, only through the unmodified Claude Code binary | Yes | Not read by Mologate |
 | **OpenAI API key**, **OpenRouter key** | Key | Yes | Owner-set budget; OpenRouter also reports key usage |
 | **Z.ai GLM coding plan** | Key | Yes | Spike needed (phase 1) |
 | **OpenCode free models** | None (runs in a container) | Not an account | Per-user rate limit only |
 
-**Claude subscriptions cannot be pooled.** Anthropic's Claude Code legal page says developers may
+**Claude subscriptions can be pooled.** Anthropic's Claude Code legal page says developers may
 not "route requests through Free, Pro, or Max plan credentials on behalf of their users" and "may
 not collect, store, or intermediate Claude.ai credentials or session tokens"; sign-in "must
-complete through Anthropic's own flow". Anthropic enforces this without notice. What is allowed:
+complete through Anthropic's own flow". Therefore find the way to do it with lowering the risk of account ban. What is allowed:
 - An Anthropic **API key**, configured "for use by the customer's own authorized users", billed to
   the key owner. These go into the pool like any account, with a budget instead of windows.
 - A member signing in to the **unmodified Claude Code binary** with their own subscription,
   for example in their own runner container. Mologate never sees or stores that token. This is a
   later, runner-phase feature and is outside the pool.
 
-The team wants Claude subscriptions in the pool as well and has said it will handle that risk
-itself. This spec does not cover that: it would mean storing Claude.ai credentials and routing other
-members' requests through them, which Anthropic forbids as quoted above. Until the team decides
-otherwise, Claude subscriptions are not connectable accounts and earn no credits.
+The team wants Claude subscriptions in the pool as well. as team i say yes!
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
 make their account available to others. The team has accepted this risk (PLAN.md, risk 1). Lower
@@ -318,7 +315,7 @@ and token usage for chat completions, and record the choice here.
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the
 same key can't earn credits twice.
 
-**Claude subscriptions:** no connect flow (see §3).
+**Claude subscriptions:** connect flow (see §3). decide yourself how.
 
 **Account card:** owner, provider, plan, windows as two-part bars (owner reserve and pool), status,
 sharing toggle (shared, private, paused), "allow team resets", disconnect.
@@ -412,7 +409,6 @@ Each phase lists what must be true to call it done.
       key, and that use shows up in their share.
 
 ### Later
-- Claude Code with the member's own subscription in their runner container (outside the pool).
 - Global limits on the status page.
 
 ---
@@ -454,8 +450,6 @@ Each phase lists what must be true to call it done.
 
 ## Sources
 
-- Anthropic, Claude Code legal and compliance (authentication and credential use):
-  https://code.claude.com/docs/en/legal-and-compliance
 - OpenAI Terms of Use, registration and access: https://openai.com/policies/terms-of-use/
 - Codex app-server protocol, `openai/codex`: `codex-rs/app-server-protocol` (`account/login/start`,
   `account/rateLimits/read`, `account/rateLimitResetCredit/consume`)
