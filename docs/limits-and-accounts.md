@@ -360,7 +360,10 @@ Reconnecting the same account doesn't grant again.
 
 Each phase lists what must be true to call it done.
 
-### Phase 0: host on the VPS (start now, alongside phase 1)
+### Phase 0: host on the VPS
+
+**Done: 2026-10-11.** All Phase 0 acceptance checks below are complete.
+
 Hosting files and the deployment/recovery procedure are in
 [deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
 2026-10-11: production and isolated staging have HTTPS and nightly backups.
@@ -376,6 +379,9 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 - [x] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
 
 ### Phase 1: accounts
+
+**Next phase — not started.**
+
 - [ ] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
 - [ ] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.
 - [ ] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
