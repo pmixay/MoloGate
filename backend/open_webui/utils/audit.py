@@ -281,6 +281,12 @@ class AuditLoggingMiddleware:
             request_body = context.request_body.decode('utf-8', errors='replace')
             response_body = context.response_body.decode('utf-8', errors='replace')
 
+            # Mologate: account requests carry keys and device responses carry sign-in codes.
+            # Keep the audit metadata even when request/response body logging is enabled.
+            if request.url.path.rstrip('/').startswith('/api/v1/provider-accounts'):
+                request_body = '[provider account body redacted]'
+                response_body = '[provider account body redacted]'
+
             # Redact sensitive information
             if 'password' in request_body:
                 request_body = re.sub(

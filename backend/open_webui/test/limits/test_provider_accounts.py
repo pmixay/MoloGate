@@ -12,7 +12,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -376,6 +376,31 @@ class Response:
 
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_audit_body_logging_redacts_keys_and_device_codes(self):
+        from starlette.requests import Request
+        from open_webui.utils.audit import AuditContext, AuditLevel, AuditLoggingMiddleware
+
+        middleware = AuditLoggingMiddleware(AsyncMock(), audit_level=AuditLevel.REQUEST_RESPONSE)
+        middleware._get_authenticated_user = AsyncMock(return_value=None)
+        middleware.audit_logger = MagicMock()
+        request = Request(
+            {
+                'type': 'http',
+                'method': 'POST',
+                'path': '/api/v1/provider-accounts/codex',
+                'query_string': b'',
+                'headers': [],
+                'server': ('localhost', 80),
+            }
+        )
+        context = AuditContext(4096)
+        context.add_request_chunk(b'{"api_key":"never-log-this-key"}')
+        context.add_response_chunk(b'{"user_code":"never-log-this-code"}')
+        await middleware._log_audit_entry(request, context)
+        entry = middleware.audit_logger.write.call_args.args[0]
+        self.assertEqual(entry.request_object, '[provider account body redacted]')
+        self.assertEqual(entry.response_object, '[provider account body redacted]')
+
     async def test_openrouter_public_catalog_does_not_verify_key(self):
         seen = []
 

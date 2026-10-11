@@ -1568,6 +1568,8 @@ async def generate_chat_completion(
     url, key, api_config = await get_openai_connection(idx)
 
     prefix_id = api_config.get('prefix_id', None)
+    # Mologate: retain the connection identity before Azure rewrites the request URL.
+    limits_account_id = legacy_account_key(url, key)
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
 
     # Add user info to the payload if the model is a pipeline
@@ -1681,7 +1683,7 @@ async def generate_chat_completion(
             timeout=get_client_timeout(stream=is_streaming_request),
         )
         # Mologate: the account's usage limits, where the provider reports them in headers.
-        await record_provider_limits(request.app.state.redis, legacy_account_key(url, key), r.headers)
+        await record_provider_limits(request.app.state.redis, limits_account_id, r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):
