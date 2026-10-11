@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Verify HTTPS and disabled signups
+      - name: Verify HTTPS and production registration
         run: |
           python3 - <<'PY'
           import json
@@ -26,8 +26,12 @@ jobs:
           with urllib.request.urlopen(base + '/ready', timeout=30) as response:
               assert json.load(response)['status'] is True
           with urllib.request.urlopen(base + '/api/config', timeout=30) as response:
-              assert json.load(response)['features']['enable_signup'] is False
-          print('Public HTTPS readiness and signup settings passed.')
+              features = json.load(response)['features']
+              assert features['auth'] is True
+              assert features['enable_login_form'] is True
+              # Mologate: owner requested registration with admin approval.
+              assert features['enable_signup'] is True
+          print('Public HTTPS, authentication, sign-in and registration settings passed.')
           PY
 
       # A SYN scan on this network reported nearly every port as open even

@@ -363,13 +363,15 @@ Each phase lists what must be true to call it done.
 ### Phase 0: host on the VPS (start now, alongside phase 1)
 Hosting files and the deployment/recovery procedure are in
 [deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
-2026-10-11: production and isolated staging have HTTPS, closed signups and
-nightly backups. A regular team account completed a chat, and a production
+2026-10-11: production and isolated staging have HTTPS and nightly backups.
+At the owner's subsequent request, production allows registration with admin
+approval for new accounts; staging keeps signups closed.
+A regular team account completed a chat, and a production
 database backup was restored successfully. The full external TCP scan and
 direct confirmation found only ports 22, 80 and 443 reachable.
 
 - [x] The VPS runs `main` behind HTTPS (details in [§13](#13-hosting)).
-- [x] Signups disabled; the admin creates accounts for the team.
+- [x] Team onboarding: registration enabled with admin approval; admins can also create accounts.
 - [x] Nightly backup of the database and data volume.
 - [x] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
 

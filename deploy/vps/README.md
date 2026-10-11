@@ -56,11 +56,17 @@ docker compose up -d --wait --wait-timeout 180
 
 On an empty database, create the first admin immediately through the initial
 setup screen. Upstream allows this bootstrap even with signups disabled. Once
-an admin exists, check that **Admin Settings → General → Enable Signups** is off.
-Persistent database settings can override environment defaults on an existing
-installation. Add team members through **Admin Panel → Users → Add User**, with
-role **User**. Confirm a team member can sign in and complete a chat using the
-existing provider connection.
+an admin exists, choose the onboarding policy in **Admin Settings → General**.
+Production allows registration with **Default User Role → Pending**, following
+the owner's request to let team members create their own accounts. Set
+`ENABLE_SIGNUP=True` in production's `.env` and enable signups in the admin
+settings. Staging keeps registration disabled. Persistent database settings
+override environment defaults on an existing installation.
+
+New members choose their own passwords through **Sign up**, then an admin
+changes their role from **Pending** to **User** in **Admin Panel → Users**.
+Admins can also create accounts there directly. Confirm an approved member can
+sign in and complete a chat using the existing provider connection.
 
 Make the intended models available to team members in **Workspace → Models**.
 Provider connections alone can leave regular users with an empty model list.
@@ -213,8 +219,11 @@ On 2026-10-11, these files were installed on the VPS and checked live:
 
 - Production runs `main-slim` at `a20a336`; staging runs the branch's slim image
   with separate PostgreSQL, Redis and data volumes. Both pass HTTPS readiness.
-- Production and staging admin sign-in passed. Public signup returned 403 on
-  production, and both stacks report signups disabled.
+- Production and staging admin sign-in passed. Initially, signups were closed
+  as specified by Phase 0. Production registration was subsequently reopened
+  at the owner's request, with new accounts requiring admin approval. Public
+  registration was tested: a pending account could not access models, then
+  could sign in and list models after admin approval. Staging stays closed.
 - A disposable regular user could sign in, list shared models and receive a
   `glm-5.3-flash` chat completion. The test user was deleted afterward.
 - Production backups run at 03:30 UTC, staging at 04:00 UTC, with seven-day
@@ -227,7 +236,7 @@ On 2026-10-11, these files were installed on the VPS and checked live:
 - UFW is active with only 22/tcp, 80/tcp, 443/tcp and 443/udp allowed. Only
   Caddy publishes container ports, and the host has 4 GB of active swap.
 - [External checks](https://github.com/pmixay/MoloGate/actions/runs/38131735417)
-  passed HTTPS, disabled signups, an SSH handshake and rejection/filtering of
+  passed HTTPS, the initial closed-signup policy, an SSH handshake and rejection/filtering of
   13 private/control TCP ports. A scan of all 65,535 TCP ports plus direct
   confirmation found only 22, 80 and 443 reachable. One additional scan
   candidate failed all three direct connection attempts. Raw SYN scans on
