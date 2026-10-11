@@ -121,16 +121,10 @@ change independently of the published inference API.
   passed desktop and mobile Chromium checks, including switching between Z.ai and Codex, with no
   browser page errors. Screenshots were inspected for layout and readability.
 
-Production pre-deployment backup: `/opt/mologate/backups/2026-10-11T12-36-21-020692649Z`.
-The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`.
-
-Before the sharing-label fix, a further backup was taken at
-`/opt/mologate/backups/2026-10-11T13-01-40-451168846Z`, including the connected Codex account.
-Its previous Phase 1 image reference is in `/opt/mologate/sharing-rollback-image`; this fix adds
-no database migration.
-To roll back, restore the matching database backup before starting the old image, because its
-Alembic code does not know the new revision. The data volume and encryption secret must be
-restored together.
+The previous production image ID is recorded in `/opt/mologate/phase1-rollback-image`, and the
+image before the sharing-label fix in `/opt/mologate/sharing-rollback-image`. Backups are off
+during development, so an image older than the current database migration cannot be started
+without losing the data written since.
 
 The stdlib regression suite lives at `backend/open_webui/test/limits/test_provider_accounts.py`.
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private

@@ -652,6 +652,25 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.client.post('/accounts', json=form | {'owner_user_id': 'other'}).status_code, 422)
 
 
+class UploadMigrationTests(unittest.TestCase):
+    def test_existing_installs_send_uploads_as_full_text_once(self):
+        migration = importlib.import_module('open_webui.migrations.versions.d8e2b6c4a9f3_send_uploads_as_full_text')
+        self.assertEqual(migration.down_revision, 'c3d9e7a5b1f0')
+        engine = create_engine('sqlite://')
+        with engine.begin() as connection:
+            connection.exec_driver_sql('CREATE TABLE config (key TEXT PRIMARY KEY, value JSON)')
+            connection.exec_driver_sql(
+                "INSERT INTO config VALUES ('rag.bypass_embedding_and_retrieval', 'false'), ('other', 'false')"
+            )
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                migration.upgrade()
+            rows = dict(connection.exec_driver_sql('SELECT key, value FROM config').all())
+        engine.dispose()
+        self.assertEqual(json.loads(rows['rag.bypass_embedding_and_retrieval']), True)
+        self.assertEqual(json.loads(rows['other']), False)
+
+
 class SignupTests(unittest.IsolatedAsyncioTestCase):
     async def test_members_cannot_register_themselves(self):
         from open_webui.routers import auths

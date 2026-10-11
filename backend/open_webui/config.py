@@ -963,7 +963,8 @@ PADDLEOCR_VL_BASE_URL = os.getenv('PADDLEOCR_VL_BASE_URL', 'http://localhost:808
 
 PADDLEOCR_VL_TOKEN = os.getenv('PADDLEOCR_VL_TOKEN', '')
 
-BYPASS_EMBEDDING_AND_RETRIEVAL = os.getenv('BYPASS_EMBEDDING_AND_RETRIEVAL', 'False').lower() == 'true'
+# Mologate: uploads reach the model as their full text until per-chat sandboxes take the files.
+BYPASS_EMBEDDING_AND_RETRIEVAL = os.getenv('BYPASS_EMBEDDING_AND_RETRIEVAL', 'True').lower() == 'true'
 
 
 RAG_TOP_K = int(os.getenv('RAG_TOP_K', '3'))

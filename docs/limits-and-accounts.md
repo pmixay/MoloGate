@@ -439,15 +439,16 @@ Each phase lists what must be true to call it done.
 
 Hosting files and the deployment/recovery procedure are in
 [deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
-2026-10-11: production has HTTPS and nightly backups. Admins create every member
-account; self-registration is disabled in code.
+2026-10-11: production has HTTPS. Admins create every member account;
+self-registration is disabled in code.
 A regular team account completed a chat, and a production
 database backup was restored successfully. The full external TCP scan and
 direct confirmation found only ports 22, 80 and 443 reachable.
 
 - [x] The VPS runs `main` behind HTTPS (details in [§13](#13-hosting)).
 - [x] Team onboarding: admins create every account; members cannot register themselves.
-- [x] Nightly backup of the database and data volume.
+- Nightly backups were part of Phase 0 and have been removed for the development period. They
+  come back, kept off the VPS, before the team relies on the data.
 - [x] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
 
 ### Phase 1: accounts
@@ -564,7 +565,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
   embeddings would eat the RAM), Postgres, Redis, Caddy. Add a 4 GB swap file.
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
-- Backups: nightly `pg_dump` and a copy of the data volume, kept 7 days, later off the box.
+- Backups: none while Mologate is in development. Add them later, kept off the box.
 - **Phase 7, planned:** add a separate runner-manager and private account volumes.
   Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
   runner ports stay unpublished. Start with one live runner on this shared VPS and permit at
@@ -591,6 +592,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
   verified stable identity and a permanent grant record. The proposed token relay handles a
   credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
+- 2026-10-11: remove backups for the development period; add them back later, off the VPS.
 - 2026-10-11: no self-registration: admins create every member account. ChatGPT accounts can
   also connect with a sign-in link whose callback address the member pastes back, since a code
   alone is not enough for every account.

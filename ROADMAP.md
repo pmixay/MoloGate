@@ -78,6 +78,8 @@ The full design and phased plan for accounts, limits, credits and personal API k
 - [ ] Accept files of any type up to 500 MB.
   - Copy attachments into the sandbox automatically.
   - Tell the agent which files were attached, if that isn't already done.
+  - Started: until the sandbox exists, an uploaded file reaches the model as its full extracted
+    text, without embeddings or a vector database. Existing installs are switched over once.
 - [ ] Browse the files in the current container and preview most of them online, with syntax
       highlighting.
 - [ ] **Change summary:**
@@ -210,6 +212,8 @@ The full design and phased plan for accounts, limits, credits and personal API k
 
 ## Deployment
 
+- [ ] **Backups:** nightly database and data backups kept off the VPS, with a tested restore. They
+      were removed while Mologate is in development.
 - [ ] **Deploy node:**
   - Container nodes for long-running deployments.
   - The agent picks a preset Small, Medium or Large container for a project.
