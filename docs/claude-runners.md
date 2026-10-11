@@ -4,10 +4,10 @@ Status: **planned, not implemented**. Added on 2026-10-11 to the
 [Limits and Accounts Roadmap](limits-and-accounts.md). This is the implementation handoff for
 automatic provisioning: **one connected Claude subscription = one isolated container**.
 
-Read the main roadmap and [Phase 1 implementation notes](phase1-accounts.md) first. The roadmap
-started on `limits-and-accounts`; the account implementation and this specification are on
-`phase1-accounts`, stacked on that branch. Use a base containing the required phases before
-implementing their integration points. Descriptions below are proposed contracts, not claims
+Read the main roadmap and [Phase 1 implementation notes](phase1-accounts.md) first. The roadmap,
+account implementation and this specification all use **`limits-and-accounts`**. Continue work
+on that branch; do not create a separate Claude or phase branch. Implement the required earlier
+phases before their integration points. Descriptions below are proposed contracts, not claims
 that the services or later-phase tables already exist.
 
 ## 0. Goal, scope and phase placement
@@ -484,6 +484,8 @@ test accounts.
 ## 12. Small PR sequence
 
 Keep PRs independently reviewable, following the roadmap's eventual landing order into `main`.
+Use the same `limits-and-accounts` working branch throughout; the steps below do not require
+separate branches.
 Do not deploy a credential-bearing service before authentication, caps and disablement work.
 
 | PR | Scope | Acceptance |

@@ -4,7 +4,9 @@ How Mologate connects the team's provider accounts, shares their limits fairly, 
 member personal API keys. This document is the spec for the work. It replaces the "Fair use" items
 and the "Fair use of shared accounts" table in [ROADMAP.md](../ROADMAP.md).
 
-Branch: `limits-and-accounts`. Land work in small PRs into `main`, one phase (or less) at a time.
+Working branch: **`limits-and-accounts` only**, for the roadmap and all implementation phases.
+Do not create separate phase branches. Keep changes reviewable and submit them to `main` from
+this branch; the current draft is [PR #3](https://github.com/pmixay/MoloGate/pull/3).
 
 ---
 
@@ -111,9 +113,9 @@ Business seats and API keys where it matters.
 ## 4. What already exists
 
 The table below is the baseline verified on `main` at `a20a336`.
-The [Phase 1 implementation](phase1-accounts.md), on `phase1-accounts`, adds account storage,
+The [Phase 1 implementation](phase1-accounts.md), on `limits-and-accounts`, adds account storage,
 connect UI and routing. Phase 7 must build on that work and the later dependencies listed in its
-specification, not assume they already exist on the original `limits-and-accounts` branch.
+specification. Later-phase components are not implemented merely because they share this branch.
 
 | Piece | Where | Use it for |
 | --- | --- | --- |
@@ -422,7 +424,7 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 
 ### Phase 1: accounts
 
-**In progress: 2026-10-11**, on `phase1-accounts`, based on `limits-and-accounts`.
+**In progress: 2026-10-11**, on the single working branch `limits-and-accounts`.
 Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
 Deployed to staging; 21 automated regressions, real Z.ai normal/streamed chats, and desktop/mobile
 browser checks pass. The remaining acceptance check is two real Codex accounts serving chats.
@@ -514,8 +516,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 **Setup on this VPS (Ubuntu 24.04, x86_64, IP 5.83.140.221):**
 - Docker and Docker Compose. Don't build images here: one vCPU can't build the frontend in
   reasonable time. The repo's `docker.yaml` workflow publishes images to
-  `ghcr.io/pmixay/mologate` from `main` and slim-only images from `limits-and-accounts` and
-  `phase1-accounts`.
+  `ghcr.io/pmixay/mologate` from `main` and slim-only staging images from `limits-and-accounts`.
   Documentation/deployment-only pushes skip image builds. The unused Docker Hub copy step
   was removed. The package is private, so the VPS needs a token with `read:packages`.
 - Containers: Mologate (the slim image, with the embedding model offloaded to an API, since local
@@ -524,7 +525,8 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
   allows only 22, 80 and 443.
 - **Staging:** a second, smaller stack on `staging.<domain>` with its own database. Phase 0 used
   `limits-and-accounts-slim`; staging now runs `phase1-accounts-slim` as recorded in the
-  [Phase 1 notes](phase1-accounts.md). The team uses production; the implementer tests on staging.
+  [Phase 1 notes](phase1-accounts.md). Future staging builds/deployments use the consolidated
+  `limits-and-accounts-slim` tag. The team uses production; the implementer tests on staging.
 - Backups: nightly `pg_dump` and a copy of the data volume, kept 7 days, later off the box.
 - **Phase 7, planned:** add a separate runner-manager and private account volumes on staging.
   Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
@@ -535,6 +537,8 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 
 ## 14. Decisions log
 
+- 2026-10-11: the owner requests one working branch, `limits-and-accounts`, for every phase.
+  Consolidate the Phase 1 code and Claude runner plan there; no separate phase branches.
 - 2026-10-11: personal share is the pool divided equally among all members.
 - 2026-10-11: credits = 10 × plan multiplier for every poolable account; API keys by budget.
 - 2026-10-11: idle owner loan: no owner use for 24 hours lends up to 25 points.

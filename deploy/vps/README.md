@@ -210,6 +210,9 @@ Phase 0 initially used `limits-and-accounts-slim` at `fdbce1c`. On 2026-10-11, s
 `phase1-accounts-slim` at code commit `a4fce64`; see the
 [Phase 1 deployment and verification notes](../../docs/phase1-accounts.md).
 Use that image for the current Phase 1 deployment; `IMAGE` also accepts a pinned digest.
+All development now uses the consolidated `limits-and-accounts` branch. Future staging updates
+use `ghcr.io/pmixay/mologate:limits-and-accounts-slim` after its image checks pass; the branch
+consolidation itself does not replace the currently running image.
 The owner's two admin accounts also exist on staging. Their password hashes
 were copied once from production at the owner's request, so the same passwords
 work on both sites. Future registrations, password changes and role changes

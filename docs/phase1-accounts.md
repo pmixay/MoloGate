@@ -1,12 +1,14 @@
 # Phase 1: provider accounts
 
-Implementation branch: `phase1-accounts`, stacked on `limits-and-accounts`.
+Implementation branch: **`limits-and-accounts`**, shared by all roadmap phases.
 Phase 1 remains in progress until two members connect Codex accounts in the browser and both
 complete chats. Production continues to use the Phase 0 deployment.
 
 Deployed to [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_accounts) on
 2026-10-11 from code commit `a4fce64`, using `ghcr.io/pmixay/mologate:phase1-accounts-slim`.
-[Draft PR #4](https://github.com/pmixay/MoloGate/pull/4) is stacked on the Phase 0 branch.
+[Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
+The deployed image tag above records the existing deployment; future staging builds and updates
+use `ghcr.io/pmixay/mologate:limits-and-accounts-slim` from the single working branch.
 The existing two staging admins retain their accounts and passwords.
 
 Anthropic API-key accounts are in this phase. Claude Pro/Max subscription containers are a
