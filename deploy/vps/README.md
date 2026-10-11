@@ -206,15 +206,47 @@ Create a separate staging admin. Add a nightly cron entry for
 image while the team stays on production's `main` image. If stopping staging
 while idle, disable its backup cron entry until it is running again.
 
-The live staging stack follows `limits-and-accounts-slim`, published by the
-[successful branch build](https://github.com/pmixay/MoloGate/actions/runs/38131457642)
-at `fdbce1c`. `IMAGE` also accepts a digest for a pinned deployment.
+Phase 0 initially used `limits-and-accounts-slim` at `fdbce1c`. On 2026-10-11, staging moved to
+`phase1-accounts-slim` at code commit `a4fce64`; see the
+[Phase 1 deployment and verification notes](../../docs/phase1-accounts.md).
+Use that image for the current Phase 1 deployment; `IMAGE` also accepts a pinned digest.
 The owner's two admin accounts also exist on staging. Their password hashes
 were copied once from production at the owner's request, so the same passwords
 work on both sites. Future registrations, password changes and role changes
 remain separate. The original admin's recovery password is stored in
 `/opt/mologate-staging/admin-password` (root only). Production's provider keys
 and chat history were not copied.
+
+## Phase 7: Claude runners (planned)
+
+The [English runner specification](../../docs/claude-runners.md) describes this future addition.
+No runner-manager or Claude account containers are deployed by the current compose files.
+Anthropic API-key accounts already belong to Phase 1; subscription runners are separate work.
+
+Add the manager in a staging-only compose overlay, with its own pinned image and control-state
+volume. Only the manager receives `docker.sock`. Socket access is effectively host-root access:
+even a private endpoint needs service authentication and strict resource/operation validation.
+Do not mount the socket into Mologate or any runner. Keep manager port 8085 and runner port 8090
+unpublished, with separate production/staging networks, labels and secrets. An internal-only
+network also blocks provider access; provide controlled outbound DNS/HTTPS for runners without
+joining the database or public proxy networks.
+
+Each connected subscription has one labeled private volume owned by the runner UID/GID, with
+mode 0700 directories and mode 0600 credential files. Neither tokens nor full CLI environments
+belong in compose environment values, logs, database rows or Redis. Backend credential relay
+must be redacted through the complete request/error/audit path.
+
+This VPS already hosts production and staging. Start with one live runner and measure CPU/RAM
+headroom before allowing two; two is the combined host ceiling. Account volumes survive an idle
+stop. A single admission controller must cover creation, verification, chat and restart, and
+stop only idle runners for LRU. Let the manager restart runners under the cap rather than using
+unconditional container restart policies. Keep the deployment switch off by default and add a
+runtime disable switch that stops dispatch and drains/stops runners without a redeploy.
+
+Build images in CI. Before collecting credentials, extend backups to cover the new private
+volumes/control state, encrypt and restrict those backups, document retention and test restore.
+Include stored CLI conversation transcripts in the retention policy. Verify that only the
+existing public ports remain reachable. Staging acceptance does not enable this on production.
 
 ## Evidence from this session
 

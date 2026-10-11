@@ -9,6 +9,9 @@ Deployed to [staging](https://staging.5-83-140-221.sslip.io/?settings=provider_a
 [Draft PR #4](https://github.com/pmixay/MoloGate/pull/4) is stacked on the Phase 0 branch.
 The existing two staging admins retain their accounts and passwords.
 
+Anthropic API-key accounts are in this phase. Claude Pro/Max subscription containers are a
+separate [Phase 7 plan](claude-runners.md); they do not change Phase 1's completion criteria.
+
 ## Account management
 
 Open **Settings → Provider accounts** on staging. Approved members and admins can connect

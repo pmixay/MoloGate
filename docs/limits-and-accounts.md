@@ -22,13 +22,14 @@ Branch: `limits-and-accounts`. Land work in small PRs into `main`, one phase (or
     `utils/provider_limits.py` and `utils/rate_limit.py`).
   - Config uses `Config.get('dotted.key')` with env defaults in `config.py`.
   - The `ROADMAP.md` style: plain sentences, a "Done:" note under an item when it ships.
-- **Tests:** there are no backend tests in the repo yet (`pytest` and `pytest-asyncio` are in
-  `pyproject.toml`). Start `backend/open_webui/test/limits/`. The allowance engine
+- **Tests:** Phase 1 added backend regressions in `backend/open_webui/test/limits/`
+  (`pytest` and `pytest-asyncio` are also in `pyproject.toml`). Extend that directory. The allowance engine
   ([section 7](#7-allowance-engine)) must be a pure function with table-driven tests covering every
   worked example in this document.
 - **Modes:** everything here runs behind `MOLOGATE_LIMITS_MODE` = `off` | `observe` | `enforce`
   (default `observe` until phase 4 ships). In `observe` the gate computes decisions and records
-  them but never blocks or swaps models.
+  them but never blocks or swaps models for allowance reasons. Authentication, account privacy,
+  provider backoff, resource caps and disabled integrations still apply in every mode.
 - **Never** log or return secrets. Never put prompts in the usage ledger.
 
 ---
@@ -59,6 +60,7 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
    | --- | --- | --- | --- |
    | ChatGPT Plus | 1x | 10 | 4 |
    | ChatGPT Pro tiers (for example 5x, 20x) | the tier's multiplier | 50, 200 | 20, 80 |
+   | Claude Pro / Max 5x / Max 20x (Phase 7) | 1x / 5x / 20x relative to Pro | 10 / 50 / 200 | 4 / 20 / 80 |
    | GLM coding plan (Lite, Pro, Max) | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier |
    | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20 | 10 × multiplier | 4 × multiplier |
 
@@ -74,29 +76,29 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 
 ## 3. Providers and what their terms allow
 
-This decides what can go into the pool. It was checked against the providers' own pages on
-2026-10-11.
+This records the project's pool choices and the providers' restrictions, checked on 2026-10-11.
+A team-accepted risk is a project decision, not permission from the provider.
 
 | Provider | Access | Into the pool? | Limits source |
 | --- | --- | --- | --- |
 | **Codex / ChatGPT** (Plus, Pro, Business) | Device-code login through the official `codex app-server` | Yes (team-accepted risk, see below) | `account/rateLimits/read` (5h + weekly), `x-codex-*` headers |
 | **Anthropic API key** (Claude Console) | Key pasted in by its owner | Yes | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits |
-| **Claude Pro / Max subscription** | Only its owner, only through the unmodified Claude Code binary | Yes | Not read by Mologate |
+| **Claude Pro / Max subscription** | Owner connects an isolated runner using the unmodified Claude Code binary | Planned in Phase 7 (team-accepted risk) | CLI usage and verified stream observations; complete quota visibility is not assumed |
 | **OpenAI API key**, **OpenRouter key** | Key | Yes | Owner-set budget; OpenRouter also reports key usage |
 | **Z.ai GLM coding plan** | Key | Yes | Spike needed (phase 1) |
 | **OpenCode free models** | None (runs in a container) | Not an account | Per-user rate limit only |
 
-**Claude subscriptions can be pooled.** Anthropic's Claude Code legal page says developers may
-not "route requests through Free, Pro, or Max plan credentials on behalf of their users" and "may
-not collect, store, or intermediate Claude.ai credentials or session tokens"; sign-in "must
-complete through Anthropic's own flow". Therefore find the way to do it with lowering the risk of account ban. What is allowed:
-- An Anthropic **API key**, configured "for use by the customer's own authorized users", billed to
-  the key owner. These go into the pool like any account, with a budget instead of windows.
-- A member signing in to the **unmodified Claude Code binary** with their own subscription,
-  for example in their own runner container. Mologate never sees or stores that token. This is a
-  later, runner-phase feature and is outside the pool.
+**Claude subscriptions:** the team has chosen to plan opt-in pooling through isolated runners.
+Anthropic distinguishes hosting the unmodified CLI for a user signing in with their own account
+from routing other users' requests through subscription credentials; its published restrictions
+also cover collecting or relaying Claude.ai tokens. Containers and conservative request pacing
+do not remove those restrictions. The team accepts this risk; the plan does not claim provider
+approval or protection from suspension. See [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).
 
-The team wants Claude subscriptions in the pool as well. as team i say yes!
+Anthropic **API-key** accounts remain the Phase 1 integration. Subscription runners are a separate
+[Phase 7 specification](claude-runners.md). In its proposed `setup-token` flow, Mologate and the
+manager briefly handle the token in memory, and the manager writes it into the runner's private
+volume. The token must never enter SQL, Redis, logs or API responses. This is not a token-free relay.
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
 make their account available to others. The team has accepted this risk (PLAN.md, risk 1). Lower
@@ -108,7 +110,10 @@ Business seats and API keys where it matters.
 
 ## 4. What already exists
 
-Verified on `main` at `a20a336`.
+The table below is the baseline verified on `main` at `a20a336`.
+The [Phase 1 implementation](phase1-accounts.md), on `phase1-accounts`, adds account storage,
+connect UI and routing. Phase 7 must build on that work and the later dependencies listed in its
+specification, not assume they already exist on the original `limits-and-accounts` branch.
 
 | Piece | Where | Use it for |
 | --- | --- | --- |
@@ -125,7 +130,9 @@ Verified on `main` at `a20a336`.
 | All internal model calls | `utils/chat.py:generate_chat_completion` (chat, tasks, memory, compaction, tool review, subagents through the middleware) | Where the gate's pre-check goes. |
 | Default system model | `config.py` `DEFAULT_SYSTEM_MODEL_FAMILY='luna'` | Background jobs already prefer Luna, a worker model. |
 
-There are **no** account, ledger or credit tables, and no account UI.
+At that baseline there were no account, ledger or credit tables, and no account UI. Phase 1 now
+provides `provider_account`, `provider_login` and account UI on staging. The usage ledger,
+`account_window`, `decide()` and credit tables remain work for Phases 2, 3 and 5.
 
 ---
 
@@ -133,7 +140,8 @@ There are **no** account, ledger or credit tables, and no account UI.
 
 - **Account:** one connected provider credential with an owner (`provider_account`).
 - **Window:** a provider limit window: `5h` and `weekly` for Codex; `budget` (an owner-set monthly
-  amount) for API keys. Every rule below runs per window, and a request must pass in every window
+  amount) for API keys. Phase 7 adds Claude windows only when observed from the provider; unknown
+  quota stays unknown. Every rule below runs per window, and a request must pass in every window
   of the account it uses.
 - **Used percent `u_a`:** how much of account `a`'s window is used, from the provider (or from the
   ledger for budget windows). It includes use outside Mologate.
@@ -157,20 +165,33 @@ New tables (Alembic migrations), all with `created_at` and `updated_at` epoch co
 
 **`provider_account`**
 `id`, `owner_user_id`, `provider` (`codex` | `anthropic_api` | `openai_api` | `openrouter` |
-`zai`), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
+`zai` | `claude_sub` in Phase 7), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
 ID: ChatGPT account ID, or a SHA-256 fingerprint of an API key), `label`, `secret` (Fernet-encrypted
 JSON; for Codex, the path of its isolated `CODEX_HOME`), `sharing` (`shared` | `private` |
 `paused`), `capacity_weight`, `budget` (API keys: amount and currency per month), `allow_team_resets`
 (bool, default true), `status` (`ok` | `needs_login` | `error` | `cooldown`), `last_error`.
 Unique: (`provider`, `external_account_id`).
 
+**Claude runner convention (Phase 7):** `provider='claude_sub'`, with plans `pro`, `max_5x` and
+`max_20x`. The encrypted secret contains only server-generated runner metadata, for example
+`{"manager":"http://runner-manager:8085","runner_id":"<uuid>","volume":"claude-cfg-<uuid>"}`;
+the manager origin is allowlisted server configuration. The provider identity must be verified
+before storing its SHA-256 hash as `external_account_id`. A pending registration is excluded from
+the pool and earns no credits. Add `verifying` to the lifecycle, and set `allow_team_resets=false`.
+The SQL provider column is a string, but the Phase 1 Python `Provider` literal, API validation,
+routing and frontend types still need extending. Durable registration/event tracking may require
+a migration; see [the complete schema contract](claude-runners.md#2-data-and-identity).
+Account uniqueness prevents simultaneous duplicates; the permanent `credit_grant` below prevents
+reconnect credit farming after an account row is deleted.
+
 **`account_window`** (latest snapshot per account and window; history in the ledger)
 `account_id`, `window` (`5h` | `weekly` | `budget`), `used_percent`, `resets_at`, `source`
-(`poll` | `headers` | `ledger`), `observed_at`.
+(`poll` | `headers` | `ledger` | `stream` in Phase 7), `observed_at`.
 
 **`usage_event`** (one row per provider request)
 `id`, `ts`, `user_id`, `api_key_id` (nullable), `account_id`, `provider`, `model_id`, `source`
-(`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside`), `tier`
+(`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside` |
+`verification` in Phase 7), `tier`
 (`reserve` | `pool` | `credit` | `worker` | `owner_outside`), `input_tokens`, `output_tokens`,
 `cached_tokens`, `reasoning_tokens`, `est_units`, `units` (after calibration), `credits_charged`,
 `status` (`ok` | `error` | `limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and
@@ -288,6 +309,10 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   conservative estimate). Also refit `c_a` across accounts.
 - **Run `observe` for at least a week** of real team use before switching to `enforce`. Compare
   decisions to what actually happened.
+- **Claude runners (Phase 7):** record CLI usage and only quota fields actually verified in the
+  pinned CLI's output. Stream observations use `source='stream'`, not `headers`. Without two
+  authoritative quota readings, outside use and provider-percent calibration remain unknown;
+  silence from a runner is not evidence of outside use. See [Phase 7 metering](claude-runners.md#7-metering).
 
 ---
 
@@ -316,9 +341,23 @@ the final acceptance check.
 
 **API keys** (Anthropic, OpenAI, OpenRouter, Z.ai): a form with the key and a monthly budget, a
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the
-same key can't earn credits twice.
+permanent Phase 5 `credit_grant` can prevent the same key from earning credits twice.
 
-**Claude subscriptions:** connect flow (see §3). decide yourself how.
+**Claude subscriptions (Phase 7, not Phase 1):**
+1. The owner chooses **Connect → Claude subscription**, selects Pro / Max 5x / Max 20x and opts
+   into sharing if desired. The backend creates a pending registration and an isolated runner.
+2. For the proposed MVP, the owner runs `claude setup-token` on their own computer and completes
+   Anthropic's browser flow, then submits the token through an authenticated HTTPS form.
+3. Mologate relays the bounded body to the manager without body logging or database storage.
+   The manager writes a mode-0600 file in the account's mode-0700 volume; the wrapper supplies
+   it only to the CLI child process as `CLAUDE_CODE_OAUTH_TOKEN`.
+4. A verification request and a provider-verified stable account identity are required before
+   `status=ok`. The account enters the pool only if sharing is enabled. Phase 5 grants credits
+   once per verified provider identity, not once per runner or submitted token.
+
+The first Phase 7 spike must establish whether `setup-token` exposes enough verified identity
+for step 4. Token presence or an `oauthAccount` JSON file is insufficient. The full
+[runner plan](claude-runners.md) defines this dependency, APIs, alternatives and acceptance tests.
 
 **Account card:** owner, provider, plan, windows as two-part bars (owner reserve and pool), status,
 sharing toggle (shared, private, paused), "allow team resets", disconnect.
@@ -388,6 +427,9 @@ Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
 Deployed to staging; 21 automated regressions, real Z.ai normal/streamed chats, and desktop/mobile
 browser checks pass. The remaining acceptance check is two real Codex accounts serving chats.
 
+Claude Pro/Max subscription runners belong to Phase 7. They are not an additional Phase 1
+completion requirement; an isolated authentication/protocol spike can follow Phase 1 early.
+
 - [x] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
 - [x] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.
 - [x] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
@@ -430,6 +472,32 @@ browser checks pass. The remaining acceptance check is two real Codex accounts s
 - [ ] Done when: a member uses Mologate from an outside OpenAI-compatible client with their own
       key, and that use shows up in their share.
 
+### Phase 7: Claude subscription runners
+
+**Planned, not implemented.** Full English specification: [Claude runners](claude-runners.md).
+One account gets one isolated runner container and persistent private volume. Start on staging
+with the integration disabled by default. Infrastructure/authentication work can follow Phase 1;
+the complete feature depends on Phases 2–5 for metering, selection, enforcement and credits.
+Phase 6 is not required for the interactive-chat MVP; personal API keys cannot use these runners.
+
+- [ ] 7.0: verify pinned CLI authentication, stable account identity, usage/limit output and memory
+      requirements; record fixtures and resolve the `setup-token` identity gap.
+- [ ] 7.1: authenticated runner-manager, staging compose overlay, create/start/stop/delete,
+      isolated networks, hard live-runner cap and working kill-switch.
+- [ ] 7.2: pinned runner image, one active request, NDJSON streaming, watchdog and cancellation.
+- [ ] 7.3: owner-authorized backend connect API, redacted credential relay, signed/replay-safe
+      events, identity deduplication and account status notifications.
+- [ ] 7.4: usage ledger and verified account-window observations; unknown quota stays unknown.
+- [ ] 7.5: allowance-engine integration, account/session affinity, background-work exclusion,
+      Phase 5 credit grants and tier-5 reset-time display without a reset button.
+- [ ] 7.6: lifecycle reconciliation, idle LRU stop, cooldown/circuit breaker and restart/load tests.
+- [ ] 7.7: Connect UI, runner status on account cards and context/usage indicators.
+- [ ] 7.8: at least one week of real staging `observe` traffic; enable enforcement only after
+      its metering and isolation acceptance criteria pass.
+- [ ] Done when: browser connect produces a verified usable account, three registered accounts
+      never exceed the host's two-live-runner ceiling, disconnect removes the correct volume,
+      and off/auth-loss/rate-limit/restart scenarios behave as specified.
+
 ### Later
 - Global limits on the status page.
 
@@ -446,17 +514,22 @@ browser checks pass. The remaining acceptance check is two real Codex accounts s
 **Setup on this VPS (Ubuntu 24.04, x86_64, IP 5.83.140.221):**
 - Docker and Docker Compose. Don't build images here: one vCPU can't build the frontend in
   reasonable time. The repo's `docker.yaml` workflow publishes images to
-  `ghcr.io/pmixay/mologate` from `main` and a slim-only image from `limits-and-accounts`.
+  `ghcr.io/pmixay/mologate` from `main` and slim-only images from `limits-and-accounts` and
+  `phase1-accounts`.
   Documentation/deployment-only pushes skip image builds. The unused Docker Hub copy step
   was removed. The package is private, so the VPS needs a token with `read:packages`.
 - Containers: Mologate (the slim image, with the embedding model offloaded to an API, since local
   embeddings would eat the RAM), Postgres, Redis, Caddy. Add a 4 GB swap file.
 - Caddy handles HTTPS on a domain (or `5-83-140-221.sslip.io` until there is one). The firewall
   allows only 22, 80 and 443.
-- **Staging:** a second, smaller stack on `staging.<domain>` that runs the `limits-and-accounts`
-  branch's image (add the branch to the workflow's triggers), with its own database. The team uses
-  production; the implementer tests on staging.
+- **Staging:** a second, smaller stack on `staging.<domain>` with its own database. Phase 0 used
+  `limits-and-accounts-slim`; staging now runs `phase1-accounts-slim` as recorded in the
+  [Phase 1 notes](phase1-accounts.md). The team uses production; the implementer tests on staging.
 - Backups: nightly `pg_dump` and a copy of the data volume, kept 7 days, later off the box.
+- **Phase 7, planned:** add a separate runner-manager and private account volumes on staging.
+  Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
+  runner ports stay unpublished. Start with one live runner on this shared VPS and permit at
+  most two host-wide after memory/CPU tests. See [deployment requirements](../deploy/vps/README.md#phase-7-claude-runners-planned).
 
 ---
 
@@ -467,11 +540,21 @@ browser checks pass. The remaining acceptance check is two real Codex accounts s
 - 2026-10-11: idle owner loan: no owner use for 24 hours lends up to 25 points.
 - 2026-10-11: hosting on the VPS from the start: https://5-83-140-221.sslip.io, compose stack in
   `/opt/mologate`; GLM coding plan connected and Exa web search on.
+- 2026-10-11: keep Anthropic API-key accounts in Phase 1; schedule Claude Pro/Max containers as
+  Phase 7, with an early authentication/identity spike allowed after Phase 1. The team requests
+  opt-in subscription pooling and accepts the provider-terms risk described in §3. No claim that
+  an unmodified binary, isolation or pacing makes pooling provider-approved.
+- 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
+  verified stable identity and a permanent grant record. The proposed token relay handles a
+  credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
 
 ---
 
 ## Sources
 
 - OpenAI Terms of Use, registration and access: https://openai.com/policies/terms-of-use/
+- Claude Code authentication and long-lived tokens: https://code.claude.com/docs/en/authentication
+- Claude Code legal and compliance: https://code.claude.com/docs/en/legal-and-compliance
+- Claude Pro and Max plan comparison: https://claude.com/pricing
 - Codex app-server protocol, `openai/codex`: `codex-rs/app-server-protocol` (`account/login/start`,
   `account/rateLimits/read`, `account/rateLimitResetCredit/consume`)
