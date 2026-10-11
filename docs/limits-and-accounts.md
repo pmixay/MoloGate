@@ -361,6 +361,11 @@ Reconnecting the same account doesn't grant again.
 Each phase lists what must be true to call it done.
 
 ### Phase 0: host on the VPS (start now, alongside phase 1)
+Hosting files and the deployment/recovery procedure are in
+[deploy/vps/README.md](../deploy/vps/README.md). The existing production stack
+has logged successful HTTPS setup, sign-in and chat. Repository hosting changes
+are prepared; live installation and the final external checks remain pending.
+
 - [ ] The VPS runs `main` behind HTTPS (details in [§13](#13-hosting)).
 - [ ] Signups disabled; the admin creates accounts for the team.
 - [ ] Nightly backup of the database and data volume.

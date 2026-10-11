@@ -1,0 +1,5 @@
+backups/
+.backup.lock
+.update.lock
+.install.lock
+caddy-sites/*.caddy
