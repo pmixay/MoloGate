@@ -1159,7 +1159,8 @@ YOUTUBE_LOADER_PROXY_URL = os.getenv('YOUTUBE_LOADER_PROXY_URL', '')
 # Web Search
 ####################################
 
-ENABLE_WEB_SEARCH = os.getenv('ENABLE_WEB_SEARCH', 'False').lower() == 'true'
+# Mologate: web search is on by default, through Exa (set EXA_API_KEY).
+ENABLE_WEB_SEARCH = os.getenv('ENABLE_WEB_SEARCH', 'True').lower() == 'true'
 
 ENABLE_WEB_SEARCH_CONFIRMATION = os.getenv('ENABLE_WEB_SEARCH_CONFIRMATION', 'False').lower() == 'true'
 
@@ -1168,7 +1169,7 @@ WEB_SEARCH_CONFIRMATION_CONTENT = os.getenv(
     'Your query will be sent to the configured web search provider.',
 )
 
-WEB_SEARCH_ENGINE = os.getenv('WEB_SEARCH_ENGINE', '')
+WEB_SEARCH_ENGINE = os.getenv('WEB_SEARCH_ENGINE', 'exa')
 
 BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL = (
     os.getenv('BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL', 'False').lower() == 'true'
@@ -1200,7 +1201,8 @@ WEB_FETCH_MAX_CONTENT_LENGTH = (
     int(os.getenv('WEB_FETCH_MAX_CONTENT_LENGTH')) if os.getenv('WEB_FETCH_MAX_CONTENT_LENGTH') else None
 )
 
-WEB_LOADER_ENGINE = os.getenv('WEB_LOADER_ENGINE', '')
+# Mologate: pages are read through Exa (its Contents API) by default; without an Exa key, directly.
+WEB_LOADER_ENGINE = os.getenv('WEB_LOADER_ENGINE', 'exa')
 
 
 WEB_LOADER_CONCURRENT_REQUESTS = int(os.getenv('WEB_LOADER_CONCURRENT_REQUESTS', '10'))
@@ -1277,9 +1279,11 @@ AZURE_AI_SEARCH_ENDPOINT = os.getenv('AZURE_AI_SEARCH_ENDPOINT', '')
 AZURE_AI_SEARCH_INDEX_NAME = os.getenv('AZURE_AI_SEARCH_INDEX_NAME', '')
 
 EXA_API_KEY = os.getenv('EXA_API_KEY', '')
-EXA_MAX_CONTENT_LENGTH = int(os.environ['EXA_MAX_CONTENT_LENGTH']) if os.getenv('EXA_MAX_CONTENT_LENGTH') else None
-if EXA_MAX_CONTENT_LENGTH is not None and EXA_MAX_CONTENT_LENGTH <= 0:
-    raise ValueError('EXA_MAX_CONTENT_LENGTH must be a positive integer or unset')
+# Mologate: page text per result. Results go to the model whole, so an uncapped page could fill
+# the context; the model can still read a full page with fetch_url.
+EXA_MAX_CONTENT_LENGTH = int(os.getenv('EXA_MAX_CONTENT_LENGTH') or 3000)
+if EXA_MAX_CONTENT_LENGTH <= 0:
+    raise ValueError('EXA_MAX_CONTENT_LENGTH must be a positive integer')
 
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY', '')
 
@@ -2034,13 +2038,21 @@ ENABLE_CALENDAR = os.getenv('ENABLE_CALENDAR', 'True').lower() == 'true'
 
 ENABLE_AUTOMATIONS = os.getenv('ENABLE_AUTOMATIONS', 'True').lower() == 'true'
 
-ENABLE_SUBAGENTS = os.getenv('ENABLE_SUBAGENTS', 'False').lower() == 'true'
-SUBAGENTS_BACKGROUND_ENABLED = os.getenv('SUBAGENTS_BACKGROUND_ENABLED', 'False').lower() == 'true'
+# Mologate: sub-agents, background sub-agents included, are on by default.
+ENABLE_SUBAGENTS = os.getenv('ENABLE_SUBAGENTS', 'True').lower() == 'true'
+SUBAGENTS_BACKGROUND_ENABLED = os.getenv('SUBAGENTS_BACKGROUND_ENABLED', 'True').lower() == 'true'
 SUBAGENTS_MAX_CONCURRENT = int(os.getenv('SUBAGENTS_MAX_CONCURRENT', '20'))
 SUBAGENTS_MAX_ASYNC = int(os.getenv('SUBAGENTS_MAX_ASYNC', '20'))
 SUBAGENTS_MAX_ITERATIONS = int(os.getenv('SUBAGENTS_MAX_ITERATIONS', '30'))
 SUBAGENTS_MAX_OUTPUT = int(os.getenv('SUBAGENTS_MAX_OUTPUT', '30000'))
 SUBAGENTS_SYSTEM_PROMPT = os.getenv('SUBAGENTS_SYSTEM_PROMPT', '')
+
+# Mologate: admin-defined sub-agent profiles, on top of the built-in ones
+# (utils/subagent_profiles.py): a JSON list of {name, description, prompt, model}.
+try:
+    SUBAGENTS_PROFILES = JSONCodec.loads(os.getenv('SUBAGENTS_PROFILES', '[]'))
+except Exception:
+    SUBAGENTS_PROFILES = []
 
 AUTOMATION_MAX_COUNT = os.getenv('AUTOMATION_MAX_COUNT', '')
 
@@ -2184,6 +2196,12 @@ ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', None)
 
 TASK_MODEL = os.getenv('TASK_MODEL', '')
 
+# Mologate: the default system model for background jobs (titles, follow-ups, tags, queries...)
+# when no task model is set: the newest model of this family, so a new version is picked up as soon
+# as it is listed, else the fallback. See get_task_model_id in utils/task.py.
+DEFAULT_SYSTEM_MODEL_FAMILY = os.getenv('DEFAULT_SYSTEM_MODEL_FAMILY', 'luna')
+DEFAULT_SYSTEM_MODEL_FALLBACK = os.getenv('DEFAULT_SYSTEM_MODEL_FALLBACK', 'glm-5.3-flash')
+
 TASK_MODEL_EXTERNAL = os.getenv('TASK_MODEL_EXTERNAL', '')
 
 try:
@@ -2198,7 +2216,10 @@ CONTEXT_COMPACTION_MODEL = os.getenv('CONTEXT_COMPACTION_MODEL', '')
 
 ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'False').lower() == 'true'
 
-ENABLE_TOOL_PERMISSIONS = os.getenv('ENABLE_TOOL_PERMISSIONS', 'False').lower() == 'true'
+# Mologate: permission prompts. Tool calls run without asking; this model (then the fallback)
+# flags the critical or very dangerous ones for the user to confirm. See utils/tool_permissions.py.
+TOOL_PERMISSION_MODEL = os.getenv('TOOL_PERMISSION_MODEL', 'codex-auto-approve')
+TOOL_PERMISSION_FALLBACK_MODEL = os.getenv('TOOL_PERMISSION_FALLBACK_MODEL', 'glm-5.3-flash')
 
 CONTEXT_COMPACTION_TOKEN_THRESHOLD = int(os.getenv('CONTEXT_COMPACTION_TOKEN_THRESHOLD', '80000'))
 
@@ -3117,6 +3138,7 @@ DEFAULT_CONFIG = {
     'subagents.max_iterations': SUBAGENTS_MAX_ITERATIONS,
     'subagents.max_output': SUBAGENTS_MAX_OUTPUT,
     'subagents.system_prompt': SUBAGENTS_SYSTEM_PROMPT,
+    'subagents.profiles': SUBAGENTS_PROFILES,
     'automations.max_count': AUTOMATION_MAX_COUNT,
     'automations.min_interval': AUTOMATION_MIN_INTERVAL,
     'automations.auth_token_expires_in': AUTOMATION_AUTH_TOKEN_EXPIRES_IN,
@@ -3140,7 +3162,8 @@ DEFAULT_CONFIG = {
     'chat.context_compaction.token_cap': CONTEXT_COMPACTION_TOKEN_CAP,
     'chat.context_compaction.retention_percentage': CONTEXT_COMPACTION_RETENTION_PERCENTAGE,
     'chat.context_compaction.prompt_template': CONTEXT_COMPACTION_PROMPT_TEMPLATE,
-    'chat.tool_permissions.enable': ENABLE_TOOL_PERMISSIONS,
+    'chat.tool_permissions.model': TOOL_PERMISSION_MODEL,
+    'chat.tool_permissions.fallback_model': TOOL_PERMISSION_FALLBACK_MODEL,
     'task.title.prompt_template': TITLE_GENERATION_PROMPT_TEMPLATE,
     'task.tags.prompt_template': TAGS_GENERATION_PROMPT_TEMPLATE,
     'task.image.prompt_template': IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE,

@@ -49,8 +49,8 @@
 
 	export let showCommands = false;
 
-	export let toolApprovalMode = 'full';
-	export let onToolApprovalModeChange: Function = () => {};
+	export let alwaysAllowActions = false;
+	export let onAlwaysAllowActionsChange: Function = () => {};
 	export let oauthRedirectHandler: Function = () => {};
 
 	export let onUpload: Function = (e) => {};
@@ -239,8 +239,8 @@
 						bind:dragged
 						{pendingOAuthTools}
 						{oauthRedirectHandler}
-						{toolApprovalMode}
-						{onToolApprovalModeChange}
+						{alwaysAllowActions}
+						{onAlwaysAllowActionsChange}
 						{stopResponse}
 						{createMessagePair}
 						placeholder={$i18n.t('How can I help you today?')}

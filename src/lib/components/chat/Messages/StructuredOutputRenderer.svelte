@@ -2,6 +2,7 @@
 	import Collapsible from '$lib/components/common/Collapsible.svelte';
 	import ToolCallDisplay from '$lib/components/common/ToolCallDisplay.svelte';
 	import TerminalOutputFile from './TerminalOutputFile.svelte';
+	import AgentMessageRow from './AgentMessageRow.svelte';
 	import { resolveChatMessageToolCall } from '$lib/apis/chats';
 	import { settings } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
@@ -41,7 +42,8 @@
 	const getDetailAttributes = (detailToken: OutputDetailToken): any => detailToken.attributes;
 	let resolvingCallId = '';
 
-	const resolveToolCall = async (callId: string, approved: boolean) => {
+	// Mologate: `always` is "Always allow in this chat": approve, and stop prompts in this chat.
+	const resolveToolCall = async (callId: string, approved: boolean, always = false) => {
 		if (!chatId || !messageId || !callId || resolvingCallId) {
 			return;
 		}
@@ -53,7 +55,8 @@
 				chatId,
 				messageId,
 				callId,
-				approved ? 'approve' : 'reject'
+				approved ? 'approve' : 'reject',
+				approved && always ? { always_allow: true } : {}
 			);
 			onToolCallResolved(res);
 		} catch (err) {
@@ -116,11 +119,14 @@
 						<ToolCallDisplay
 							id={`${id}-${displayItem.id}-${detailIndex}-tool-call`}
 							attributes={detailToken.attributes}
+							{chatId}
+							{messageId}
 							resultContent={detailToken.text}
 							grouped={true}
 							resolvable={!!chatId && !!messageId && save}
 							resolving={resolvingCallId === detailToken.attributes?.id}
-							onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+							onResolve={(approved, always) =>
+								resolveToolCall(detailToken.attributes?.id ?? '', approved, always)}
 							open={$settings?.expandDetails ?? false}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
@@ -166,6 +172,14 @@
 				{/each}
 			</div>
 		</ConsecutiveDetailsGroup>
+	{:else if displayItem.type === 'agent_message'}
+		<AgentMessageRow
+			content={String(displayItem.item.content ?? '')}
+			from={String(displayItem.item.from ?? '')}
+			fromName={String(displayItem.item.from_name ?? '')}
+			fromChatId={String(displayItem.item.from_chat_id ?? '')}
+			{chatId}
+		/>
 	{:else if displayItem.type === 'file'}
 		{#if displayItem.item?.displayed || $settings?.terminalFileDisplay === 'inline'}
 			<TerminalOutputFile item={displayItem.item} {chatId} />
@@ -176,11 +190,14 @@
 			<ToolCallDisplay
 				id={`${id}-${displayItem.id}-tool-call`}
 				attributes={detailToken.attributes}
+				{chatId}
+				{messageId}
 				resultContent={detailToken.text}
 				{allowEmbeds}
 				resolvable={!!chatId && !!messageId && save}
 				resolving={resolvingCallId === detailToken.attributes?.id}
-				onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+				onResolve={(approved, always) =>
+					resolveToolCall(detailToken.attributes?.id ?? '', approved, always)}
 				open={$settings?.expandDetails ?? false}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}

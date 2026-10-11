@@ -63,6 +63,7 @@ from open_webui.tools.builtin import (
     grep_chat_files,
     grep_knowledge_files,
     kb_exec,
+    list_agents,
     list_automations,
     list_chat_files,
     list_knowledge,
@@ -85,6 +86,7 @@ from open_webui.tools.builtin import (
     search_memories,
     search_notes,
     search_web,
+    send_message,
     timer,
     toggle_automation,
     update_automation,
@@ -111,6 +113,7 @@ from open_webui.utils.headers import (
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import is_string_allowed
 from open_webui.utils.plugin import get_tool_contents_cache, get_tools_cache, load_tool_module_by_id
+from open_webui.utils.subagent_profiles import get_profiles as get_subagent_profiles
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
@@ -554,6 +557,9 @@ async def get_builtin_tools(
         'ui.enable_user_webhooks',
         'subagents.enable',
         'subagents.background_enabled',
+        'subagents.profiles',
+        'web.search.engine',
+        'web.search.exa_api_key',
     )
 
     async def has_user_permission(feature_key: str) -> bool:
@@ -648,10 +654,13 @@ async def get_builtin_tools(
     if (
         is_builtin_tool_enabled('subagents')
         and config.get('subagents.enable')
-        and getattr(request.state, 'internal', False) is not True
         and getattr(request.state, 'direct', False) is not True
     ):
-        builtin_functions.extend([delegate_task, timer])
+        if getattr(request.state, 'internal', False) is not True:
+            builtin_functions.extend([delegate_task, timer, list_agents, send_message])
+        else:
+            # Mologate: sub-agents message the main agent and each other (utils/agent_messages.py).
+            builtin_functions.extend([list_agents, send_message])
 
     # Add memory tools when memory is enabled and the model allows this builtin category.
     if (
@@ -682,7 +691,12 @@ async def get_builtin_tools(
         and features.get('web_search')
         and await has_user_permission('web_search')
     ):
-        builtin_functions.extend([search_web, fetch_url])
+        # Mologate: search waits for a usable engine (Exa, the default, needs its key); reading a
+        # page with fetch_url needs none.
+        engine = config.get('web.search.engine')
+        if engine and (engine != 'exa' or config.get('web.search.exa_api_key')):
+            builtin_functions.append(search_web)
+        builtin_functions.append(fetch_url)
 
     # Add image generation/edit tools if builtin category enabled,
     # globally enabled, and allowed by model capability.
@@ -791,6 +805,17 @@ async def get_builtin_tools(
             parameters.get('properties', {}).pop('background', None)
             if isinstance(parameters.get('required'), list):
                 parameters['required'] = [name for name in parameters['required'] if name != 'background']
+        if func.__name__ == 'delegate_task':
+            # Mologate: the profiles the model can pick, built-in and the admin's (utils/subagent_profiles.py).
+            profiles = get_subagent_profiles(config.get('subagents.profiles'))
+            properties = spec.get('parameters', {}).get('properties', {})
+            properties['profile'] = {
+                'type': 'string',
+                'enum': [profile['name'] for profile in profiles],
+                'default': 'general-purpose',
+                'description': "The sub-agent's role. "
+                + ' '.join(f'{profile["name"]}: {profile["description"]}' for profile in profiles),
+            }
 
         tools_dict[func.__name__] = {
             'tool_id': f'builtin:{func.__name__}',

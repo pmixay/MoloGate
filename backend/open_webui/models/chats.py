@@ -11,7 +11,7 @@ from typing import Any, Literal
 # local imports
 from open_webui.env import ENABLE_ADMIN_CHAT_ACCESS
 from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.access_grants import AccessGrants
+from open_webui.models.access_grants import WILDCARD_PRINCIPAL_ID, AccessGrant, AccessGrants
 from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
 from open_webui.models.folders import Folders
@@ -598,6 +598,30 @@ class ChatTable:
                 )
             )
             return list(result.scalars().all())
+
+    async def get_subagent_chats_by_parent_id(self, parent_chat_id: str, user_id: str) -> list[dict]:
+        """Mologate: the sub-agent chats a chat started, oldest first, without their messages."""
+        async with get_async_db_context() as session:
+            result = await session.execute(
+                select(Chat.id, Chat.title, Chat.meta, Chat.created_at, Chat.updated_at)
+                .where(
+                    Chat.user_id == user_id,
+                    Chat.meta['internal'].as_boolean().is_(True),
+                    Chat.meta['type'].as_string() == 'subagent',
+                    Chat.meta['parent_chat_id'].as_string() == parent_chat_id,
+                )
+                .order_by(Chat.created_at.asc())
+            )
+            return [
+                {
+                    'id': row.id,
+                    'title': row.title,
+                    'meta': row.meta or {},
+                    'created_at': row.created_at,
+                    'updated_at': row.updated_at,
+                }
+                for row in result.all()
+            ]
 
     async def get_internal_chat_by_note_id(
         self, note_id: str, user_id: str, db: AsyncSession | None = None
@@ -1590,6 +1614,45 @@ class ChatTable:
                 for chat in all_chats
             ]
 
+    async def get_team_chat_list(
+        self,
+        user_id: str,
+        skip: int = 0,
+        limit: int = 50,
+        db: AsyncSession | None = None,
+    ) -> list[dict]:
+        """Mologate: other people's chats that are open to the whole team (a user:* read grant)."""
+        async with get_async_db_context(db) as session:
+            open_chat_ids = select(AccessGrant.resource_id).where(
+                AccessGrant.resource_type == 'shared_chat',
+                AccessGrant.principal_type == 'user',
+                AccessGrant.principal_id == WILDCARD_PRINCIPAL_ID,
+                AccessGrant.permission == 'read',
+            )
+            stmt = (
+                select(Chat.id, Chat.title, Chat.user_id, Chat.updated_at, Chat.created_at)
+                .where(Chat.id.in_(open_chat_ids), Chat.user_id != user_id)
+                .filter_by(archived=False)
+                .where(Chat.meta['internal'].as_boolean().is_not(True))
+                .order_by(Chat.updated_at.desc())
+            )
+            if skip:
+                stmt = stmt.offset(skip)
+            if limit:
+                stmt = stmt.limit(limit)
+
+            result = await session.execute(stmt)
+            return [
+                {
+                    'id': row[0],
+                    'title': row[1],
+                    'user_id': row[2],
+                    'updated_at': row[3],
+                    'created_at': row[4],
+                }
+                for row in result.all()
+            ]
+
     async def get_chat_list_by_chat_ids(
         self,
         chat_ids: list[str],
@@ -1781,6 +1844,13 @@ class ChatTable:
 
             folder = await Folders.get_folder_by_id(chat.folder_id, db=db)
             if folder and await has_folder_access(user.id, folder, 'read', db):
+                return chat
+
+        # Mologate: a sub-agent's conversation is readable by whoever can read the chat that started it.
+        meta = chat.meta or {}
+        if meta.get('type') == 'subagent' and meta.get('parent_chat_id') and meta['parent_chat_id'] != id:
+            parent = await self.get_chat_by_id_for_user(meta['parent_chat_id'], user, db=db)
+            if parent and parent.user_id == chat.user_id:
                 return chat
 
         return None

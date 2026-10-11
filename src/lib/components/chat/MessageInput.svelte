@@ -51,7 +51,9 @@
 		getUserPosition,
 		getUserTimezone,
 		getWeekday,
-		isRasterImageContentType
+		isImageAttachment,
+		isRasterImageContentType,
+		modelReadsImages
 	} from '$lib/utils';
 	import { uploadFile } from '$lib/apis/files';
 	import { getCwd, uploadNewFileToTerminal } from '$lib/apis/terminal';
@@ -71,6 +73,7 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import ModelSelector from './ModelSelector.svelte';
 	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
+	import ContextIndicator from './ContextIndicator.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -176,8 +179,8 @@
 	export let selectedSkillIds: string[] = [];
 	export let selectedFilterIds: string[] = [];
 
-	export let toolApprovalMode = 'full';
-	export let onToolApprovalModeChange: Function = () => {};
+	export let alwaysAllowActions = false;
+	export let onAlwaysAllowActionsChange: Function = () => {};
 
 	export let pendingOAuthTools: {
 		id: string;
@@ -223,8 +226,7 @@
 			}),
 		selectedToolIds,
 		selectedSkillIds,
-		selectedFilterIds,
-		toolApprovalMode
+		selectedFilterIds
 	};
 
 	$: onChange(chatInputDraft);
@@ -716,7 +718,10 @@
 
 	let modelCapabilitiesById: ModelCapabilitiesById = {};
 	$: modelCapabilitiesById = Object.fromEntries(
-		($models ?? []).map((model) => [model.id, model.info?.meta?.capabilities ?? {}])
+		($models ?? []).map((model) => [
+			model.id,
+			{ ...(model.info?.meta?.capabilities ?? {}), vision: modelReadsImages(model) }
+		])
 	);
 
 	const getCapableModelIds = (
@@ -727,6 +732,11 @@
 
 	let visionCapableModels = [];
 	$: visionCapableModels = getCapableModelIds(selectedModelIds, 'vision', modelCapabilitiesById);
+
+	// Mologate: while no selected model can read images, images can't be attached: uploads are
+	// refused below, the image buttons in the "+" menu are greyed out, and Chat.svelte won't send
+	// images attached before the switch.
+	$: canAttachImages = visionCapableModels.length > 0;
 
 	let fileUploadCapableModels = [];
 	$: fileUploadCapableModels = getCapableModelIds(
@@ -1048,7 +1058,7 @@
 			}
 
 			if (isRasterImageContentType(file['type'])) {
-				if (visionCapableModels.length === 0) {
+				if (!canAttachImages) {
 					toast.error($i18n.t('Selected model(s) do not support image inputs'));
 					return;
 				}
@@ -1812,7 +1822,7 @@
 									dir={$settings?.chatDirection ?? 'auto'}
 								>
 									{#each files as file, fileIdx}
-										{#if file.type === 'image' || isRasterImageContentType(file?.content_type)}
+										{#if isImageAttachment(file)}
 											{@const fileUrl =
 												file.url.startsWith('data') || file.url.startsWith('http')
 													? file.url
@@ -2097,6 +2107,7 @@
 									<InputMenu
 										bind:files
 										selectedModels={selectedModelIds}
+										{canAttachImages}
 										fileUploadCapableModels={getFilesystemUploadTerminal(
 											$selectedTerminalId,
 											$terminalServers,
@@ -2104,8 +2115,8 @@
 										)
 											? selectedModelIds
 											: fileUploadCapableModels}
-										{toolApprovalMode}
-										{onToolApprovalModeChange}
+										{alwaysAllowActions}
+										{onAlwaysAllowActionsChange}
 										{screenCaptureHandler}
 										{inputFilesHandler}
 										uploadFilesHandler={() => {
@@ -2306,6 +2317,12 @@
 
 									<!-- Effort selector (agent C): insert <EffortSelector /> on the line below. -->
 									<EffortSelector {selectedModels} bind:params />
+
+									<ContextIndicator
+										selectedModels={selectedModelIds}
+										{history}
+										contextUsage={statusContextUsage}
+									/>
 
 									{#if hasChatVariables}
 										<Tooltip content={$i18n.t('Chat Variables')} placement="top">

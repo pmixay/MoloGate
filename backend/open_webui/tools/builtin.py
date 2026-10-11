@@ -1682,6 +1682,7 @@ async def delegate_task(
     context: str = '',
     file_ids: list[str] | None = None,
     background: bool = False,
+    profile: str = 'general-purpose',
     __request__: Request = None,
     __user__: dict = None,
     __metadata__: dict = None,
@@ -1696,6 +1697,7 @@ async def delegate_task(
     :param file_ids: Attached file IDs the sub-agent needs. Use this for images or files;
         do not put file IDs only in context.
     :param background: Return immediately and continue this chat when the sub-agent finishes
+    :param profile: The sub-agent's role, such as general-purpose, explore, plan or reviewer
     :return: Foreground result text, or a JSON dispatch handle for background work
     """
     if __request__ is None:
@@ -1710,12 +1712,55 @@ async def delegate_task(
         context,
         background,
         file_ids=file_ids,
+        profile=profile,
         request=__request__,
         user_data=__user__ or {},
         metadata=__metadata__ or {},
         parent_chat_id=__chat_id__ or '',
         parent_message_id=__message_id__,
     )
+
+
+async def list_agents(
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    List the agents in this chat: the main agent and the sub-agents it started, with their ids and status.
+
+    :return: JSON with your own agent id and the agents you can message
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+
+    from open_webui.utils.agent_messages import list_agents as get_agents
+
+    return JSONCodec.dumps(await get_agents(__request__, UserModel(**__user__), __chat_id__), ensure_ascii=False)
+
+
+async def send_message(
+    to: str,
+    message: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    Send a message to another agent in this chat: "main" for the main agent, or a sub-agent's id.
+    A running agent reads it after its current step; the main agent can also restart a finished sub-agent
+    this way, and its answer comes back to you as a message.
+
+    :param to: The recipient's agent id: "main" or a sub-agent id such as deleg_1a2b3c4d
+    :param message: What to tell or ask the other agent
+    :return: Whether the message was delivered, or an error
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+
+    from open_webui.utils.agent_messages import send_agent_message
+
+    return await send_agent_message(__request__, UserModel(**__user__), __chat_id__, to, message)
 
 
 async def timer(

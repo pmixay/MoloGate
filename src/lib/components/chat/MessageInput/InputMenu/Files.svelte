@@ -11,12 +11,14 @@
 	import Loader from '$lib/components/common/Loader.svelte';
 	import SearchInput from './SearchInput.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
-	export let onSelect = (e) => {};
+	export let onSelect = (e: any) => {};
+	// Mologate: false while no selected model reads images; image files are greyed out.
+	export let canAttachImages = true;
 
 	let loaded = false;
-	let items = [];
+	let items: any[] = [];
 	let selectedIdx = 0;
 	let query = '';
 
@@ -111,14 +113,19 @@
 			{:else}
 				<div class="flex flex-col gap-0.5">
 					{#each items as item, idx}
+						{@const unavailable = !canAttachImages && item.type === 'image'}
 						<button
 							class=" h-[1.6875rem] px-2 rounded-xl w-full text-left flex justify-between items-center text-[0.8125rem] font-normal {idx ===
 							selectedIdx
 								? ' bg-gray-50/40 dark:bg-gray-800/40 dark:text-gray-100 selected-command-option-button'
-								: ''}"
+								: ''} {unavailable ? 'opacity-50 cursor-not-allowed' : ''}"
 							type="button"
+							aria-disabled={unavailable}
+							title={unavailable ? $i18n.t("The selected model can't read images.") : undefined}
 							on:click={() => {
-								onSelect(item);
+								if (!unavailable) {
+									onSelect(item);
+								}
 							}}
 							on:mousemove={() => {
 								selectedIdx = idx;

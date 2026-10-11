@@ -974,6 +974,14 @@ export const isRasterImageContentType = (contentType: string | null | undefined)
 	return baseContentType.startsWith('image/') && baseContentType !== 'image/svg+xml';
 };
 
+export const isImageAttachment = (file: any) =>
+	file?.type === 'image' || isRasterImageContentType(file?.content_type);
+
+// Mologate: `reads_images` comes from the model listing (admin Vision switch, then provider
+// metadata); older listings only carry the admin switch.
+export const modelReadsImages = (model: any) =>
+	model?.reads_images ?? model?.info?.meta?.capabilities?.vision ?? true;
+
 export const isValidHttpUrl = (string: string) => {
 	let url;
 

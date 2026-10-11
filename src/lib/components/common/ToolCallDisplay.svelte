@@ -19,6 +19,8 @@
 	import Image from './Image.svelte';
 	import FullHeightIframe from './FullHeightIframe.svelte';
 	import { settings } from '$lib/stores';
+	import { getChatSubagents } from '$lib/apis/chats';
+	import PermissionPromptButtons from '$lib/components/chat/Messages/PermissionPromptButtons.svelte';
 
 	export let id: string = '';
 	export let attributes: {
@@ -31,7 +33,13 @@
 		embeds?: string;
 		done?: string;
 		status?: string;
+		permission_reason?: string;
+		tool_name?: string;
+		subagent_chat_id?: string;
 	} = {};
+	// Mologate: the chat and answer this call belongs to, to find a running sub-agent's conversation.
+	export let chatId = '';
+	export let messageId = '';
 
 	export let open = false;
 	export let grouped = false;
@@ -39,7 +47,7 @@
 	export let className = '';
 	export let resolvable = false;
 	export let resolving = false;
-	export let onResolve: (approved: boolean) => void = () => {};
+	export let onResolve: (approved: boolean, always?: boolean) => void = () => {};
 
 	const RESULT_PREVIEW_LIMIT = 10000;
 	let expandedResult = false;
@@ -159,6 +167,32 @@
 	$: parsedArgs = parseArguments(args);
 	$: parsedResult = parseJSONString(result);
 
+	// Mologate: delegate_task links to the sub-agent's conversation. The result names it once the
+	// sub-agent is done; while it runs, it's found among the chat's sub-agents by answer and task.
+	let foundSubagentChatId = '';
+	let subagentLookup = false;
+	$: isDelegate = attributes?.tool_name === 'delegate_task';
+	$: subagentChatId = attributes?.subagent_chat_id || foundSubagentChatId;
+	$: if (isDelegate && !subagentChatId && !subagentLookup && chatId && messageId && !isDone) {
+		findSubagentChat();
+	}
+
+	const findSubagentChat = async () => {
+		subagentLookup = true;
+		const task = parseArguments(decode(attributes?.arguments ?? ''))?.task;
+		for (let attempt = 0; attempt < 5 && !foundSubagentChatId; attempt++) {
+			if (attempt) {
+				await new Promise((resolve) => setTimeout(resolve, 1500));
+			}
+			const subagents = await getChatSubagents(localStorage.token, chatId).catch(() => []);
+			const match = subagents
+				.filter((subagent) => subagent.parent_message_id === messageId)
+				.reverse()
+				.find((subagent) => typeof task !== 'string' || task.trim().startsWith(subagent.task));
+			foundSubagentChatId = match?.id ?? '';
+		}
+	};
+
 	const toggleOpen = () => {
 		open = !open;
 	};
@@ -252,37 +286,36 @@
 					</span>
 				</div>
 
-				{#if needsApproval && !isAskUser}
-					<span class="flex gap-1 shrink-0">
-						<button
-							type="button"
-							class="tool-call-allow-button text-[0.6875rem] px-2.5 py-0.5 rounded-md text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-white/8 hover:bg-gray-200 dark:hover:bg-white/12 transition-colors duration-100 disabled:opacity-50"
-							disabled={resolving}
-							on:click|stopPropagation={() => onResolve(true)}
-						>
-							{$i18n.t('Allow')}
-						</button>
-						<button
-							type="button"
-							class="tool-call-deny-button text-[0.6875rem] px-2 py-0.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 disabled:opacity-50"
-							disabled={resolving}
-							on:click|stopPropagation={() => onResolve(false)}
-						>
-							{$i18n.t('Deny')}
-						</button>
-					</span>
-				{:else}
-					<!-- Chevron -->
-					<div class="flex shrink-0 self-center translate-y-[1px]">
-						{#if open}
-							<ChevronUp strokeWidth="3.5" className="size-3" />
-						{:else}
-							<ChevronDown strokeWidth="3.5" className="size-3" />
-						{/if}
-					</div>
+				{#if isDelegate && subagentChatId}
+					<a
+						href={`/c/${subagentChatId}`}
+						class="shrink-0 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline"
+						on:click|stopPropagation
+					>
+						{$i18n.t('Open conversation')}
+					</a>
 				{/if}
+
+				<!-- Chevron -->
+				<div class="flex shrink-0 self-center translate-y-[1px]">
+					{#if open}
+						<ChevronUp strokeWidth="3.5" className="size-3" />
+					{:else}
+						<ChevronDown strokeWidth="3.5" className="size-3" />
+					{/if}
+				</div>
 			</div>
 		</div>
+
+		{#if needsApproval && !isAskUser}
+			<!-- Mologate: permission prompt, only for calls the review flagged. -->
+			<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-1 pl-5.5">
+				<span class="min-w-0 text-xs text-gray-500 dark:text-gray-400">
+					{attributes?.permission_reason || $i18n.t('This action needs your permission.')}
+				</span>
+				<PermissionPromptButtons disabled={resolving} {onResolve} />
+			</div>
+		{/if}
 
 		{#if open}
 			<div transition:slide={{ duration: 300, easing: quintOut, axis: 'y' }}>

@@ -47,7 +47,9 @@ from open_webui.utils.access_control import filter_allowed_access_grants, has_ac
 from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_variables import get_chat_variables_schema
+from open_webui.utils.model_labs import detect_lab_from_text, lab_logo
 from open_webui.utils.models import get_all_models
+from open_webui.utils.provider_limits import get_provider_limits
 from open_webui.utils.validate import BACKGROUND_IMAGE_MAX_BYTES, validate_background_image
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -768,6 +770,65 @@ async def get_model_by_id(id: str, user=Depends(get_verified_user), db: AsyncSes
 
 
 ###########################
+# Lab logos (Mologate)
+###########################
+
+
+def _is_default_profile_image(url: str | None) -> bool:
+    # The model editor stores the stock avatar as {WEBUI_BASE_URL}/static/favicon.png.
+    return not url or url.split('?', 1)[0].endswith('/static/favicon.png')
+
+
+def _lab_logo_response(lab_id: str | None) -> Response | None:
+    logo = lab_logo(lab_id)
+    if logo is None:
+        return None
+    return Response(
+        content=logo,
+        media_type='image/svg+xml',
+        headers={
+            'Cache-Control': 'public, max-age=86400',
+            # Bundled, script-free SVGs; this keeps them inert even when opened directly.
+            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+            'X-Content-Type-Options': 'nosniff',
+        },
+    )
+
+
+@router.get('/lab/logo')
+async def get_lab_logo(id: str, user=Depends(get_verified_user)):
+    """The bundled logo of an AI lab (see utils/model_labs.py)."""
+    response = _lab_logo_response(id)
+    if response is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+    return response
+
+
+###########################
+# GetModelLimits
+###########################
+
+
+@router.get('/model/limits')
+async def get_model_limits(request: Request, id: str, user=Depends(get_verified_user)):
+    """Mologate: the usage limits the model's provider account last reported, if it reports any.
+
+    Limits belong to the connection (a shared account or key), so a custom model shows its base
+    model's. Answers ``{'windows': []}`` when nothing is known.
+    """
+    model = request.app.state.MODELS.get(id)
+    if not model:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    base_model_id = (model.get('info') or {}).get('base_model_id')
+    base_model = request.app.state.MODELS.get(base_model_id) if base_model_id else None
+    url_idx = (base_model or model).get('urlIdx')
+
+    snapshot = await get_provider_limits(request.app.state.redis, url_idx) if url_idx is not None else None
+    return snapshot or {'windows': [], 'updated_at': None}
+
+
+###########################
 # GetModelById
 ###########################
 
@@ -781,6 +842,8 @@ async def get_model_profile_image(
 ):
     profile_image_url = None
     updated_at = None
+    # Mologate: whether the caller may see this model's details (for its lab logo below).
+    can_see_model = True
 
     bypass_access_control = BYPASS_MODEL_ACCESS_CONTROL or (user.role == 'admin' and BYPASS_ADMIN_ACCESS_CONTROL)
 
@@ -788,6 +851,7 @@ async def get_model_profile_image(
     model_meta = await Models.get_model_meta_by_id(id, db=db)
     if model_meta:
         meta, model_user_id, model_updated_at = model_meta
+        can_see_model = False
         # Denied callers get the default image rather than an error, so model ids stay unprobeable.
         if (
             bypass_access_control
@@ -802,6 +866,7 @@ async def get_model_profile_image(
         ):
             profile_image_url = (meta or {}).get('profile_image_url')
             updated_at = model_updated_at
+            can_see_model = True
 
     # Fallback: check arena models stored in config (not in the DB)
     if not profile_image_url:
@@ -815,7 +880,7 @@ async def get_model_profile_image(
                     profile_image_url = arena_meta.get('profile_image_url')
                 break
 
-    if profile_image_url:
+    if profile_image_url and not _is_default_profile_image(profile_image_url):
         if profile_image_url.startswith('http'):
             if ENABLE_PROFILE_IMAGE_URL_FORWARDING:
                 return Response(
@@ -863,6 +928,13 @@ async def get_model_profile_image(
                     url=safe_static,
                     status_code=status.HTTP_302_FOUND,
                 )
+
+    # Mologate: a model without a picture of its own shows its lab's bundled logo. A caller who may
+    # not see the model only gets what its id says, so ids stay unprobeable.
+    listed_model = request.app.state.MODELS.get(id) if can_see_model else None
+    lab_id = ((listed_model or {}).get('lab') or {}).get('id') or detect_lab_from_text(id)
+    if response := _lab_logo_response(lab_id):
+        return response
 
     # LICENSE covers this Open WebUI fallback logo.
     # Do not alter, remove, obscure, or replace it except as LICENSE permits:

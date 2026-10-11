@@ -89,6 +89,7 @@ from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.context_compaction import compact_messages_for_request
+from open_webui.utils.context_window import build_context_breakdown
 from open_webui.utils.files import (
     convert_markdown_base64_images,
     get_file_url_from_base64,
@@ -101,9 +102,11 @@ from open_webui.utils.filter import (
     get_filter_functions,
     process_filter_functions,
 )
+from open_webui.utils.image_input import model_reads_images, strip_image_inputs
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.memory import add_memory_context, review_memory_after_turn
+from open_webui.utils.agent_messages import take_agent_messages
 from open_webui.utils.misc import (
     add_or_update_system_message,
     add_or_update_user_message,
@@ -140,6 +143,13 @@ from open_webui.utils.task import (
     get_task_model_id,
     rag_template,
     tools_function_calling_generation_template,
+)
+from open_webui.utils.tool_permissions import (
+    REVIEW_PARAM as TOOL_REVIEW_PARAM,
+    chat_always_allows,
+    is_always_allowed,
+    mark_reviewed_tool_calls,
+    review_tool_calls,
 )
 from open_webui.utils.tools import (
     build_tool_server_headers,
@@ -2535,6 +2545,9 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         except Exception:
             pass
 
+    # Mologate: a model that can't read images gets a note in place of each image.
+    if not model_reads_images(model):
+        form_data = strip_image_inputs(form_data)
     form_data = await convert_url_images_to_base64(form_data, user=user)
 
     event_emitter = await get_event_emitter(metadata)
@@ -3273,6 +3286,26 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     form_data = normalize_messages_for_model(form_data)
 
+    # Mologate: what fills the context window, for the composer's context indicator. Only a
+    # fresh turn records it; a resumed or continued turn keeps the one its first request made.
+    if (
+        is_saved_chat_id(metadata.get('chat_id'))
+        and metadata.get('message_id')
+        and not metadata.get('assistant_message_id')
+    ):
+        try:
+            breakdown = build_context_breakdown(form_data)
+            await Chats.upsert_message_to_chat_by_id_and_message_id(
+                metadata['chat_id'],
+                metadata['message_id'],
+                {'context_breakdown': breakdown},
+                touch=False,
+            )
+            if event_emitter:
+                await event_emitter({'type': 'chat:completion', 'data': {'context_breakdown': breakdown}})
+        except Exception:
+            log.exception('Could not record the context breakdown')
+
     return form_data, metadata, events
 
 
@@ -3425,6 +3458,17 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
     result_call_ids = {
         item.get('call_id') for item in output if item.get('type') == 'function_call_output' and item.get('call_id')
     }
+    if is_always_allowed(metadata.get('params')):
+        # Mologate: "Always allow in this chat" also lets through the flagged calls still waiting.
+        for item in output:
+            if (
+                item.get('type') == 'function_call'
+                and item.get('name') != 'ask_user'
+                and item.get('call_id')
+                and item.get('status') == 'queued'
+                and item.get('call_id') not in result_call_ids
+            ):
+                item['approved'] = True
     approved_calls = [
         item
         for item in output
@@ -3435,7 +3479,7 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
         and item.get('call_id') not in result_call_ids
     ]
     if not approved_calls:
-        if metadata.get('params', {}).get('tool_approval_mode', 'full') == 'ask' and any(
+        if any(
             item.get('type') == 'function_call'
             and item.get('name') != 'ask_user'
             and (item.get('call_id') or item.get('id'))
@@ -3505,7 +3549,7 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
         result_call_ids = {
             item.get('call_id') for item in output if item.get('type') == 'function_call_output' and item.get('call_id')
         }
-        if metadata.get('params', {}).get('tool_approval_mode', 'full') == 'ask' and any(
+        if any(
             item.get('type') == 'function_call'
             and item.get('name') != 'ask_user'
             and (item.get('call_id') or item.get('id'))
@@ -3625,7 +3669,10 @@ async def pause_for_tool_approval(chat_id: str, message_id: str, output: list[di
             and item.get('call_id') not in result_call_ids
             and item.get('status') != 'rejected'
         ):
-            if not has_pending_approval:
+            if item.get('approved') is True and item.get('name') != 'ask_user':
+                # Mologate: cleared by the permission review; runs once the flagged calls are answered.
+                item['status'] = 'queued'
+            elif not has_pending_approval:
                 item['status'] = 'pending'
                 has_pending_approval = True
             elif item.get('status') == 'in_progress':
@@ -5931,29 +5978,34 @@ async def streaming_chat_response_handler(response, ctx):
                                 }
                             )
 
-                    tool_approval_mode = metadata.get('params', {}).get('tool_approval_mode', 'full')
+                    # Mologate: permission prompts. Calls run without asking unless the reviewer
+                    # flags one as critical or very dangerous; then the batch waits for the user.
                     if (
                         response_tool_calls
-                        and tool_approval_mode == 'ask'
+                        and metadata.get('params', {}).get(TOOL_REVIEW_PARAM)
+                        and not is_always_allowed(metadata.get('params'))
                         and is_saved_chat_id(metadata.get('chat_id'))
                         and metadata.get('message_id')
                     ):
-                        await pause_for_tool_approval(
-                            metadata['chat_id'],
-                            metadata['message_id'],
-                            full_output(),
-                            form_data,
-                            metadata,
-                        )
-                        await event_emitter(
-                            {
-                                'type': 'chat:completion',
-                                'data': {
-                                    'output': full_output(),
-                                },
-                            }
-                        )
-                        return
+                        flagged = await review_tool_calls(request, user, response_tool_calls, user_message)
+                        if flagged and not await chat_always_allows(metadata['chat_id']):
+                            mark_reviewed_tool_calls(full_output(), response_tool_calls, flagged)
+                            await pause_for_tool_approval(
+                                metadata['chat_id'],
+                                metadata['message_id'],
+                                full_output(),
+                                form_data,
+                                metadata,
+                            )
+                            await event_emitter(
+                                {
+                                    'type': 'chat:completion',
+                                    'data': {
+                                        'output': full_output(),
+                                    },
+                                }
+                            )
+                            return
 
                     await emit_output()
 
@@ -6222,6 +6274,9 @@ async def streaming_chat_response_handler(response, ctx):
                                     )
                         tool_call_sources.clear()
 
+                    # Mologate: messages other agents sent this one while it worked (utils/agent_messages.py).
+                    output.extend(await take_agent_messages(metadata.get('chat_id')))
+
                     await emit_output()
 
                     try:
@@ -6280,6 +6335,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     }
                                 )
 
+                        if not model_reads_images(model):
+                            new_form_data = strip_image_inputs(new_form_data)
                         new_form_data = await convert_url_images_to_base64(new_form_data, user=user)
 
                         if filter_functions:

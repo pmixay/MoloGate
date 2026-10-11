@@ -105,7 +105,8 @@
 
 	let resolvingCallId = '';
 
-	const resolveToolCall = async (callId: string, approved: boolean) => {
+	// Mologate: `always` is "Always allow in this chat": approve, and stop prompts in this chat.
+	const resolveToolCall = async (callId: string, approved: boolean, always = false) => {
 		if (!chatId || !messageId || !callId || resolvingCallId) {
 			return;
 		}
@@ -117,7 +118,8 @@
 				chatId,
 				messageId,
 				callId,
-				approved ? 'approve' : 'reject'
+				approved ? 'approve' : 'reject',
+				approved && always ? { always_allow: true } : {}
 			);
 			onToolCallResolved(res);
 		} catch (err) {
@@ -459,7 +461,8 @@
 							grouped={true}
 							resolvable={!!chatId && !!messageId && save}
 							resolving={resolvingCallId === detailToken.attributes?.id}
-							onResolve={(approved) => resolveToolCall(detailToken.attributes?.id ?? '', approved)}
+							onResolve={(approved, always) =>
+								resolveToolCall(detailToken.attributes?.id ?? '', approved, always)}
 							open={$settings?.expandDetails ?? false}
 							className="w-full"
 							buttonClassName={detailButtonClassName}
@@ -520,7 +523,8 @@
 				{allowEmbeds}
 				resolvable={!!chatId && !!messageId && save}
 				resolving={resolvingCallId === token.attributes?.id}
-				onResolve={(approved) => resolveToolCall(token.attributes?.id ?? '', approved)}
+				onResolve={(approved, always) =>
+					resolveToolCall(token.attributes?.id ?? '', approved, always)}
 				open={$settings?.expandDetails ?? false}
 				className="w-full space-y-2"
 				buttonClassName={detailButtonClassName}

@@ -39,6 +39,12 @@ export type OutputDetailToken = {
 		embeds?: string;
 		output?: string;
 		status?: string;
+		// Mologate: why the permission review stopped this call for the user.
+		permission_reason?: string;
+		// Mologate: the tool's own name (`name` may be a display label), and for delegate_task the
+		// sub-agent's conversation once the result names it.
+		tool_name?: string;
+		subagent_chat_id?: string;
 	};
 };
 
@@ -62,6 +68,12 @@ export type OutputDisplayItem =
 			type: 'file';
 			id: string;
 			item: Record<string, unknown>;
+	  }
+	| {
+			// Mologate: a message another agent of this chat sent mid-turn.
+			type: 'agent_message';
+			id: string;
+			item: OutputItem;
 	  };
 
 type ResponseStreamEvent = {
@@ -191,6 +203,16 @@ function getInlineFileFromToolOutput(callItem?: OutputItem, resultItem?: OutputI
 		: result;
 }
 
+// Mologate: delegate_task results name the sub-agent's chat: a JSON handle for background runs,
+// "[Sub-agent deleg_… (profile) finished · chat <id>]" for foreground ones.
+function getSubagentChatId(resultText: string): string {
+	const parsed = parseJSONStringValue(resultText) as Record<string, unknown>;
+	if (parsed && typeof parsed === 'object' && typeof parsed.subagent_chat_id === 'string') {
+		return parsed.subagent_chat_id;
+	}
+	return resultText.match(/^\[Sub-agent [^\]\n]*· chat ([0-9a-f-]{36})\]/)?.[1] ?? '';
+}
+
 function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string, OutputItem>) {
 	const callId = item.call_id ?? item.id ?? '';
 	const resultItem = toolOutputByCallId[callId];
@@ -230,7 +252,14 @@ function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string,
 			status,
 			arguments: stringifyAttribute(item.arguments ?? ''),
 			files: stringifyAttribute(resultItem?.files),
-			embeds: stringifyAttribute(resultItem?.embeds)
+			embeds: stringifyAttribute(resultItem?.embeds),
+			permission_reason:
+				typeof (item.permission as any)?.reason === 'string' ? (item.permission as any).reason : '',
+			tool_name: item.name ?? '',
+			subagent_chat_id:
+				item.name === 'delegate_task' && resultItem
+					? getSubagentChatId(getToolResultText(resultItem))
+					: ''
 		}
 	};
 }
@@ -403,6 +432,16 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			if (token) {
 				currentDetailTokens.push(token);
 			}
+			return;
+		}
+
+		if (item.type === 'agent_message') {
+			flushDetails();
+			displayItems.push({
+				type: 'agent_message',
+				id: item.id ?? `agent-message-${index}`,
+				item
+			});
 			return;
 		}
 

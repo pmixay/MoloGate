@@ -240,6 +240,38 @@ export const createNewModel = async (token: string, model: object) => {
 	return res;
 };
 
+// Mologate: the usage limits the model's provider account last reported in response headers.
+export const getModelLimits = async (token: string, id: string) => {
+	let error = null;
+
+	const searchParams = new URLSearchParams();
+	searchParams.append('id', id);
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/models/model/limits?${searchParams.toString()}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const getModelById = async (token: string, id: string) => {
 	let error = null;
 

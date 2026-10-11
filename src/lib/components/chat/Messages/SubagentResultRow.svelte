@@ -17,6 +17,9 @@
 	export let result: SubagentResult;
 
 	let expanded = false;
+	// Mologate: one result links to its sub-agent's conversation.
+	$: chatIds = Array.isArray(result.subagent_chat_ids) ? result.subagent_chat_ids : [];
+	$: openChatId = result.subagent_chat_id ?? (chatIds.length === 1 ? chatIds[0] : '');
 	$: delegationIds = Array.isArray(result.delegation_ids) ? result.delegation_ids : [];
 	$: delegationLabel =
 		result.delegation_id ?? (delegationIds.length > 1 ? `${delegationIds.length} tasks` : '');
@@ -31,31 +34,41 @@
 </script>
 
 <div class="w-full min-w-0 pb-1">
-	<button
-		type="button"
-		class="w-full min-w-0 flex items-center gap-2 text-left text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-		aria-expanded={expanded}
-		on:click={() => (expanded = !expanded)}
-	>
-		<span class="text-[0.75rem] font-normal shrink-0">
-			{$i18n.t('Background sub-agent finished')}
-		</span>
-		{#if summary}
-			<span class="text-[0.75rem] truncate min-w-0 flex-1">{summary}</span>
-		{/if}
-		{#if delegationLabel}
-			<span
-				class="hidden sm:inline text-[0.6875rem] font-mono text-gray-400 dark:text-gray-600 shrink-0"
-			>
-				{delegationLabel}
+	<div class="w-full min-w-0 flex items-center gap-2">
+		<button
+			type="button"
+			class="min-w-0 flex items-center gap-2 text-left text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+			aria-expanded={expanded}
+			on:click={() => (expanded = !expanded)}
+		>
+			<span class="text-[0.75rem] font-normal shrink-0">
+				{$i18n.t('Background sub-agent finished')}
 			</span>
+			{#if summary}
+				<span class="text-[0.75rem] truncate min-w-0">{summary}</span>
+			{/if}
+			{#if delegationLabel}
+				<span
+					class="hidden sm:inline text-[0.6875rem] font-mono text-gray-400 dark:text-gray-600 shrink-0"
+				>
+					{delegationLabel}
+				</span>
+			{/if}
+			<ChevronDown
+				className="size-3 text-gray-400 dark:text-gray-600 shrink-0 transition-transform duration-150 {expanded
+					? 'rotate-180'
+					: ''}"
+			/>
+		</button>
+		{#if openChatId}
+			<a
+				href={`/c/${openChatId}`}
+				class="ml-auto shrink-0 text-[0.6875rem] text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline transition-colors"
+			>
+				{$i18n.t('Open conversation')}
+			</a>
 		{/if}
-		<ChevronDown
-			className="size-3 text-gray-400 dark:text-gray-600 shrink-0 transition-transform duration-150 {expanded
-				? 'rotate-180'
-				: ''}"
-		/>
-	</button>
+	</div>
 	{#if expanded}
 		<div
 			class="mt-2 ml-3 border-l border-gray-100 dark:border-white/8 pl-3 text-[0.78125rem] leading-relaxed text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words"

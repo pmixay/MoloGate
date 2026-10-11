@@ -19,10 +19,17 @@ are not in priority order. Tick an item off when it ships.
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
     weekly limits.
+  - Started: the context indicator's panel shows the selected model's limits when its provider reports
+    them in response headers (Codex's 5-hour and weekly windows, or OpenAI-style request and token
+    limits). They are kept per connection, so every model on a shared account shows the same ones.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
 - [ ] **Fair use:** wide per-person limits on the shared accounts, so one person can't use up the
       quota for everyone. Proposed defaults under [Proposed limits](#proposed-limits).
+- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
+      time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
+      and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
+      defaults under [Proposed limits](#proposed-limits).
 
 ## Tools, containers and capabilities
 
@@ -30,8 +37,15 @@ are not in priority order. Tick an item off when it ships.
 
 - [x] Web search is always on, everywhere, with no toggle. The model decides when to use it.
   - Done: once an admin sets up a search engine, it is on in every chat as a tool the model calls
-    when needed. It is not forced on for models set to legacy tool calling, where it would run on
-    every message.
+    when needed.
+  - Done: search is on by default through Exa in auto mode, the most accurate search API in an
+    independent 2026 benchmark. Set `EXA_API_KEY` on the deployment; until then the model isn't
+    offered the search tool, only `fetch_url` for pages it is given. Each result brings up to 3,000
+    characters of the page's text (`EXA_MAX_CONTENT_LENGTH`). Existing installs are switched on once,
+    and an engine an admin already picked is kept.
+  - Done: pages are read through Exa too (its Contents API), for `fetch_url` and links added to a
+    chat. It returns clean text and gets through JavaScript-rendered and bot-protected pages that a
+    direct request can't read. It uses the same `EXA_API_KEY`; without it, pages are read directly.
 
 ### Container nodes
 
@@ -60,11 +74,18 @@ are not in priority order. Tick an item off when it ships.
   - After each turn, show the list of files the agent edited in that turn.
   - Show the number of lines added and removed (+ / −) for the whole session.
 
-### Agents and tasks
+### Agents
 
-- [ ] **Subagents:**
+- [x] **Subagents:**
   - Users can open and read each subagent's conversation.
   - Preconfigured subagent profiles, such as "general purpose".
+  - Done: sub-agents, background ones included, are on by default, and existing installs are switched
+    on once. Each `delegate_task` call, background result and agent message links to the sub-agent's
+    conversation. The conversation opens read-only, even while the sub-agent is still working, with
+    its profile and a link back to the main conversation. Anyone who can read the main chat can read
+    its sub-agents. `delegate_task` takes a profile: `general-purpose` (the default), `explore`,
+    `plan` or `reviewer`. Each adds role instructions to the sub-agent. Admins add their own profiles
+    under Settings → Sub-agents, optionally on another model.
 - [ ] **Team-wide and system-wide skills:**
   - **Open WebUI today:**
     - Workspace → Skills holds skills made of a name, a description and one markdown text.
@@ -84,9 +105,9 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent-swarm workflows.** Proposed design, to refine:
   - **Definition:** a workflow is an agent tool that starts a task in which many agents work together,
     as in Claude Code. It runs a reusable plan in phases, for example "plan → work in parallel →
-    verify → merge results". It shows up in the task list like other background tasks. It is a
-    separate feature from team [Workspaces](#workspaces): workflows coordinate agents, workspaces
-    coordinate people.
+    verify → merge results". It shows up in the [tasks panel](#tasks) like other background tasks.
+    It is a separate feature from team [Workspaces](#workspaces): workflows coordinate agents,
+    workspaces coordinate people.
   - **Agent steps:** each step names an agent profile, its instructions, its inputs, and the shape of
     the result it must return. The orchestrator can pass one step's results into the next.
   - **Patterns:**
@@ -102,19 +123,38 @@ are not in priority order. Tick an item off when it ships.
   - **Control and reuse:** workflows can be cancelled, and resumed after a failure without re-running
     finished steps. Saved workflows can be shared with the team, e.g. "code review", "research a
     topic", "implement + test + review".
-- [ ] **Agent-to-agent messaging:** agents in the same chat can message each other, including the main
+- [x] **Agent-to-agent messaging:** agents in the same chat can message each other, including the main
       agent.
-- [ ] **Background tasks:**
-  - A task moves to the background automatically after a set time.
-  - Users can see the list of running tasks and stop any of them.
-- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
-      [Proposed limits](#proposed-limits)).
-- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
-      [Proposed limits](#proposed-limits)).
+  - Done: the main agent and its sub-agents get `send_message` (to `main` or a sub-agent's id) and
+    `list_agents`. A running agent reads a message after its current tool call. An idle main agent
+    starts a new turn for it. The main agent can restart a finished sub-agent with a message, up to
+    10 times, and the answer comes back as a reply. Sub-agents can message running sub-agents, but
+    not restart finished ones. Messages show in both conversations as "Message from…" rows.
 - [ ] **Ask tool with a timer:**
   - When the agent asks the user a question and gets no answer for more than a minute, the recommended
     option is chosen automatically.
   - A crossed-out-timer button turns the timer off, for when the user is still thinking.
+
+### Tasks
+
+- [ ] **Tasks panel:** one place to see the chat's tasks, running or finished: background sub-agents,
+      workflows, monitor and scheduled tasks.
+  - Opening a task shows its output where it has one, updating live while the task runs where
+    possible.
+  - Each task shows how long it took or, while it runs, how long it has been running so far.
+  - Running tasks can be stopped.
+  - A "Clear" button removes all completed tasks from the list.
+- [ ] **Background tasks:** a task moves to the background automatically after a set time.
+- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
+      [Proposed limits](#proposed-limits)).
+- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
+      [Proposed limits](#proposed-limits)).
+- [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
+  - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
+    panel above the message box lists it with "X out of N tasks completed", but only while a reply is
+    generating.
+  - Show the task in progress in the panel's header, with the number of tasks left.
+  - Keep the panel, collapsed to that line, while tasks remain after the reply ends.
 
 ### Browser
 
@@ -138,20 +178,25 @@ are not in priority order. Tick an item off when it ships.
   - A "Create PR" button.
 - [ ] **Link a repository to a chat:** works in any chat, inside a workspace or not.
   - By default a chat's container has no link to GitHub.
-  - The user can link a repository and branch to the chat. Mologate then clones it into the chat's
-    container, sets up git, and tells the agent to work in that repository.
+  - When starting a chat, the user can link a repository and branch to it. Mologate then clones it into
+    the chat's container, sets up git, and tells the agent to work in that repository.
+  - A repository can only be linked when the chat is created, not added to an existing chat. In a chat
+    started without one, every GitHub function is off.
 
 ## Security
 
-- [ ] **Permission prompts:**
+- [x] **Permission prompts:**
   - Auto-approve is the default and only mode, with low sensitivity.
   - The user is asked for permission only when an action is critical or very dangerous.
   - Every such prompt includes "Always allow in this chat". Once chosen, even these prompts stop
     appearing in that chat.
-- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
-      time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
-      and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
-      defaults under [Proposed limits](#proposed-limits).
+  - Done: before a batch of tool calls runs, `codex-auto-approve` reviews it (GLM-5.3 Flash if that
+    fails or is missing; admins can pick both models under Settings → Interface). Only flagged calls
+    stop, with the reviewer's reason and Allow / Always allow in this chat / Deny; the rest run without
+    asking. Read-only built-in tools skip the review. With no reviewer available, built-in rules still
+    catch the most destructive commands (wiping disks, force-pushing, dropping databases, tearing down
+    infrastructure). "Always allow" is saved on the chat and can be turned off from the "+" menu.
+    Automations, channels and sub-agent runs aren't reviewed, since nobody is there to answer.
 
 ## Deployment
 
@@ -175,7 +220,7 @@ are not in priority order. Tick an item off when it ships.
       to all users and anyone can work in it.
 - [ ] **Projects:** a workspace is a project that holds chats and shared files. Workspaces are for
       team work between people; they are a separate feature from
-      [agent-swarm workflows](#agents-and-tasks).
+      [agent-swarm workflows](#agents).
 - [ ] **Shared files in chats:**
   - When a chat is created in a workspace, the workspace's shared files appear in that chat's container.
   - On creation, the chat's agent is given the current picture of the workspace.
@@ -183,7 +228,7 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
-- [ ] **Personal chats:** chats outside a workspace are private to their creator by default. They can
+- [x] **Personal chats:** chats outside a workspace are private to their creator by default. They can
       be opened to the team with the share feature (see [Interface](#interface)).
 
 ## General
@@ -197,12 +242,41 @@ are not in priority order. Tick an item off when it ships.
   - Done: levels come from an admin override on the model, else from what the provider reports
     (Codex-style `supported_reasoning_levels`, a plain level list, or OpenRouter-style
     `supported_parameters`); the dropdown hides when a model has none. The choice is saved per chat.
-- [ ] Hide image attachments automatically when the selected model can't read images.
-- [ ] **Context indicator:**
+- [x] Don't allow image attachments when the selected model can't read images.
+  - Done: a model can't read images when an admin turned its Vision capability off or its provider
+    lists input modalities without images (Codex `input_modalities`, OpenRouter `architecture`). While
+    no selected model reads images, uploading, pasting or dropping an image is refused, and Capture
+    and image files in the "+" menu are greyed out. Images attached before switching to such a model
+    stay visible but stop the send until they are removed or a model that reads images is picked. The
+    server also swaps any image in earlier messages or tool results for a short note, so such a model
+    never receives one.
+- [x] **Context indicator:**
   - A ring indicator to the right of the effort dropdown.
-  - Opening it shows a breakdown of what is filling the context window, plus the provider limits
-    described under [Limits](#limits).
-- [ ] Share a chat with the team, by opening it to the team or with a link.
+  - Opening it shows a breakdown of what is filling the context window, with percents, plus the
+    provider limits described under [Limits](#limits).
+  - Done: each turn records an estimate of its prompt by category (system instructions, tool
+    definitions, summary of earlier messages, messages, tool calls and results, images), calibrated
+    against the prompt tokens the provider reports. The panel shows each category and the free space
+    as a share of the window. The window size comes from an admin override in the model editor, else
+    from provider metadata (`context_window`, `context_length`, ...), else the compaction threshold.
+    Provider limits: see Per-model limits above.
+- [x] Share a chat with the team, by opening it to the team or with a link. Both need a Mologate
+      account.
+  - Done: "Open to the team" lets everyone signed in find the chat under Team in the sidebar and read
+    its current state, read-only. A share link is a snapshot any signed-in user with the URL can open;
+    signed-out visitors are sent to sign in, and no-auth ("anyone") access can no longer be granted.
+    Deleting the link keeps the chat open to the team.
+- [ ] **Turn and tool-use detail:**
+  - A turn is the group of tool uses between two of the agent's messages. Each turn can be expanded to
+    show every tool use, or collapsed to a single line.
+  - Each turn shows how long it took. While it runs, a live timer shows how long it has been running.
+  - Each tool use gets an icon for its kind of action: terminal command, read file, read image, web
+    search, and a generic icon for anything else.
+  - Thinking blocks get a design of their own.
+- [ ] **Live status:** a status line under the message says what is happening right now, so a reply
+      never looks stuck at the start: "Sending…", "Waiting for provider", "Thinking" (then "Thinking
+      more", "Thinking some more", "Thinking deeply" and "Deep in thought" as it goes on), "Running
+      tools", and so on.
 
 ### Models and providers
 
@@ -212,10 +286,28 @@ are not in priority order. Tick an item off when it ships.
   - Restricting OpenCode completely doesn't work, so a different approach to locking it down is
     needed.
 - [ ] Pull in the latest models automatically.
-- [ ] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
+- [x] **Native tool calling only:** turn legacy (prompt-based) tool calling off everywhere.
+  - Done: every model uses its own tool calling, and the Function Calling switch is gone from chat
+    and model settings, along with the legacy tool prompt in admin settings. A "legacy" value saved
+    on older chats, models or settings is ignored. Checked against OpenRouter's model list: every
+    free chat model, GLM 5.3, GPT 6 and 6.1, Qwen 3.8, Kimi K3 and MiMo v2.6 support native tool
+    calls.
+- [x] **Default system model:** background jobs such as chat titles and follow-up suggestions use the
       latest ChatGPT Luna model (currently Luna 6), and follow it automatically as new versions ship.
       If it's unavailable, they fall back to GLM-5.3 Flash.
-- [ ] **AI lab logos:** upload logos for each lab and group models by lab in the model dropdown.
+  - Done: when no task model is set, each background job picks the newest model whose id or name says
+    Luna (highest version; the plain model over mini variants and dated snapshots), so a new version
+    is used as soon as it shows up in the model list. Without one it uses GLM-5.3 Flash, then the
+    chat's own model. A task model chosen under Settings → Interface still wins, and that page shows
+    which model the default resolves to. `DEFAULT_SYSTEM_MODEL_FAMILY` and
+    `DEFAULT_SYSTEM_MODEL_FALLBACK` change the two.
+- [x] **AI lab logos:** bundle logos for each lab, assign them to models automatically, and group
+      models by lab in the model dropdown.
+  - Done: 25 lab logos ship with Mologate, drawn from the MIT-licensed lobe-icons set onto Mologate's
+    dark tile (`scripts/build-lab-logos.py` rebuilds them). Each model's lab comes from its
+    provider prefix (`z-ai/...`) or model family (`claude-...`, `glm-...`); custom models use their
+    base model's. Models without a picture of their own show their lab's logo everywhere, and the
+    model dropdown groups models under lab headers when not searching.
 - [ ] **Personal API keys:**
   - Each user gets a personal OpenAI-compatible API key.
   - With it they can use Mologate's features and every model in the interface from other apps and

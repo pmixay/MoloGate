@@ -67,6 +67,12 @@
 		const shareId = $page.params.id;
 		if (!shareId) return null;
 
+		// Mologate: shared links need a Mologate account; sign in first, then come back.
+		if (!token) {
+			await goto(`/auth?redirect=${encodeURIComponent(`/s/${shareId}`)}`);
+			return null;
+		}
+
 		const userSettings = token
 			? await getUserSettings(token).catch((error) => {
 					console.error(error);

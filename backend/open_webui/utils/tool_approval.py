@@ -8,6 +8,7 @@ from open_webui.constants import ERROR_MESSAGES
 from open_webui.models.chats import Chats
 from open_webui.socket.main import get_event_emitter
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.tool_permissions import ALWAYS_ALLOW_PARAM, is_always_allowed
 
 
 class ResolveToolCallForm(BaseModel):
@@ -15,6 +16,8 @@ class ResolveToolCallForm(BaseModel):
     action: Literal['approve', 'reject', 'answer']
     answers: Any | None = None
     timed_out: bool = False
+    # Mologate: with approve, also stop permission prompts for the rest of this chat.
+    always_allow: bool = False
 
 
 async def resolve_tool_call_output(
@@ -62,6 +65,16 @@ async def resolve_tool_call_output(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='ask_user requires an answer or deny.')
         function_call['status'] = 'queued'
         function_call['approved'] = True
+        if form_data.always_allow:
+            chat_params = (chat.chat or {}).get('params')
+            chat = (
+                await Chats.update_chat_by_id(
+                    chat_id,
+                    {'params': {**(chat_params if isinstance(chat_params, dict) else {}), ALWAYS_ALLOW_PARAM: True}},
+                    touch=False,
+                )
+                or chat
+            )
     elif form_data.action == 'reject':
         function_call['status'] = 'rejected'
         output.append(
@@ -125,7 +138,13 @@ async def resolve_tool_call_output(
         and item.get('call_id') not in result_call_ids
         for item in output
     )
-    return {'chat': chat, 'message': message, 'output': output, 'paused': paused}
+    return {
+        'chat': chat,
+        'message': message,
+        'output': output,
+        'paused': paused,
+        'always_allow': is_always_allowed((chat.chat or {}).get('params')),
+    }
 
 
 async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat=None) -> dict:
@@ -149,11 +168,9 @@ async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat
         **chat_params,
         **(message_meta.get('params') if isinstance(message_meta.get('params'), dict) else {}),
     }
-    current_approval_mode = chat_params.get('tool_approval_mode')
-    if current_approval_mode in {'ask', 'full'}:
-        params['tool_approval_mode'] = current_approval_mode
-    if 'tool_approval_mode' not in params:
-        params['tool_approval_mode'] = 'ask'
+    # Mologate: "Always allow in this chat" lives on the chat and may have been chosen after the
+    # turn paused, so the chat's current value wins over the paused turn's.
+    params[ALWAYS_ALLOW_PARAM] = is_always_allowed(chat_params)
 
     model_id = assistant_message.get('model') or next(iter(chat_data.get('models') or []), None)
     if not model_id:

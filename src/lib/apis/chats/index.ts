@@ -785,6 +785,48 @@ export const getChatById = async (token: string, id: string) => {
 	return res;
 };
 
+// Mologate: the sub-agents a chat started, so their conversations can be opened.
+export type ChatSubagent = {
+	id: string;
+	agent_id: string | null;
+	profile: string;
+	task: string;
+	mode: 'foreground' | 'background';
+	model_id: string | null;
+	parent_message_id: string | null;
+	running: boolean;
+	created_at: number;
+	updated_at: number;
+};
+
+export const getChatSubagents = async (token: string, id: string): Promise<ChatSubagent[]> => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/subagents`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res ?? [];
+};
+
 export const getChatByShareId = async (token: string, share_id: string) => {
 	let error = null;
 
@@ -1235,6 +1277,93 @@ export const updateChatAccessGrants = async (token: string, id: string, accessGr
 	return res;
 };
 
+// Mologate: whether a chat is open to the whole team (everyone signed in, read-only).
+export const getChatTeamAccess = async (token: string, id: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/team`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = getErrorDetail(err);
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const updateChatTeamAccess = async (token: string, id: string, open: boolean) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/team`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify({ open })
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = getErrorDetail(err);
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+// Mologate: other people's chats that are open to the team, newest first.
+export const getTeamChatList = async (token: string, page: number = 1) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/team?page=${page}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = getErrorDetail(err);
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const getChatAccessGrants = async (token: string, id: string) => {
 	let error = null;
 
@@ -1375,7 +1504,7 @@ export const resolveChatMessageToolCall = async (
 	messageId: string,
 	callId: string,
 	action: 'approve' | 'reject' | 'answer',
-	options: { answers?: unknown; timed_out?: boolean } = {}
+	options: { answers?: unknown; timed_out?: boolean; always_allow?: boolean } = {}
 ) => {
 	let error = null;
 

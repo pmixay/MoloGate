@@ -3,14 +3,13 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.config import ENABLE_ADMIN_CHAT_ACCESS, ENABLE_ADMIN_EXPORT
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
-from open_webui.models.access_grants import AccessGrants
+from open_webui.models.access_grants import AccessGrants, strip_anyone_access_grants
 from open_webui.models.chat_messages import ChatMessages
 from open_webui.models.chats import (
     AggregateChatStats,
@@ -32,11 +31,12 @@ from open_webui.models.config import Config
 from open_webui.models.folders import Folders
 from open_webui.models.shared_chats import SharedChatResponse, SharedChats
 from open_webui.models.tags import TagModel, Tags
+from open_webui.models.users import Users
 from open_webui.socket.main import get_event_emitter
 from open_webui.tasks import get_response_streams_by_chat_id, has_active_tasks, stop_item_tasks
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
-from open_webui.utils.auth import bearer_security, get_admin_user, get_current_user, get_verified_user
+from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_fork import build_fork_history
 from open_webui.utils.context_compaction import compact_chat_branch, get_chat_context_usage
 from open_webui.utils.misc import get_message_list
@@ -55,7 +55,8 @@ CHAT_CONFIG_KEYS = {
     'CONTEXT_COMPACTION_TOKEN_CAP': 'chat.context_compaction.token_cap',
     'CONTEXT_COMPACTION_RETENTION_PERCENTAGE': 'chat.context_compaction.retention_percentage',
     'CONTEXT_COMPACTION_PROMPT_TEMPLATE': 'chat.context_compaction.prompt_template',
-    'ENABLE_TOOL_PERMISSIONS': 'chat.tool_permissions.enable',
+    'TOOL_PERMISSION_MODEL': 'chat.tool_permissions.model',
+    'TOOL_PERMISSION_FALLBACK_MODEL': 'chat.tool_permissions.fallback_model',
 }
 
 
@@ -85,45 +86,12 @@ def overlay_response_streams(chat_data: dict, response_streams: list[dict]) -> d
     return chat_data
 
 
-async def get_optional_verified_user(
-    request: Request,
-    response: Response,
-    background_tasks: BackgroundTasks,
-    auth_token: HTTPAuthorizationCredentials | None = Depends(bearer_security),
-):
-    try:
-        user = await get_current_user(request, response, background_tasks, auth_token)
-    except HTTPException:
-        return None
-
-    if user.role not in {'user', 'admin'}:
-        return None
-    return user
-
-
-async def is_open_shared_chat(shared, db: AsyncSession) -> bool:
-    return await AccessGrants.has_anyone_access(
-        resource_type='shared_chat',
-        resource_id=shared.chat_id,
-        permission='read',
-        db=db,
-    )
-
-
-async def can_read_shared_chat(user, shared, db: AsyncSession) -> bool:
-    if user.role == 'pending':
-        return False
-    if user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS:
-        return True
-    if shared.user_id == user.id:
-        return True
-    return await AccessGrants.has_access(
-        user_id=user.id,
-        resource_type='shared_chat',
-        resource_id=shared.chat_id,
-        permission='read',
-        db=db,
-    )
+def is_team_grant(grant) -> bool:
+    """Mologate: the grant that opens a chat to everyone signed in (the whole team)."""
+    principal_type = grant.get('principal_type') if isinstance(grant, dict) else grant.principal_type
+    principal_id = grant.get('principal_id') if isinstance(grant, dict) else grant.principal_id
+    permission = grant.get('permission') if isinstance(grant, dict) else grant.permission
+    return principal_type == 'user' and principal_id == '*' and permission == 'read'
 
 
 async def add_active_state_to_chat_list(
@@ -164,7 +132,8 @@ class ChatConfigForm(BaseModel):
     CONTEXT_COMPACTION_TOKEN_CAP: int | None = None
     CONTEXT_COMPACTION_RETENTION_PERCENTAGE: int = 40
     CONTEXT_COMPACTION_PROMPT_TEMPLATE: str
-    ENABLE_TOOL_PERMISSIONS: bool = False
+    TOOL_PERMISSION_MODEL: str | None = ''
+    TOOL_PERMISSION_FALLBACK_MODEL: str | None = ''
 
 
 class CompactChatForm(BaseModel):
@@ -1201,31 +1170,49 @@ async def get_shared_session_user_chat_list(
 
 
 ############################
+# GetTeamChats
+############################
+
+
+@router.get('/team', response_model=list[dict])
+async def get_team_chat_list(
+    page: int | None = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: chats other people opened to the team, newest first, with who created each."""
+    page = max(page or 1, 1)
+    limit = 60
+    chats = await Chats.get_team_chat_list(user.id, skip=(page - 1) * limit, limit=limit, db=db)
+
+    owner_ids = list({chat['user_id'] for chat in chats})
+    owners = (
+        {owner.id: owner.name for owner in await Users.get_users_by_user_ids(owner_ids, db=db)} if owner_ids else {}
+    )
+    return [{**chat, 'user_name': owners.get(chat['user_id'])} for chat in chats]
+
+
+############################
 # GetSharedChatById
 ############################
 
 
 @router.get('/share/{share_id}', response_model=ChatResponse | None)
 async def get_shared_chat_by_id(
-    share_id: str, user=Depends(get_optional_verified_user), db: AsyncSession = Depends(get_async_session)
+    share_id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)
 ):
+    # Mologate: the link is the permission, for anyone signed in to Mologate. Nobody signed out
+    # can open it (get_verified_user), whatever grants the chat carries.
     shared = await SharedChats.get_by_id(share_id, db=db)
     if shared:
-        if await is_open_shared_chat(shared, db=db) or (
-            user is not None and await can_read_shared_chat(user, shared, db=db)
-        ):
-            chat = await Chats.get_chat_by_share_id(share_id, db=db)
-            if chat:
-                return ChatResponse.model_validate(chat, from_attributes=True)
-
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED if user else ERROR_MESSAGES.INVALID_TOKEN,
-        )
+        chat = await Chats.get_chat_by_share_id(share_id, db=db)
+        if chat:
+            return ChatResponse.model_validate(chat, from_attributes=True)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
 
     # Fallback: admins can also access any chat directly by chat ID
     chat = None
-    if user is not None and user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS:
+    if user.role == 'admin' and ENABLE_ADMIN_CHAT_ACCESS:
         chat = await Chats.get_chat_by_id(share_id, db=db)
         if chat:
             return ChatResponse.model_validate(chat, from_attributes=True)
@@ -1345,6 +1332,43 @@ async def get_chat_by_id(
         return data
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
+
+
+############################
+# GetChatSubagents
+############################
+
+
+@router.get('/{id}/subagents', response_model=list[dict])
+async def get_chat_subagents(
+    id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: the sub-agents a chat started, so their conversations can be opened."""
+    chat = await Chats.get_chat_by_id_for_user(id, user, db=db)
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    subagents = []
+    for subagent in await Chats.get_subagent_chats_by_parent_id(id, chat.user_id):
+        meta = subagent['meta']
+        subagents.append(
+            {
+                'id': subagent['id'],
+                'agent_id': meta.get('delegation_id'),
+                'profile': meta.get('profile') or 'general-purpose',
+                'task': meta.get('task') or subagent['title'],
+                'mode': meta.get('mode') or 'foreground',
+                'model_id': meta.get('model_id'),
+                'parent_message_id': meta.get('parent_message_id'),
+                'running': await has_active_tasks(request.app.state.redis, subagent['id']),
+                'created_at': subagent['created_at'],
+                'updated_at': subagent['updated_at'],
+            }
+        )
+    return subagents
 
 
 ############################
@@ -1852,21 +1876,7 @@ async def clone_shared_chat_by_id(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    # Enforce access grants (owner and admins bypass)
-    shared = await SharedChats.get_by_id(id, db=db)
-    if shared and user.role != 'admin' and shared.user_id != user.id:
-        has_grant = await is_open_shared_chat(shared, db=db) or await AccessGrants.has_access(
-            user_id=user.id,
-            resource_type='shared_chat',
-            resource_id=shared.chat_id,
-            permission='read',
-            db=db,
-        )
-        if not has_grant:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-            )
+    # Mologate: anyone signed in who has the share link may view it, so they may clone it too.
 
     updated_chat = {
         **chat.chat,
@@ -1989,6 +1999,62 @@ async def share_chat_by_id(
     return ChatResponse.model_validate(chat, from_attributes=True)
 
 
+# --- Team Access ---
+
+
+class ChatTeamAccessForm(BaseModel):
+    open: bool
+
+
+@router.get('/{id}/team', response_model=dict)
+async def get_chat_team_access_by_id(
+    id: str,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    chat = await Chats.get_chat_by_id_for_user(id, user, db=db)
+    if not chat:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    grants = await AccessGrants.get_grants_by_resource('shared_chat', id, db=db)
+    return {'open': any(is_team_grant(g) for g in grants)}
+
+
+@router.post('/{id}/team', response_model=dict)
+async def update_chat_team_access_by_id(
+    request: Request,
+    id: str,
+    form_data: ChatTeamAccessForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: open a chat to everyone signed in (read-only), or make it private again.
+
+    Gated on the ordinary share permission rather than public sharing: Mologate is the team's
+    own tool, and team access never reaches anyone signed out.
+    """
+    if user.role != 'admin' and not await has_permission(user.id, 'chat.share', await Config.get('user.permissions')):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+
+    chat = await Chats.get_chat_by_id_and_user_id(id, user.id, db=db)
+    if not chat:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+
+    if form_data.open:
+        await AccessGrants.grant_access('shared_chat', id, 'user', '*', 'read', db=db)
+    else:
+        await AccessGrants.revoke_access('shared_chat', id, 'user', '*', 'read', db=db)
+
+    await publish_event(
+        request,
+        EVENTS.CHAT_SHARED if form_data.open else EVENTS.CHAT_UNSHARED,
+        actor=user,
+        subject_id=id,
+        data={'team': form_data.open},
+    )
+    return {'open': form_data.open}
+
+
 # --- Delete Shared Chat ---
 
 
@@ -2005,7 +2071,18 @@ async def delete_shared_chat_by_id(
     if chat.share_id:
         await Chats.update_chat_share_id_by_id(id, None, db=db)
 
-    await AccessGrants.set_access_grants('shared_chat', id, [], db=db)
+    # Mologate: the link and team access are separate; deleting the link keeps the team grant.
+    grants = await AccessGrants.get_grants_by_resource('shared_chat', id, db=db)
+    await AccessGrants.set_access_grants(
+        'shared_chat',
+        id,
+        [
+            {'principal_type': g.principal_type, 'principal_id': g.principal_id, 'permission': g.permission}
+            for g in grants
+            if is_team_grant(g)
+        ],
+        db=db,
+    )
 
     await publish_event(
         request,
@@ -2044,13 +2121,13 @@ async def update_shared_chat_access_by_id(
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
+    # Mologate: shared chats always need a signed-in account, so no-auth grants are dropped.
     form_data.access_grants = await filter_allowed_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
-        form_data.access_grants,
+        strip_anyone_access_grants(form_data.access_grants),
         'sharing.public_chats',
-        'sharing.open_chats',
         db=db,
     )
 

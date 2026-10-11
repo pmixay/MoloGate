@@ -63,7 +63,9 @@
 		getCodeBlockContents,
 		displayFileHandler,
 		getUsageTokenCount,
-		isRasterImageContentType
+		isImageAttachment,
+		isRasterImageContentType,
+		modelReadsImages
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
@@ -84,12 +86,7 @@
 	} from '$lib/apis/chats';
 	import { generateOpenAIChatCompletion } from '$lib/apis/openai';
 	import { processUrl, processWebSearch } from '$lib/apis/retrieval';
-	import {
-		getAndUpdateUserLocation,
-		getUserInfoById,
-		getUserSettings,
-		updateUserSettings
-	} from '$lib/apis/users';
+	import { getAndUpdateUserLocation, getUserInfoById, getUserSettings } from '$lib/apis/users';
 	import {
 		generateQueries,
 		chatAction,
@@ -331,10 +328,7 @@
 
 	// Mologate: web search, image generation and the code interpreter have no toggles. Each is on
 	// whenever the admin has enabled it, the user has permission and the selected models support
-	// it. With native function calling (the default) the backend offers them to the model as tools
-	// and the model decides when to call them. With legacy function calling the backend would run
-	// web search and image generation on every message, so those two are only sent in native mode
-	// (web search still follows the user's "always" setting there).
+	// it. The backend offers them to the model as tools and the model decides when to call them.
 	let webSearchActive = false;
 	let imageGenerationActive = false;
 	let codeInterpreterActive = false;
@@ -342,17 +336,6 @@
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
-
-	const usesNativeFunctionCalling = (modelIds: string[], allModels, userParams, chatParams) => {
-		// Same precedence as the backend: request params, then the model's own params.
-		const requestMode = { ...(userParams ?? {}), ...(chatParams ?? {}) }.function_calling;
-		return modelIds.every(
-			(id) =>
-				(requestMode ||
-					(allModels ?? []).find((m) => m.id === id)?.info?.params?.function_calling ||
-					'native') !== 'legacy'
-		);
-	};
 
 	const allModelsSupport = (modelIds: string[], allModels, capability: string) =>
 		modelIds.every(
@@ -364,26 +347,18 @@
 		const currentModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
 			(id) => id
 		);
-		const nativeFunctionCalling = usesNativeFunctionCalling(
-			currentModels,
-			$models,
-			$settings?.params,
-			params
-		);
 		const isAdmin = $user?.role === 'admin';
 
 		webSearchActive = Boolean(
 			$config?.features?.enable_web_search &&
 			(isAdmin || $user?.permissions?.features?.web_search) &&
 			allModelsSupport(currentModels, $models, 'web_search') &&
-			(nativeFunctionCalling || ($settings?.webSearch ?? false) === 'always') &&
 			!webSearchDeclined
 		);
 		imageGenerationActive = Boolean(
 			$config?.features?.enable_image_generation &&
 			(isAdmin || $user?.permissions?.features?.image_generation) &&
-			allModelsSupport(currentModels, $models, 'image_generation') &&
-			nativeFunctionCalling
+			allModelsSupport(currentModels, $models, 'image_generation')
 		);
 		codeInterpreterActive = Boolean(
 			$config?.features?.enable_code_interpreter &&
@@ -417,11 +392,14 @@
 	let generationController = null;
 	let contextCompactionToastId = null;
 
-	let chat = null;
+	let chat: any = null;
 	let tags = [];
 
-	// Read-only when viewing someone else's chat (e.g. via shared folder access)
-	$: readOnly = chat != null && chat.user_id !== $user?.id;
+	// Mologate: a sub-agent's conversation, opened from the chat that started it.
+	$: subagentChat = chat?.meta?.type === 'subagent' ? chat.meta : null;
+
+	// Read-only when viewing someone else's chat (e.g. via shared folder access), or a sub-agent's
+	$: readOnly = chat != null && (chat.user_id !== $user?.id || !!subagentChat);
 
 	let chatOwner = null;
 
@@ -436,7 +414,7 @@
 		});
 	};
 
-	$: if (readOnly && chat?.user_id) {
+	$: if (readOnly && chat?.user_id && chat.user_id !== $user?.id) {
 		void resolveChatOwner(chat.user_id);
 	} else {
 		chatOwner = null;
@@ -461,81 +439,21 @@
 	let loadedChatIdProp = '';
 	let currentDraftKey = '';
 
-	$: toolApprovalMode =
-		(params?.tool_approval_mode ?? $settings?.params?.tool_approval_mode) === 'ask'
-			? 'ask'
-			: 'full';
+	// Mologate: tool calls run without asking; the server's permission review stops only critical
+	// or very dangerous ones. "Always allow in this chat" stops even those (backend
+	// utils/tool_permissions.py); it lives in the chat's params so it travels with the chat.
+	$: alwaysAllowActions = params?.tool_approval_always_allow === true;
 
-	// Mologate: persist=false when restoring a draft; it can run before loadChat() fills
-	// params, and saving then would overwrite the chat's params (e.g. reasoning_effort).
-	const handleToolApprovalModeChange = async (mode: string, persist = true) => {
-		const tool_approval_mode = mode === 'ask' ? 'ask' : 'full';
-		params = {
-			...params,
-			tool_approval_mode
-		};
+	const setAlwaysAllowActions = async (value: boolean) => {
+		const { tool_approval_always_allow, ...rest } = params ?? {};
+		params = value ? { ...rest, tool_approval_always_allow: true } : rest;
 
-		if (persist) {
-			settings.set({
-				...$settings,
-				params: {
-					...($settings?.params ?? {}),
-					tool_approval_mode
-				}
+		if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
+			const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
+				console.error('[permission prompts]', err);
+				return null;
 			});
-			await updateUserSettings(localStorage.token, { ui: { params: $settings.params } }).catch(
-				(err) => {
-					console.error('[tool permissions settings]', err);
-				}
-			);
-
-			if ($chatId && !$temporaryChatEnabled && !isTemporaryChatId($chatId)) {
-				const res = await updateChatById(localStorage.token, $chatId, { params }).catch((err) => {
-					console.error('[tool permissions chat]', err);
-					return null;
-				});
-				if (res) chat = res;
-			}
-		}
-
-		if (tool_approval_mode === 'full') {
-			const messages = [...Object.values(history?.messages ?? {})].reverse() as any[];
-			for (const message of messages) {
-				const output = (Array.isArray(message?.output) ? message.output : []) as any[];
-				const resultCallIds = new Set(
-					output
-						.filter((item: any) => item?.type === 'function_call_output' && item?.call_id)
-						.map((item: any) => item.call_id)
-				);
-				const pendingCall = output.find((item: any) => {
-					const callId = item?.call_id ?? item?.id;
-					return (
-						item?.type === 'function_call' &&
-						item?.name !== 'ask_user' &&
-						(item?.status === 'pending' || item?.status === 'requires_approval') &&
-						callId &&
-						!resultCallIds.has(callId)
-					);
-				});
-				const callId = pendingCall?.call_id ?? pendingCall?.id;
-				if (!message?.id || !callId) {
-					continue;
-				}
-
-				const res = await resolveChatMessageToolCall(
-					localStorage.token,
-					$chatId,
-					message.id,
-					callId,
-					'approve'
-				).catch(async (error) => {
-					toast.error(`${error}`);
-					await loadChat();
-					return null;
-				});
-				if (res) onToolCallResolved(res);
-				break;
-			}
+			if (res) chat = res;
 		}
 	};
 
@@ -763,6 +681,10 @@
 	};
 
 	const onToolCallResolved = (res) => {
+		// The server already saved "Always allow in this chat"; keep the local params in step.
+		if (res?.always_allow && !alwaysAllowActions) {
+			params = { ...params, tool_approval_always_allow: true };
+		}
 		const newTaskIds = res?.task_ids ?? (res?.task_id ? [res.task_id] : []);
 		if (newTaskIds.length > 0) {
 			taskIds = [...(taskIds ?? []), ...newTaskIds];
@@ -802,9 +724,6 @@
 			selectedToolIds = input.selectedToolIds ?? [];
 			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
-			if (input.toolApprovalMode) {
-				await handleToolApprovalModeChange(input.toolApprovalMode, false); // Mologate: restore only
-			}
 			return true;
 		} catch (e) {
 			return false;
@@ -1195,6 +1114,27 @@
 		}
 	};
 
+	// Mologate: turns the server starts on its own (sub-agent results, agent messages) are announced
+	// with chat:reload, and a fast one can finish streaming while that reload is still fetching. Its
+	// events then name a message this page doesn't have yet, so reload once more to catch up.
+	let chatReloading = false;
+	let chatReloadAgain = false;
+	const reloadChat = async () => {
+		if (chatReloading) {
+			chatReloadAgain = true;
+			return;
+		}
+		chatReloading = true;
+		try {
+			do {
+				chatReloadAgain = false;
+				await loadChat();
+			} while (chatReloadAgain);
+		} finally {
+			chatReloading = false;
+		}
+	};
+
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
 
@@ -1202,13 +1142,21 @@
 			await tick();
 			const type = event?.data?.type ?? null;
 			if (type === 'chat:reload') {
-				await loadChat();
+				await reloadChat();
 				return;
 			}
 			if (type === 'chat:list') {
 				return;
 			}
 			let message = history.messages[event.message_id];
+
+			if (!message && event.message_id) {
+				if (chatReloading) {
+					chatReloadAgain = true;
+				} else if (type === 'chat:completion' && event?.data?.data?.done) {
+					void reloadChat();
+				}
+			}
 
 			if (message) {
 				const data = event?.data?.data ?? null;
@@ -2706,7 +2654,18 @@
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
-		const { id, done, choices, content, output, sources, selected_model_id, error, usage } = data;
+		const {
+			id,
+			done,
+			choices,
+			content,
+			output,
+			sources,
+			selected_model_id,
+			error,
+			usage,
+			context_breakdown
+		} = data;
 
 		// Store raw OR-aligned output items from backend
 		if (output) {
@@ -2764,6 +2723,11 @@
 
 		if (usage) {
 			message.usage = usage;
+		}
+
+		// Mologate: what the turn's prompt held, for the context indicator.
+		if (context_breakdown) {
+			message.context_breakdown = context_breakdown;
 		}
 
 		history.messages[message.id] = message;
@@ -3046,6 +3010,17 @@
 			toast.error($i18n.t('Model not selected'));
 			return;
 		}
+		// Mologate: images can't go to a model that can't read them. Attaching is refused in the
+		// composer; images attached before switching to such a model stop the send here.
+		if (
+			files.some(isImageAttachment) &&
+			!selectedModelIds.some((id) => modelReadsImages($models.find((m) => m.id === id)))
+		) {
+			toast.error(
+				$i18n.t("The selected model can't read images. Remove them or pick a model that can.")
+			);
+			return;
+		}
 		const form = getChatVariablesForm(selectedModelIds, chatVariables, $models);
 		if (form.conflicts.length > 0) {
 			showChatVariablesModal = true;
@@ -3240,29 +3215,8 @@
 		// Re-clone history so sendMessageSocket gets the response messages we just added
 		_history = structuredClone(history);
 
-		// Vision capability check
-		for (const mid of selectedModelIds) {
-			const model = $models.filter((m) => m.id === mid).at(0);
-			if (model) {
-				const hasImages = createMessagesList(_history, parentId).some((message) =>
-					message.files?.some(
-						(file) => file.type === 'image' || isRasterImageContentType(file?.content_type)
-					)
-				);
-
-				if (
-					hasImages &&
-					!(model.info?.meta?.capabilities?.vision ?? true) &&
-					!imageGenerationActive
-				) {
-					toast.error(
-						$i18n.t('Model {{modelName}} is not vision capable', {
-							modelName: model.name ?? model.id
-						})
-					);
-				}
-			}
-		}
+		// Mologate: no vision check here. Images earlier in the chat are replaced with a note on
+		// the server for models that can't read them (utils/image_input.py).
 
 		// Single request — backend fans out to all models
 		const primaryModelId = selectedModelIds[0];
@@ -3941,8 +3895,7 @@
 			})),
 		selectedToolIds,
 		selectedSkillIds,
-		selectedFilterIds,
-		toolApprovalMode
+		selectedFilterIds
 	});
 
 	const saveDraft = async (draft: any, chatId: string | null = null, debounce = true) => {
@@ -4319,7 +4272,29 @@
 								</div>
 							</div>
 
-							{#if readOnly}
+							{#if subagentChat}
+								<div class="pb-6 z-10 px-4">
+									<div
+										class="subagent-chat-banner flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-gray-400 dark:text-gray-500 text-center"
+									>
+										<span>
+											{$i18n.t('Sub-agent conversation')} · {subagentChat.profile ??
+												'general-purpose'}
+											{#if subagentChat.delegation_id}
+												· <span class="font-mono">{subagentChat.delegation_id}</span>
+											{/if}
+										</span>
+										{#if subagentChat.parent_chat_id}
+											<a
+												href={`/c/${subagentChat.parent_chat_id}`}
+												class="text-gray-600 dark:text-gray-300 hover:underline"
+											>
+												{$i18n.t('Back to main conversation')}
+											</a>
+										{/if}
+									</div>
+								</div>
+							{:else if readOnly}
 								<div class="pb-6 z-10">
 									<div class="text-xs text-gray-400 dark:text-gray-500 text-center">
 										{$i18n.t('Read only')}
@@ -4356,8 +4331,8 @@
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
-										{toolApprovalMode}
-										onToolApprovalModeChange={handleToolApprovalModeChange}
+										{alwaysAllowActions}
+										onAlwaysAllowActionsChange={setAlwaysAllowActions}
 										{generating}
 										{stopResponse}
 										{createMessagePair}
@@ -4446,8 +4421,8 @@
 										compactHandler={handleManualCompact}
 										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
-										{toolApprovalMode}
-										onToolApprovalModeChange={handleToolApprovalModeChange}
+										{alwaysAllowActions}
+										onAlwaysAllowActionsChange={setAlwaysAllowActions}
 										{generating}
 										{stopResponse}
 										{createMessagePair}
@@ -4495,8 +4470,8 @@
 									bind:atSelectedModel
 									bind:showCommands
 									bind:dragged
-									{toolApprovalMode}
-									onToolApprovalModeChange={handleToolApprovalModeChange}
+									{alwaysAllowActions}
+									onAlwaysAllowActionsChange={setAlwaysAllowActions}
 									{pendingOAuthTools}
 									{oauthRedirectHandler}
 									{stopResponse}

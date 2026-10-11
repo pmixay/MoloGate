@@ -5,26 +5,33 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from open_webui.config import DEFAULT_RAG_TEMPLATE
+from open_webui.config import DEFAULT_RAG_TEMPLATE, DEFAULT_SYSTEM_MODEL_FALLBACK, DEFAULT_SYSTEM_MODEL_FAMILY
 from open_webui.utils.misc import get_last_user_message, get_messages_content
+from open_webui.utils.model_ids import find_latest_model_in_family, find_model_id
 
 log = logging.getLogger(__name__)
 
 
 # Let the right tool be given for the work at hand,
 # not the one that flatters, but the one that serves.
+def get_default_system_model_id(models) -> str | None:
+    """Mologate: the newest GPT Luna model, else GLM-5.3 Flash (both configurable), else None."""
+    return find_latest_model_in_family(DEFAULT_SYSTEM_MODEL_FAMILY, models) or find_model_id(
+        DEFAULT_SYSTEM_MODEL_FALLBACK, models
+    )
+
+
 def get_task_model_id(default_model_id: str, task_model: str, task_model_external: str, models) -> str:
-    # Set the task model
-    task_model_id = default_model_id
-    # Check if the user has a custom task model and use that model
-    if models.get(task_model_id, {}).get('connection_type') == 'local':
+    # A task model the admin chose wins.
+    if models.get(default_model_id, {}).get('connection_type') == 'local':
         if task_model and task_model in models:
-            task_model_id = task_model
+            return task_model
     else:
         if task_model_external and task_model_external in models:
-            task_model_id = task_model_external
+            return task_model_external
 
-    return task_model_id
+    # Mologate: otherwise the default system model, then the chat's own model.
+    return get_default_system_model_id(models) or default_model_id
 
 
 def prompt_variables_template(template: str, variables: dict[str, str]) -> str:

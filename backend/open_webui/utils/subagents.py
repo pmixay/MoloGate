@@ -17,6 +17,8 @@ from open_webui.tasks import create_task, has_active_tasks
 from open_webui.utils.auth import create_token
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_message_list
+from open_webui.utils.model_ids import find_model_id
+from open_webui.utils.subagent_profiles import get_profiles, resolve_profile
 from sqlalchemy import select
 from starlette.datastructures import Headers
 
@@ -30,6 +32,14 @@ When done, end with a clear summary:
 - What files you changed (if any)
 - Any issues or open questions
 """
+
+# Mologate: how a sub-agent reaches the other agents of its chat (utils/agent_messages.py).
+AGENT_MESSAGING_PROMPT = """## Other agents
+Your agent id is {agent_id}. The main agent started you and may message you while you work; its
+messages appear in your conversation. Use send_message to reach the main agent ("main") or another
+running sub-agent by its id, for example to report something it needs before you finish or to ask
+a question you cannot answer yourself. list_agents shows who is around. Your final answer still goes
+back to the main agent on its own."""
 
 MUTATING_MEMORY_TOOLS = {
     'add_memory',
@@ -69,18 +79,42 @@ def _build_request(source: Request, user_id: str, *, internal: bool) -> Request:
     return request
 
 
+def _is_pending_agent_message(meta: dict) -> bool:
+    # Mologate: a message one agent sent another (utils/agent_messages.py), not yet delivered.
+    return (
+        meta.get('internal') is True and meta.get('type') == 'agent_message' and meta.get('status') in (None, 'pending')
+    )
+
+
+def _latest_assistant_id(messages: dict, current_id: str | None) -> str | None:
+    """Where a new turn continues from: the current message when it's an answer, else the latest answer."""
+    current = messages.get(current_id) if current_id else None
+    if current and current.get('role') == 'assistant':
+        return current_id
+    answers = [message for message in messages.values() if message.get('role') == 'assistant']
+    return max(answers, key=lambda message: message.get('timestamp', 0)).get('id') if answers else current_id
+
+
 async def process_pending_internal_messages(
     source_request: Request,
     parent_chat_id: str,
     user_id: str,
     run: dict,
-) -> None:
+    *,
+    internal: bool = False,
+    max_iterations: int | None = None,
+    owned: bool = False,
+) -> str | None:
+    """Start a turn in ``parent_chat_id`` for its waiting internal messages (background sub-agent
+    results, timers, agent messages). Returns the new assistant message id, or None when nothing
+    was waiting. Mologate: ``internal`` runs the turn as a sub-agent and waits for it to finish
+    (waking a sub-agent); ``owned`` means the caller's task already holds the chat's running slot."""
     lock = _parent_locks.setdefault(parent_chat_id, asyncio.Lock())
-    while await has_active_tasks(source_request.app.state.redis, parent_chat_id):
+    while not owned and await has_active_tasks(source_request.app.state.redis, parent_chat_id):
         await asyncio.sleep(0.25)
 
     async with lock:
-        if await has_active_tasks(source_request.app.state.redis, parent_chat_id):
+        if not owned and await has_active_tasks(source_request.app.state.redis, parent_chat_id):
             return
 
         user = await Users.get_user_by_id(user_id)
@@ -98,6 +132,28 @@ async def process_pending_internal_messages(
 
             history = copy.deepcopy((chat.chat or {}).get('history') or {})
             messages = history.get('messages') or {}
+            # Mologate: messages other agents left while this chat was busy (utils/agent_messages.py).
+            mail = (chat.meta or {}).get('agent_mail') or []
+            if mail:
+                chat.meta = {key: value for key, value in (chat.meta or {}).items() if key != 'agent_mail'}
+                anchor_id = _latest_assistant_id(messages, history.get('currentId'))
+                for entry in mail:
+                    message_id = str(uuid4())
+                    messages[message_id] = {
+                        'id': message_id,
+                        'parentId': anchor_id,
+                        'childrenIds': [],
+                        'role': 'user',
+                        'content': entry.get('content') or '',
+                        'meta': {
+                            'internal': True,
+                            'type': 'agent_message',
+                            'from': entry.get('from'),
+                            'from_name': entry.get('from_name'),
+                            'from_chat_id': entry.get('from_chat_id'),
+                        },
+                        'timestamp': entry.get('timestamp') or int(time.time()),
+                    }
             pending = [
                 message
                 for message in messages.values()
@@ -111,14 +167,21 @@ async def process_pending_internal_messages(
                         and meta.get('status') in (None, 'pending')
                     )
                     or (meta.get('internal') is True and meta.get('type') == 'timer')
+                    or _is_pending_agent_message(meta)
                 )
             ]
             if not pending:
-                return
+                if mail:
+                    await db.commit()
+                return None
 
             first = pending[0]
             first_meta = first.get('meta') or {}
-            kind = 'timer' if first_meta.get('internal') is True and first_meta.get('type') == 'timer' else 'subagent'
+            kind = (
+                first_meta.get('type')
+                if first_meta.get('internal') is True and first_meta.get('type') in ('timer', 'agent_message')
+                else 'subagent'
+            )
             parent_id = first.get('parentId')
             if kind == 'timer' and first_meta.get('timer_id'):
                 timer = await Chats.get_chat_by_id(first_meta['timer_id'])
@@ -126,6 +189,12 @@ async def process_pending_internal_messages(
             model_id = first.get('model') or run['model_id']
             if kind == 'timer':
                 batch = [first]
+            elif kind == 'agent_message':
+                batch = [
+                    message
+                    for message in pending
+                    if message.get('parentId') == parent_id and _is_pending_agent_message(message.get('meta') or {})
+                ]
             else:
                 batch = [
                     message
@@ -140,7 +209,21 @@ async def process_pending_internal_messages(
                     )
                 ]
             combined_content = '\n\n'.join(message.get('content', '') for message in batch if message.get('content'))
-            if kind == 'timer':
+            if kind == 'agent_message':
+                senders = []
+                for message in batch:
+                    sender = (message.get('meta') or {}).get('from')
+                    if sender and sender not in senders:
+                        senders.append(sender)
+                combined_meta = {
+                    'internal': True,
+                    'type': 'agent_message',
+                    'from': senders[0] if len(senders) == 1 else None,
+                    'from_name': (first.get('meta') or {}).get('from_name') if len(senders) == 1 else None,
+                    'from_chat_id': (first.get('meta') or {}).get('from_chat_id') if len(senders) == 1 else None,
+                    'senders': senders,
+                }
+            elif kind == 'timer':
                 timer_ids = [
                     message['meta']['timer_id'] for message in batch if (message.get('meta') or {}).get('timer_id')
                 ]
@@ -170,7 +253,9 @@ async def process_pending_internal_messages(
                 elif subagent_chat_ids:
                     combined_meta['subagent_chat_ids'] = subagent_chat_ids
 
-            reuse_message = len(batch) == 1 and (first.get('meta') or {}).get('status') != 'pending'
+            reuse_message = (
+                len(batch) == 1 and (first.get('meta') or {}).get('status') != 'pending' and kind != 'agent_message'
+            )
             user_message_id = first['id'] if reuse_message else str(uuid4())
             removed_ids = set()
             if not reuse_message:
@@ -219,6 +304,8 @@ async def process_pending_internal_messages(
             history['messages'] = messages
             history['currentId'] = assistant_message_id
             chat.chat = {**(chat.chat or {}), 'history': history}
+            # The chat page prefers this column over history.currentId; a stale one hides the new turn.
+            chat.current_message_id = assistant_message_id
             chat.updated_at = int(time.time())
             await db.commit()
 
@@ -263,8 +350,18 @@ async def process_pending_internal_messages(
         if run.get('terminal_id'):
             form_data['terminal_id'] = run['terminal_id']
 
-        request = _build_request(source_request, user.id, internal=False)
-        await source_request.app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
+        request = _build_request(source_request, user.id, internal=internal)
+        if max_iterations:
+            request.state.max_tool_call_iterations = max_iterations
+        if not internal:
+            # A regular turn registers its task before the handler returns; holding the lock until then
+            # keeps a second caller from starting another turn in the same chat meanwhile.
+            await source_request.app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
+            return assistant_message_id
+
+    # An internal turn runs to its end inside the handler, so it runs outside the lock.
+    await source_request.app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
+    return assistant_message_id
 
 
 async def delegate(
@@ -273,6 +370,7 @@ async def delegate(
     background: bool,
     *,
     file_ids: list[str] | None = None,
+    profile: str | None = None,
     request: Request,
     user_data: dict,
     metadata: dict,
@@ -294,6 +392,7 @@ async def delegate(
         'subagents.max_iterations',
         'subagents.max_output',
         'subagents.system_prompt',
+        'subagents.profiles',
     )
     max_concurrent = int(config.get('subagents.max_concurrent') or 20)
     max_async = int(config.get('subagents.max_async') or 20)
@@ -357,7 +456,27 @@ async def delegate(
     else:
         run['files'] = []
 
+    # Mologate: the profile's role instructions, and its model when it names one that's available.
+    agent_profile = resolve_profile(profile, config.get('subagents.profiles'))
+    if not agent_profile:
+        names = ', '.join(p['name'] for p in get_profiles(config.get('subagents.profiles')))
+        return f'Error: unknown profile "{profile}". Available profiles: {names}.'
+    if agent_profile.get('model'):
+        profile_model_id = find_model_id(agent_profile['model'], request.app.state.MODELS)
+        if profile_model_id:
+            run['model_id'] = profile_model_id
+
     delegation_id = f'deleg_{uuid4().hex[:8]}'
+    subagent_system_prompt = '\n\n'.join(
+        part
+        for part in (
+            run.get('system_prompt') or '',
+            str(config.get('subagents.system_prompt') or '').strip() or DEFAULT_SUBAGENT_SYSTEM_PROMPT,
+            f'## Your role: {agent_profile["name"]}\n{agent_profile["prompt"]}',
+            AGENT_MESSAGING_PROMPT.format(agent_id=delegation_id),
+        )
+        if part
+    )
     foreground_semaphore = None
     if background:
         async with _background_lock:
@@ -432,6 +551,14 @@ async def delegate(
                 'parent_message_id': parent_message_id,
                 'delegation_id': delegation_id,
                 'mode': mode,
+                # Mologate: shown when the conversation is opened, and used to wake the sub-agent
+                # when the main agent messages it after it finished (utils/agent_messages.py).
+                'profile': agent_profile['name'],
+                'task': task[:2000],
+                'model_id': run['model_id'],
+                'run': {**run, 'system_prompt': subagent_system_prompt, 'session_id': f'subagent:{chat_id}'},
+                'parent_run': run,
+                'wakes': 0,
             },
         )
         if not chat:
@@ -449,21 +576,10 @@ async def delegate(
         try:
             child_request = _build_request(request, user.id, internal=True)
             child_request.state.max_tool_call_iterations = max_iterations
-            parent_system_prompt = run.get('system_prompt') or ''
-            subagent_system_prompt = (
-                str(config.get('subagents.system_prompt') or '').strip() or DEFAULT_SUBAGENT_SYSTEM_PROMPT
-            )
             form_data = {
                 'model': run['model_id'],
                 'messages': [
-                    {
-                        'role': 'system',
-                        'content': (
-                            f'{parent_system_prompt}\n\n{subagent_system_prompt}'
-                            if parent_system_prompt
-                            else subagent_system_prompt
-                        ),
-                    },
+                    {'role': 'system', 'content': subagent_system_prompt},
                     {'role': 'user', 'content': prompt},
                 ],
                 'stream': True,
@@ -511,6 +627,10 @@ async def delegate(
             if len(summary) > max_output:
                 summary = f'{summary[:max_output]}\n\n[output truncated]'
             error = message.get('error')
+            # Mologate: messages that reached it after its last step get a turn of their own.
+            from open_webui.utils.agent_messages import schedule_leftover_messages
+
+            schedule_leftover_messages(request, user, chat_id)
             return {
                 'status': 'error' if error else 'completed',
                 'summary': summary or ('Sub-agent produced no output.' if not error else ''),
@@ -558,6 +678,7 @@ async def delegate(
             ),
             '',
             f'Original task: {task}',
+            f'Agent: {delegation_id} ({agent_profile["name"]})',
         ]
         if context:
             lines.append(f'Context provided: {context}')
@@ -681,9 +802,12 @@ async def delegate(
             {
                 'status': 'dispatched',
                 'delegation_id': delegation_id,
+                'agent_id': delegation_id,
+                'profile': agent_profile['name'],
                 'subagent_chat_id': chat_id,
                 'mode': 'background',
                 'task': task,
+                'note': f'Message it with send_message(to="{delegation_id}").',
             },
             ensure_ascii=False,
         )
@@ -699,4 +823,8 @@ async def delegate(
 
     if result.get('status') != 'completed':
         return f'Error: {result.get("error") or "sub-agent failed."}'
-    return result.get('summary') or 'Sub-agent produced no output.'
+    # Mologate: the agent's id lets the main agent message it later; the chat id lets the UI link to it.
+    return (
+        f'[Sub-agent {delegation_id} ({agent_profile["name"]}) finished · chat {chat_id}]\n\n'
+        f'{result.get("summary") or "Sub-agent produced no output."}'
+    )

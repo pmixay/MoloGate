@@ -25,6 +25,7 @@ from open_webui.utils.task import (
     autocomplete_generation_template,
     emoji_generation_template,
     follow_up_generation_template,
+    get_default_system_model_id,
     get_task_model_id,
     image_prompt_generation_template,
     moa_response_generation_template,
@@ -107,7 +108,11 @@ async def get_task_model_generation_config(default_model_id: str, models) -> tup
 
 @router.get('/config')
 async def get_task_config(request: Request, user=Depends(get_verified_user)):
-    return await get_config_values(TASK_CONFIG_KEYS)
+    return {
+        **await get_config_values(TASK_CONFIG_KEYS),
+        # Mologate: what background jobs use when no task model is set (read-only).
+        'DEFAULT_SYSTEM_MODEL': get_default_system_model_id(request.app.state.MODELS),
+    }
 
 
 class TaskConfigForm(BaseModel):
@@ -135,7 +140,7 @@ class TaskConfigForm(BaseModel):
 @router.post('/config/update')
 async def update_task_config(request: Request, form_data: TaskConfigForm, user=Depends(get_admin_user)):
     await Config.upsert(config_updates(form_data.model_dump(), TASK_CONFIG_KEYS))
-    return await get_config_values(TASK_CONFIG_KEYS)
+    return await get_task_config(request, user)
 
 
 @router.post('/title/completions')
