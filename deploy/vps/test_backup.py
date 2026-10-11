@@ -107,9 +107,7 @@ class BackupTests(unittest.TestCase):
         for p in saved.iterdir():
             self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
         with tarfile.open(saved / 'config.tgz') as archive:
-            self.assertEqual(
-                archive.extractfile('.env').read(), b'WEBUI_SECRET_KEY=recovery-fixture\n'
-            )
+            self.assertEqual(archive.extractfile('.env').read(), b'WEBUI_SECRET_KEY=recovery-fixture\n')
         with tarfile.open(saved / 'data.tgz') as archive:
             self.assertEqual(archive.extractfile('uploads/example.txt').read(), b'uploaded file fixture')
         self.assertIn('backup complete', result.stdout)
