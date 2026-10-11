@@ -123,6 +123,12 @@ are not in priority order. Tick an item off when it ships.
     starts a new turn for it. The main agent can restart a finished sub-agent with a message, up to
     10 times, and the answer comes back as a reply. Sub-agents can message running sub-agents, but
     not restart finished ones. Messages show in both conversations as "Message from…" rows.
+- [ ] **Task list:** the agent's checklist shows the task in progress and how many are left.
+  - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
+    panel above the message box lists it with "X out of N tasks completed", but only while a reply is
+    generating.
+  - Show the task in progress in the panel's header, with the number of tasks left.
+  - Keep the panel, collapsed to that line, while tasks remain after the reply ends.
 - [ ] **Background tasks:**
   - A task moves to the background automatically after a set time.
   - Users can see the list of running tasks and stop any of them.
@@ -157,8 +163,10 @@ are not in priority order. Tick an item off when it ships.
   - A "Create PR" button.
 - [ ] **Link a repository to a chat:** works in any chat, inside a workspace or not.
   - By default a chat's container has no link to GitHub.
-  - The user can link a repository and branch to the chat. Mologate then clones it into the chat's
-    container, sets up git, and tells the agent to work in that repository.
+  - When starting a chat, the user can link a repository and branch to it. Mologate then clones it into
+    the chat's container, sets up git, and tells the agent to work in that repository.
+  - A repository can only be linked when the chat is created, not added to an existing chat. In a chat
+    started without one, every GitHub function is off.
 
 ## Security
 
@@ -243,6 +251,17 @@ are not in priority order. Tick an item off when it ships.
     its current state, read-only. A share link is a snapshot any signed-in user with the URL can open;
     signed-out visitors are sent to sign in, and no-auth ("anyone") access can no longer be granted.
     Deleting the link keeps the chat open to the team.
+- [ ] **Turn and tool-use detail:**
+  - A turn is the group of tool uses between two of the agent's messages. Each turn can be expanded to
+    show every tool use, or collapsed to a single line.
+  - Each turn shows how long it took. While it runs, a live timer shows how long it has been running.
+  - Each tool use gets an icon for its kind of action: terminal command, read file, read image, web
+    search, and a generic icon for anything else.
+  - Thinking blocks get a design of their own.
+- [ ] **Live status:** a status line under the message says what is happening right now, so a reply
+      never looks stuck at the start: "Sending…", "Waiting for provider", "Thinking" (then "Thinking
+      more", "Thinking some more", "Thinking deeply" and "Deep in thought" as it goes on), "Running
+      tools", and so on.
 
 ### Models and providers
 
