@@ -307,9 +307,12 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
    notify the owner.
 
 The methods above are in OpenAI's open-source `openai/codex` app-server protocol (the Codex TUI
-uses the same ones). **Spike first:** decide whether inference also goes through app-server or calls
-the Responses endpoint with the tokens app-server manages. Pick whichever gives clean streaming
-and token usage for chat completions, and record the choice here.
+uses the same ones). **Inference decision (2026-10-11):** use app-server 0.162.1 for device login,
+token refresh, model catalogs and windows. Send inference to the Codex Responses endpoint with
+those managed credentials. Translate its SSE text/tool deltas and final usage into Chat Completions
+for Mologate; preserve native SSE for `/responses`. No chat prompts or tool execution go through
+app-server. Protocol and streaming regressions are covered; two live browser connections remain
+the final acceptance check.
 
 **API keys** (Anthropic, OpenAI, OpenRouter, Z.ai): a form with the key and a monthly budget, a
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the
@@ -380,14 +383,16 @@ direct confirmation found only ports 22, 80 and 443 reachable.
 
 ### Phase 1: accounts
 
-**Next phase — not started.**
+**In progress: 2026-10-11**, on `phase1-accounts`, based on `limits-and-accounts`.
+Implementation and verification notes: [Phase 1 accounts](phase1-accounts.md).
 
-- [ ] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
-- [ ] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.
-- [ ] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
-- [ ] Models come from providers, not connection indices; the gate chooses the account per request.
-- [ ] Provider limits rekeyed by account ID; `/responses` and the proxy record them too.
-- [ ] Z.ai spike: what does the coding plan report about its limits?
+- [x] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
+- [x] Codex device-code connect through `codex app-server` (§9), with the inference spike decided.
+- [x] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
+- [x] Models come from providers, not connection indices; the gate chooses the account per request.
+- [x] Provider limits rekeyed by account ID; `/responses` and the proxy record them too.
+- [x] Z.ai spike: coding-plan quota endpoint reports 5-hour and weekly `CREDIT_LIMIT` windows;
+  the model-list response has no rate-limit headers. Empty/unknown quota stays unknown.
 - [ ] Done when: two members connect Codex accounts from the browser and both serve chats.
 
 ### Phase 2: metering (observe-only)

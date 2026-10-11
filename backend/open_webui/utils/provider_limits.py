@@ -15,8 +15,11 @@ otherwise. Providers that send none of these headers simply have no limits to sh
 """
 
 import logging
+import hashlib
+import math
 import re
 import time
+from datetime import datetime
 from collections.abc import Mapping
 from typing import Any
 
@@ -38,7 +41,7 @@ def _number(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number == number else None  # drop NaN
+    return number if math.isfinite(number) else None
 
 
 def _parse_duration_seconds(value: str | None) -> float | None:
@@ -113,6 +116,27 @@ def parse_rate_limit_headers(headers: Mapping[str, str], now: float | None = Non
         _count_window(headers, 'tokens', '-tokens', now),
         _count_window(headers, 'requests', '', now),
     ]
+    # Mologate: Anthropic uses its own prefix and ISO-8601 reset timestamps.
+    for name in ('requests', 'tokens', 'input-tokens', 'output-tokens'):
+        prefix = f'anthropic-ratelimit-{name}'
+        limit = _number(headers.get(prefix + '-limit'))
+        remaining = _number(headers.get(prefix + '-remaining'))
+        if limit and limit > 0 and remaining is not None:
+            try:
+                resets_at = int(
+                    datetime.fromisoformat(headers.get(prefix + '-reset', '').replace('Z', '+00:00')).timestamp()
+                )
+            except (ValueError, OverflowError):
+                resets_at = None
+            windows.append(
+                {
+                    'id': name,
+                    'used_percent': max(0.0, min(100.0, (1 - remaining / limit) * 100)),
+                    'limit': int(limit),
+                    'remaining': int(remaining),
+                    'resets_at': resets_at,
+                }
+            )
 
     seen = set()
     result = []
@@ -123,28 +147,76 @@ def parse_rate_limit_headers(headers: Mapping[str, str], now: float | None = Non
     return result
 
 
-def connection_key(url_idx: Any) -> str:
-    return f'openai:{url_idx}'
+def legacy_account_key(url: str, key: str) -> str:
+    """Mologate: legacy connections also keep their identity when reordered."""
+    return 'legacy:' + hashlib.sha256(f'{url.rstrip("/")}\0{key}'.encode()).hexdigest()
 
 
-async def record_provider_limits(redis, url_idx: Any, headers: Mapping[str, str]) -> None:
+def parse_codex_rate_limits(result: dict) -> list[dict]:
+    windows = []
+    for name in ('primary', 'secondary'):
+        window = (result.get('rateLimits') or {}).get(name) or {}
+        used = _number(window.get('usedPercent'))
+        if used is not None:
+            windows.append(
+                {
+                    'id': name,
+                    'used_percent': max(0, min(100, used)),
+                    'window_minutes': window.get('windowDurationMins'),
+                    'resets_at': window.get('resetsAt'),
+                }
+            )
+    return windows
+
+
+def parse_zai_quota(result: dict) -> list[dict]:
+    """Only map observed coding-plan windows. Unknown/empty quota is not zero usage."""
+    if result.get('success') is not True:
+        return []
+    windows = []
+    for window in (result.get('data') or {}).get('limits', []):
+        if window.get('type') not in ('CREDIT_LIMIT', 'TOKENS_LIMIT'):
+            continue
+        used = _number(window.get('percentage'))
+        # Live coding-plan responses identify the 5-hour window as (3,5), weekly as (6,1).
+        minutes = {(3, 5): 300, (6, 1): 10080}.get((window.get('unit'), window.get('number')))
+        if used is None or minutes is None:
+            continue
+        windows.append(
+            {
+                'id': 'primary' if minutes == 300 else 'secondary',
+                'used_percent': max(0, min(100, used)),
+                'window_minutes': minutes,
+                'resets_at': _parse_reset_at(str(window.get('nextResetTime', '')), time.time()),
+            }
+        )
+    return windows
+
+
+async def record_provider_limits(redis, account_id: str, headers: Mapping[str, str]) -> None:
     """Keep what a response's headers say about the connection's limits. Never raises."""
     try:
         windows = parse_rate_limit_headers(headers)
         if not windows:
             return
 
-        key = connection_key(url_idx)
-        snapshot = {'windows': windows, 'updated_at': int(time.time())}
-        _snapshots[key] = snapshot
-        if redis is not None:
-            await redis.set(f'{REDIS_KEY_PREFIX}{key}', JSONCodec.dumps(snapshot), ex=SNAPSHOT_TTL_SECONDS)
+        await record_provider_snapshot(redis, account_id, windows)
     except Exception as e:
         log.debug('Could not record provider limits: %s', e)
 
 
-async def get_provider_limits(redis, url_idx: Any) -> dict | None:
-    key = connection_key(url_idx)
+async def record_provider_snapshot(redis, account_id: str, windows: list[dict]) -> None:
+    snapshot = {'windows': windows, 'updated_at': int(time.time())}
+    _snapshots[account_id] = snapshot
+    if redis is not None:
+        try:
+            await redis.set(f'{REDIS_KEY_PREFIX}{account_id}', JSONCodec.dumps(snapshot), ex=SNAPSHOT_TTL_SECONDS)
+        except Exception:
+            log.debug('Provider limit storage unavailable; using memory.')
+
+
+async def get_provider_limits(redis, account_id: str) -> dict | None:
+    key = account_id
     snapshot = None
     if redis is not None:
         try:

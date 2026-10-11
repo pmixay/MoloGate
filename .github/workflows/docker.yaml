@@ -9,6 +9,8 @@ on:
       - dev
       # Mologate: publish the staging image before account work starts.
       - limits-and-accounts
+      # Mologate: isolated Phase 1 staging builds.
+      - phase1-accounts
     tags:
       - v*
     # Mologate: deployment and documentation changes do not alter the image.
@@ -39,7 +41,7 @@ jobs:
           - arch: linux/arm64
             runner: ubuntu-24.04-arm
         # Mologate: staging only needs slim; keep the full release matrix elsewhere.
-        variant: ${{ fromJSON(github.ref == 'refs/heads/limits-and-accounts' && '[{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]' || '[{"name":"main","suffix":"","build_args":"","free_disk":false},{"name":"cuda","suffix":"-cuda","build_args":"USE_CUDA=true","free_disk":true},{"name":"cuda126","suffix":"-cuda126","build_args":"USE_CUDA=true\nUSE_CUDA_VER=cu126","free_disk":true},{"name":"ollama","suffix":"-ollama","build_args":"USE_OLLAMA=true","free_disk":false},{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]') }}
+        variant: ${{ fromJSON((github.ref == 'refs/heads/limits-and-accounts' || github.ref == 'refs/heads/phase1-accounts') && '[{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]' || '[{"name":"main","suffix":"","build_args":"","free_disk":false},{"name":"cuda","suffix":"-cuda","build_args":"USE_CUDA=true","free_disk":true},{"name":"cuda126","suffix":"-cuda126","build_args":"USE_CUDA=true\nUSE_CUDA_VER=cu126","free_disk":true},{"name":"ollama","suffix":"-ollama","build_args":"USE_OLLAMA=true","free_disk":false},{"name":"slim","suffix":"-slim","build_args":"USE_SLIM=true","free_disk":false}]') }}
 
     steps:
       - name: Prepare environment
@@ -125,6 +127,21 @@ jobs:
             BUILD_HASH=${{ github.sha }}
             ${{ matrix.variant.build_args }}
 
+      # Mologate: test the built runtime before making its staging tag deployable.
+      - name: Provider account regressions
+        if: github.ref == 'refs/heads/phase1-accounts'
+        run: |
+          docker run --rm --network none \
+            -e DATA_DIR=/tmp/provider-tests \
+            -e STATIC_DIR=/tmp/provider-static \
+            -e DATABASE_URL=sqlite:////tmp/provider-tests/webui.db \
+            -e ENABLE_DB_MIGRATIONS=False \
+            -e WEBUI_SECRET_KEY=provider-test-only \
+            -e OFFLINE_MODE=True -e CORS_ALLOW_ORIGIN=http://localhost \
+            --entrypoint python \
+            "${{ env.FULL_IMAGE_NAME }}@${{ steps.build.outputs.digest }}" \
+            -m unittest discover -s open_webui/test/limits -v
+
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
@@ -149,7 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(github.ref == 'refs/heads/limits-and-accounts' && '[{"name":"slim","suffix":"-slim"}]' || '[{"name":"main","suffix":""},{"name":"cuda","suffix":"-cuda"},{"name":"cuda126","suffix":"-cuda126"},{"name":"ollama","suffix":"-ollama"},{"name":"slim","suffix":"-slim"}]') }}
+        variant: ${{ fromJSON((github.ref == 'refs/heads/limits-and-accounts' || github.ref == 'refs/heads/phase1-accounts') && '[{"name":"slim","suffix":"-slim"}]' || '[{"name":"main","suffix":""},{"name":"cuda","suffix":"-cuda"},{"name":"cuda126","suffix":"-cuda126"},{"name":"ollama","suffix":"-ollama"},{"name":"slim","suffix":"-slim"}]') }}
 
     steps:
       - name: Prepare environment

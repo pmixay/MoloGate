@@ -3106,6 +3106,8 @@ DEFAULT_CONFIG = {
     'audio.tts.mistral.api_key': AUDIO_TTS_MISTRAL_API_KEY,
     'audio.tts.mistral.api_base_url': AUDIO_TTS_MISTRAL_API_BASE_URL,
     'webui.url': WEBUI_URL,
+    # Mologate: Phase 1 connects accounts without enforcing later quota rules.
+    'mologate.limits_mode': os.getenv('MOLOGATE_LIMITS_MODE', 'observe'),
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,

@@ -50,7 +50,10 @@ from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
     apply_system_prompt_to_body,
 )
-from open_webui.utils.provider_limits import record_provider_limits
+from open_webui.utils.provider_limits import legacy_account_key, record_provider_limits
+
+# Mologate: provider-account routes always reauthorize the selected credential.
+from open_webui.utils.provider_account_proxy import account_completion
 from open_webui.utils.session_pool import (
     cleanup_response,
     get_client_timeout,
@@ -1497,9 +1500,6 @@ async def generate_chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
-    if not await Config.get('openai.enable'):
-        raise HTTPException(status_code=503, detail='OpenAI API is disabled')
-
     # NOTE: We intentionally do NOT use Depends(get_async_session) here.
     # Database operations (get_model_by_id, AccessGrants.has_access) manage their own short-lived sessions.
     # This prevents holding a connection during the entire LLM call (30-60+ seconds),
@@ -1541,8 +1541,14 @@ async def generate_chat_completion(
                 payload = await apply_system_prompt_to_body(system, payload, metadata, user)
 
         await check_model_access(user, model_info, bypass_filter)
-    else:
+    elif not str(model_id).startswith('account:'):
         await check_model_access(user, None, bypass_filter)
+
+    # Mologate: dedicated accounts do not depend on the legacy OpenAI connection toggle.
+    if str(model_id).startswith('account:'):
+        return await account_completion(request, payload, user)
+    if not await Config.get('openai.enable'):
+        raise HTTPException(status_code=503, detail='OpenAI API is disabled')
 
     # Check if model is already in app state cache to avoid expensive get_all_models() call
     models = request.app.state.OPENAI_MODELS
@@ -1675,7 +1681,7 @@ async def generate_chat_completion(
             timeout=get_client_timeout(stream=is_streaming_request),
         )
         # Mologate: the account's usage limits, where the provider reports them in headers.
-        await record_provider_limits(request.app.state.redis, idx, r.headers)
+        await record_provider_limits(request.app.state.redis, legacy_account_key(url, key), r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):
@@ -1906,6 +1912,10 @@ async def responses(
     idx = 0
     model_id = form_data.model
 
+    # Mologate: Responses uses the same account selection and credential isolation as chat.
+    if str(model_id).startswith('account:'):
+        return await account_completion(request, payload, user, endpoint='responses')
+
     # Enforce per-model access control
     await check_model_access(user, await Models.get_model_by_id(model_id), BYPASS_MODEL_ACCESS_CONTROL)
 
@@ -1955,6 +1965,9 @@ async def responses(
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
             timeout=get_client_timeout(stream=is_streaming_request),
         )
+
+        # Mologate: Responses traffic contributes to the same stable account snapshot.
+        await record_provider_limits(request.app.state.redis, legacy_account_key(url, key), r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):
@@ -2027,6 +2040,11 @@ async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
 
     idx = 0
     model_id = payload.get('model') if isinstance(payload, dict) else None
+    # Mologate: deprecated proxy paths cannot bypass account permissions or invoke tools.
+    if str(model_id).startswith('account:'):
+        if request.method != 'POST':
+            raise HTTPException(403, 'This account route only supports model inference.')
+        return await account_completion(request, payload, user, endpoint=path)
     if model_id:
         models = request.app.state.OPENAI_MODELS
         if not models or model_id not in models:
@@ -2077,6 +2095,9 @@ async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
             timeout=get_client_timeout(stream=is_streaming_request),
         )
+
+        # Mologate: keep deprecated proxy traffic under the stable credential identity too.
+        await record_provider_limits(request.app.state.redis, legacy_account_key(base_url, key), r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):

@@ -27,6 +27,8 @@
 	import Personalization from './Settings/Personalization.svelte';
 	import Search from '../icons/Search.svelte';
 	import Connections from './Settings/Connections.svelte';
+	// Mologate: personal provider accounts are separate from browser-only connections.
+	import ProviderAccounts from './Settings/ProviderAccounts.svelte';
 	import Integrations from './Settings/Integrations.svelte';
 	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
@@ -142,6 +144,7 @@
 		notifications: $i18n.t('Basics'),
 		shortcuts: $i18n.t('Basics'),
 		connections: $i18n.t('Services'),
+		provider_accounts: $i18n.t('Services'),
 		tools: $i18n.t('Services'),
 		personalization: $i18n.t('Preferences'),
 		data_controls: $i18n.t('Data'),
@@ -208,6 +211,12 @@
 			titleKey: 'settings.personal.connections.title',
 			title: $i18n.t('settings.personal.connections.title'),
 			searchPrefixes: ['settings.personal.connections.']
+		},
+		{
+			id: 'provider_accounts',
+			titleKey: 'Provider accounts',
+			title: 'Provider accounts',
+			searchPrefixes: []
 		},
 		{
 			id: 'tools',
@@ -361,6 +370,11 @@
 
 	const getAvailableSettings = (personalTabs: SettingsTab[], administratorTabs: SettingsTab[]) => {
 		const personalSettings = personalTabs.filter((tab) => {
+			if (tab.id === 'provider_accounts')
+				return (
+					$config?.features?.enable_provider_accounts &&
+					['user', 'admin'].includes($user?.role ?? '')
+				);
 			if (tab.id === 'connections') {
 				return $config?.features?.enable_direct_connections;
 			}
@@ -603,6 +617,16 @@
 							<Keyboard className="size-3.5" strokeWidth="2" />
 							<span>{$i18n.t('settings.personal.shortcuts.title')}</span>
 						</button>
+					{:else if tabId === 'provider_accounts'}
+						<button
+							role="tab"
+							aria-controls="tab-provider_accounts"
+							aria-selected={selectedTab === 'provider_accounts'}
+							class={tabButtonClass(selectedTab === 'provider_accounts')}
+							on:click={() => selectTab('provider_accounts')}
+						>
+							<Link className="size-3.5" strokeWidth="2" /><span>Provider accounts</span>
+						</button>
 					{:else if tabId === 'connections'}
 						{#if $user?.role === 'admin' || ($user?.role === 'user' && $config?.features?.enable_direct_connections)}
 							<button
@@ -778,6 +802,8 @@
 				<Notifications {saveSettings} />
 			{:else if selectedTab === 'shortcuts'}
 				<Shortcuts {saveSettings} />
+			{:else if selectedTab === 'provider_accounts'}
+				<ProviderAccounts />
 			{:else if selectedTab === 'connections'}
 				<Connections
 					saveSettings={async (updated: Record<string, any>) => {

@@ -1,0 +1,176 @@
+"""Authenticated provider account management. Credentials are write-only."""
+
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from sqlalchemy.exc import IntegrityError
+
+from open_webui.models.provider_accounts import AccountView, ProviderAccounts, Sharing, open_secret, seal_secret
+from open_webui.models.users import Users
+from open_webui.utils import codex_accounts
+from open_webui.utils.auth import get_verified_user
+from open_webui.utils.provider_accounts import can_manage, key_fingerprint, require_accounts_enabled, verify_api_key
+from open_webui.utils.provider_accounts import refresh_zai_limits
+from open_webui.utils.provider_limits import get_provider_limits
+from open_webui.utils.rate_limit import RateLimiter
+
+
+class CredentialRoute(APIRoute):
+    """Validation must never echo a supplied credential or an entire request body."""
+
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handle(request):
+            try:
+                return await original(request)
+            except RequestValidationError:
+                raise HTTPException(422, 'Check the account fields and try again.') from None
+
+        return handle
+
+
+router = APIRouter(route_class=CredentialRoute, dependencies=[Depends(require_accounts_enabled)])
+verification_limiter = RateLimiter(limit=10, window=300)
+
+
+class Budget(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    amount: float = Field(gt=0, le=1_000_000, allow_inf_nan=False)
+    currency: Literal['USD'] = 'USD'
+
+
+class ApiAccountForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    provider: Literal['anthropic_api', 'openai_api', 'openrouter', 'zai']
+    api_key: SecretStr
+    label: str = Field(min_length=1, max_length=100)
+    plan: Literal['api', 'lite', 'pro', 'max'] = 'api'
+    sharing: Sharing = 'private'
+    budget: Budget | None = None
+
+
+class CodexAccountForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    label: str = Field(default='ChatGPT', min_length=1, max_length=100)
+    sharing: Sharing = 'private'
+
+
+class AccountUpdateForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    label: str | None = Field(default=None, min_length=1, max_length=100)
+    sharing: Sharing | None = None
+    budget: Budget | None = None
+    capacity_weight: float | None = Field(default=None, gt=0, le=1000, allow_inf_nan=False)
+    allow_team_resets: bool | None = None
+
+
+async def owned_account(account_id, user):
+    account = await ProviderAccounts.get(account_id)
+    if not account or not can_manage(account, user):
+        raise HTTPException(404, 'Account not found.')
+    return account
+
+
+async def check_rate(request, user):
+    if await verification_limiter.is_limited(getattr(request.app.state, 'redis', None), 'provider-connect:' + user.id):
+        raise HTTPException(429, 'Too many connection attempts. Try again in a few minutes.')
+
+
+@router.get('')
+async def list_accounts(request: Request, user=Depends(get_verified_user)):
+    result = []
+    for account in await ProviderAccounts.list():
+        managed = can_manage(account, user)
+        if not managed and account.sharing != 'shared':
+            continue
+        owner = await Users.get_user_by_id(account.owner_user_id)
+        limits = await get_provider_limits(getattr(request.app.state, 'redis', None), account.id)
+        item = AccountView.model_validate(account).model_dump()
+        item.update(owner_name=owner.name if owner else 'Former member', can_manage=managed, limits=limits)
+        result.append(item)
+    return {'data': result}
+
+
+@router.post('', response_model=AccountView)
+async def create_api_account(request: Request, form: ApiAccountForm, user=Depends(get_verified_user)):
+    await check_rate(request, user)
+    if form.provider != 'zai' and form.plan != 'api':
+        raise HTTPException(400, 'Select the API plan for this provider.')
+    if form.plan == 'api' and form.budget is None:
+        raise HTTPException(400, 'Set a monthly budget for this API-key account.')
+    key = form.api_key.get_secret_value().strip()
+    secret, models = await verify_api_key(form.provider, key, form.plan)
+    try:
+        account = await ProviderAccounts.insert(
+            owner_user_id=user.id,
+            provider=form.provider,
+            plan=form.plan,
+            external_account_id=key_fingerprint(key),
+            label=form.label.strip(),
+            sharing=form.sharing,
+            capacity_weight=1,
+            budget=form.budget.model_dump() if form.budget else None,
+            allow_team_resets=True,
+            status='ok',
+            secret=secret,
+            models=models,
+        )
+    except IntegrityError:
+        raise HTTPException(409, 'This provider key is already connected.') from None
+    await refresh_zai_limits(account, getattr(request.app.state, 'redis', None))
+    return account
+
+
+@router.post('/codex')
+async def connect_codex(request: Request, form: CodexAccountForm, user=Depends(get_verified_user)):
+    await check_rate(request, user)
+    identifier = await codex_accounts.start_login(
+        user, form.label.strip(), form.sharing, getattr(request.app.state, 'redis', None)
+    )
+    return await codex_accounts.login_status(identifier, user)
+
+
+@router.get('/codex/logins/{identifier}')
+async def codex_login_status(identifier: str, user=Depends(get_verified_user)):
+    return await codex_accounts.login_status(identifier, user)
+
+
+@router.patch('/{account_id}', response_model=AccountView)
+async def update_account(account_id: str, form: AccountUpdateForm, user=Depends(get_verified_user)):
+    account = await owned_account(account_id, user)
+    values = form.model_dump(exclude_unset=True)
+    if any(value is None for key, value in values.items() if key != 'budget'):
+        raise HTTPException(400, 'Account settings cannot be empty.')
+    if account.plan == 'api' and 'budget' in values and values['budget'] is None:
+        raise HTTPException(400, 'API-key accounts need a monthly budget.')
+    return await ProviderAccounts.update(account_id, values)
+
+
+@router.post('/{account_id}/verify', response_model=AccountView)
+async def verify_account(account_id: str, request: Request, user=Depends(get_verified_user)):
+    account = await owned_account(account_id, user)
+    await check_rate(request, user)
+    if account.provider == 'codex':
+        from open_webui.utils.provider_account_proxy import record_codex_limits
+
+        _, limits = await codex_accounts.refresh_account(account)
+        await record_codex_limits(request, account.id, limits)
+        return await ProviderAccounts.update(account.id, {'status': 'ok', 'last_error': None})
+    secret, models = await verify_api_key(account.provider, open_secret(account.secret)['api_key'], account.plan)
+    await refresh_zai_limits(account, getattr(request.app.state, 'redis', None))
+    return await ProviderAccounts.update(
+        account.id, {'status': 'ok', 'last_error': None, 'models': models, 'secret': seal_secret(secret)}
+    )
+
+
+@router.delete('/{account_id}')
+async def delete_account(account_id: str, user=Depends(get_verified_user)):
+    account = await owned_account(account_id, user)
+    if account.provider == 'codex':
+        await codex_accounts.disconnect(account)
+    await ProviderAccounts.delete(account.id)
+    return True

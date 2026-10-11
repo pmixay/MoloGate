@@ -147,6 +147,7 @@ from open_webui.models.messages import Messages
 from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.users import Users
 from open_webui.routers import (
+    provider_accounts,  # Mologate: owner-managed provider connections.
     analytics,
     audio,
     auths,
@@ -479,6 +480,10 @@ async def lifespan(app: FastAPI):
     from open_webui.utils.session_pool import close_session
 
     await close_session()
+    # Mologate: stop pending device-code login processes during shutdown.
+    from open_webui.utils.codex_accounts import shutdown as close_codex_accounts
+
+    await close_codex_accounts()
 
     if hasattr(app.state, 'redis_task_command_listener'):
         app.state.redis_task_command_listener.cancel()
@@ -863,6 +868,8 @@ app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 
 
 app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
+# Mologate: provider accounts have independent ownership and encrypted credentials.
+app.include_router(provider_accounts.router, prefix='/api/v1/provider-accounts', tags=['provider-accounts'])
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
 app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
@@ -2261,6 +2268,8 @@ async def get_app_config(request: Request):
     user_count = await Users.get_num_users() if license_metadata else None
     config = await Config.get_many(
         'oauth.enable',
+        # Mologate: hide account management when the feature is explicitly disabled.
+        'mologate.limits_mode',
         'oauth.auto_redirect',
         'ldap.enable',
         'ui.enable_signup',
@@ -2354,6 +2363,7 @@ async def get_app_config(request: Request):
                     'enable_public_active_users_count': ENABLE_PUBLIC_ACTIVE_USERS_COUNT,
                     'enable_easter_eggs': ENABLE_EASTER_EGGS,
                     'enable_direct_connections': config.get('direct.enable'),
+                    'enable_provider_accounts': config.get('mologate.limits_mode', 'observe') != 'off',
                     'enable_direct_integrations': config.get('direct.integrations.enable', False),
                     'enable_plugins': ENABLE_PLUGINS,
                     'enable_folders': config.get('folders.enable'),

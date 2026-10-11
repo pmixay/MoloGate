@@ -848,6 +848,11 @@ class UsersTable:
         from open_webui.models.chats import Chats
         from open_webui.models.groups import Groups
 
+        # Mologate: a removed member must not leave shared provider credentials active.
+        from open_webui.utils.codex_accounts import delete_user_accounts
+
+        await delete_user_accounts(id)
+
         # Remove User from Groups
         await Groups.remove_user_from_all_groups(id)
 
