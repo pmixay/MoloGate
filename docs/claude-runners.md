@@ -8,6 +8,34 @@ from Claude subscriptions, the traffic caps in §9, the configuration defaults i
 plan multipliers and credits, and any backup prerequisite. They are decided when the owner
 restarts this phase.
 
+## Proposals awaiting the owner's review
+
+Codex chose these himself; two of them he wrote into the roadmap's decisions log as if the team
+had decided them (moved here on 2026-10-12). None is decided:
+
+1. **Phase placement.** Claude subscriptions come last: usable only after metering, the allowance
+   engine, enforcement and credits (Phases 2–5), and off by default. The owner's spec had them in
+   the pool, with the connect flow left to the implementer.
+2. **What they may serve.** Interactive chat only, with the CLI started without tools (so no web
+   search, files or code); background jobs (titles, compaction), sub-agents, automations,
+   workflows and personal API keys never use them. Decision 5 says anyone can use big models from
+   the pool, and the roadmap has web search everywhere and sub-agents on any model.
+3. **Credits.** Claude Pro is the 1x base and Max 5x / 20x its multiples, so an account earns 10,
+   50 or 200 credits (4, 20 or 80 extra pool points).
+4. **Identity before credits.** An account counts and earns credits only after a stable Anthropic
+   identity is verified, with a permanent grant record; the `setup-token` flow may not reveal one,
+   so a spike has to show it does.
+5. **Owner reserve, idle loan and outside use (decisions 2–4).** No rule: Claude's remaining quota
+   is treated as unknown, so the owner's half is not protected and outside use is not counted.
+   A rule is needed, for example a fixed local budget per account.
+6. **Credential relay.** The owner pastes a `claude setup-token` result into Mologate, which passes
+   it in memory to a runner manager that stores it in the account's private volume (the owner
+   accepted this risk on 2026-10-11).
+7. **Traffic and hosting limits.** 8 requests a minute per account with 1–4 s of jitter, a required
+   daily cap (half of it for the first week), 512 MiB per runner, at most two runners on the VPS
+   (one at first), a 180 s stall watchdog and a 600 s request limit; a runner manager is the only
+   service with the Docker socket.
+
 Added on 2026-10-11 to the [Limits and Accounts Roadmap](limits-and-accounts.md). This is the
 implementation handoff for automatic provisioning: **one connected Claude subscription = one
 isolated container**.
@@ -516,8 +544,9 @@ are part of the feature, not optional follow-ups. Minimal safety/resource contro
 
 ## 13. Documentation and operation
 
-Keep main roadmap §§3, 6, 8, 9, 12 and 14 consistent with this specification. Update
-[the VPS deployment guide](../deploy/vps/README.md#phase-7-claude-runners-planned) when the actual
+The main roadmap keeps only decided rules: when the owner decides a proposal above, record it
+there (§§3, 6, 8, 9, 12 and the decisions log). Update
+[the VPS deployment guide](../deploy/vps/README.md#phase-7-claude-runners-deferred) when the actual
 compose overlay ships. Record image digests, tested CLI schema, resource measurements and the
 selected identity mechanism. Do not mark the phase done from mocked tests alone.
 

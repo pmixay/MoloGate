@@ -99,19 +99,16 @@ A team-accepted risk is a project decision, not permission from the provider.
 | **OpenCode free models**                  | None (runs in a container)                   | Not an account                      | Per-user rate limit only                                                  |
 
 **Claude subscriptions:** deferred and disabled on 2026-10-12; they are not part of the pool, and
-nothing for them is built or scheduled. When the owner restarts the work, the earlier plan below
-and in [claude-runners.md](claude-runners.md) is a proposal to review, not a decision. The team had
-chosen to plan opt-in pooling through isolated runners.
+nothing for them is built or scheduled. Codex's plan for them, in [claude-runners.md](claude-runners.md),
+lists its open proposals; none of it is decided. The owner's direction was to pool them while
+lowering the risk of an account ban, and to choose the connect flow when the work starts.
 Anthropic distinguishes hosting the unmodified CLI for a user signing in with their own account
 from routing other users' requests through subscription credentials; its published restrictions
 also cover collecting or relaying Claude.ai tokens. Containers and conservative request pacing
 do not remove those restrictions. The team accepts this risk; the plan does not claim provider
 approval or protection from suspension. See [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).
 
-Anthropic **API-key** accounts remain the Phase 1 integration. Subscription runners are a separate
-[Phase 7 specification](claude-runners.md). In its proposed `setup-token` flow, Mologate and the
-manager briefly handle the token in memory, and the manager writes it into the runner's private
-volume. The token must never enter SQL, Redis, logs or API responses. This is not a token-free relay.
+Anthropic **API-key** accounts remain the Phase 1 integration.
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
 make their account available to others. The team has accepted this risk. Lower it: keep
@@ -125,8 +122,8 @@ Business seats and API keys where it matters.
 
 The table below is the baseline verified on `main` at `a20a336`.
 The [Phase 1 implementation](phase1-accounts.md), on `limits-and-accounts`, adds account storage,
-connect UI and routing. Phase 7 must build on that work and the later dependencies listed in its
-specification. Later-phase components are not implemented merely because they share this branch.
+connect UI and routing. Later-phase components are not implemented merely because they share this
+branch.
 
 | Piece                                           | Where                                                                                                                               | Use it for                                                                                                                                                                                                 |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -155,8 +152,7 @@ chat, Responses and proxy paths; §10 added `limit_reset_event`. The usage ledge
 - **Account:** one connected provider credential with an owner (`provider_account`), or a team
   account with none. A team account has no owner reserve: its whole window is pool.
 - **Window:** a provider limit window: `5h` and `weekly` for Codex; `budget` (an owner-set monthly
-  amount) for API keys. Phase 7 adds Claude windows only when observed from the provider; unknown
-  quota stays unknown. Every rule below runs per window, and a request must pass in every window
+  amount) for API keys. Every rule below runs per window, and a request must pass in every window
   of the account it uses.
 - **Used percent `u_a`:** how much of account `a`'s window is used, from the provider (or from the
   ledger for budget windows). It includes use outside Mologate.
@@ -181,7 +177,7 @@ New tables (Alembic migrations), all with `created_at` and `updated_at` epoch co
 **`provider_account`**
 `id`, `owner_user_id` (empty for a team account: no owner, admins manage it, everyone uses it, all
 of its use is pool use; migration `f7c2a9d4b8e1`), `provider` (`codex` | `anthropic_api` | `openai_api` | `openrouter` |
-`zai` | `claude_sub` in Phase 7), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
+`zai`), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
 ID: codex-lb's account ID for ChatGPT, or a SHA-256 fingerprint of an API key), `label` (a generated
 name such as `Account #1n9Dk5`; members do not choose labels), `secret` (Fernet-encrypted JSON; for
 ChatGPT, the codex-lb account ID and a key scoped to that one account), `sharing` (`shared` | `private` |
@@ -191,27 +187,16 @@ auto-reset setting (§10) alone decides whether coupons are spent (migration `e5
 `allow_team_resets`).
 Unique: (`provider`, `external_account_id`).
 
-**Claude runner convention (Phase 7):** `provider='claude_sub'`, with plans `pro`, `max_5x` and
-`max_20x`. The encrypted secret contains only server-generated runner metadata, for example
-`{"manager":"http://runner-manager:8085","runner_id":"<uuid>","volume":"claude-cfg-<uuid>"}`;
-the manager origin is allowlisted server configuration. The provider identity must be verified
-before storing its SHA-256 hash as `external_account_id`. A pending registration is excluded from
-the pool and earns no credits. Add `verifying` to the lifecycle. Automatic resets cover ChatGPT only,
-so Claude accounts never take part in them.
-The SQL provider column is a string, but the Phase 1 Python `Provider` literal, API validation,
-routing and frontend types still need extending. Durable registration/event tracking may require
-a migration; see [the complete schema contract](claude-runners.md#2-data-and-identity).
 Account uniqueness prevents simultaneous duplicates; the permanent `credit_grant` below prevents
 reconnect credit farming after an account row is deleted.
 
 **`account_window`** (latest snapshot per account and window; history in the ledger)
 `account_id`, `window` (`5h` | `weekly` | `budget`), `used_percent`, `resets_at`, `source`
-(`poll` | `headers` | `ledger` | `stream` in Phase 7), `observed_at`.
+(`poll` | `headers` | `ledger`), `observed_at`.
 
 **`usage_event`** (one row per provider request)
 `id`, `ts`, `user_id`, `api_key_id` (nullable), `account_id`, `provider`, `model_id`, `source`
-(`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside` |
-`verification` in Phase 7), `tier`
+(`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside`), `tier`
 (`reserve` | `pool` | `credit` | `worker` | `owner_outside`), `input_tokens`, `output_tokens`,
 `cached_tokens`, `reasoning_tokens`, `est_units`, `units` (after calibration), `credits_charged`,
 `status` (`ok` | `error` | `limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and
@@ -338,10 +323,6 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   conservative estimate). Also refit `c_a` across accounts.
 - **Run `observe` for at least a week** of real team use before switching to `enforce`. Compare
   decisions to what actually happened.
-- **Claude runners (Phase 7):** record CLI usage and only quota fields actually verified in the
-  pinned CLI's output. Stream observations use `source='stream'`, not `headers`. Without two
-  authoritative quota readings, outside use and provider-percent calibration remain unknown;
-  silence from a runner is not evidence of outside use. See [Phase 7 metering](claude-runners.md#7-metering).
 
 ---
 
@@ -396,23 +377,6 @@ Azure, and connections with custom headers or another sign-in stay connections, 
 member already connected. The adopted connection's model ids keep working: saved model settings,
 presets, access grants and the default, pinned, ordered and task models move to the account ids,
 and a request naming an old id is sent to the new one (`mologate.model_aliases`).
-
-**Claude subscriptions (Phase 7, not Phase 1):**
-
-1. The owner chooses **Connect → Claude subscription**, selects Pro / Max 5x / Max 20x and opts
-   into sharing if desired. The backend creates a pending registration and an isolated runner.
-2. For the proposed MVP, the owner runs `claude setup-token` on their own computer and completes
-   Anthropic's browser flow, then submits the token through an authenticated HTTPS form.
-3. Mologate relays the bounded body to the manager without body logging or database storage.
-   The manager writes a mode-0600 file in the account's mode-0700 volume; the wrapper supplies
-   it only to the CLI child process as `CLAUDE_CODE_OAUTH_TOKEN`.
-4. A verification request and a provider-verified stable account identity are required before
-   `status=ok`. The account enters the pool only if sharing is enabled. Phase 5 grants credits
-   once per verified provider identity, not once per runner or submitted token.
-
-The first Phase 7 spike must establish whether `setup-token` exposes enough verified identity
-for step 4. Token presence or an `oauthAccount` JSON file is insufficient. The full
-[runner plan](claude-runners.md) defines this dependency, APIs, alternatives and acceptance tests.
 
 **Account row:** collapsed by default to its generated name, provider, plan, owner, a note only
 when it matters (Team, Paused, Sign-in required), the 5-hour and weekly bars, and a coupon badge
@@ -521,9 +485,6 @@ pass. Acceptance testing takes place on
 from `05a3311` is deployed; later commits on the branch are not deployed yet. The remaining
 acceptance check is two real Codex accounts serving chats.
 
-Claude Pro/Max subscription runners belong to Phase 7. They are not an additional Phase 1
-completion requirement; an isolated authentication/protocol spike can follow Phase 1 early.
-
 - [x] `provider_account` table, encrypted secrets, account CRUD API (owner or admin).
 - [x] ChatGPT connect from the browser (§9), by sign-in link or device code; first through
       `codex app-server`, now through codex-lb.
@@ -580,31 +541,8 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 ### Phase 7: Claude subscription runners
 
 **Deferred and disabled (2026-10-12).** Claude subscriptions are not part of the pool and nothing
-is built. The specification below and in [Claude runners](claude-runners.md) is Codex's
-proposal; the owner reviews it before any of it is decided.
-Earlier plan: [Claude runners](claude-runners.md).
-One account gets one isolated runner container and persistent private volume. Ship with the
-integration disabled by default. Infrastructure/authentication work can follow Phase 1;
-the complete feature depends on Phases 2–5 for metering, selection, enforcement and credits.
-Phase 6 is not required for the interactive-chat MVP; personal API keys cannot use these runners.
-
-- [ ] 7.0: verify pinned CLI authentication, stable account identity, usage/limit output and memory
-      requirements; record fixtures and resolve the `setup-token` identity gap.
-- [ ] 7.1: authenticated runner-manager, compose overlay, create/start/stop/delete,
-      isolated networks, hard live-runner cap and working kill-switch.
-- [ ] 7.2: pinned runner image, one active request, NDJSON streaming, watchdog and cancellation.
-- [ ] 7.3: owner-authorized backend connect API, redacted credential relay, signed/replay-safe
-      events, identity deduplication and account status notifications.
-- [ ] 7.4: usage ledger and verified account-window observations; unknown quota stays unknown.
-- [ ] 7.5: allowance-engine integration, account/session affinity, background-work exclusion,
-      Phase 5 credit grants and tier-5 reset-time display without an automatic reset.
-- [ ] 7.6: lifecycle reconciliation, idle LRU stop, cooldown/circuit breaker and restart/load tests.
-- [ ] 7.7: Connect UI, runner status on account cards and context/usage indicators.
-- [ ] 7.8: at least one week of real `observe` traffic; enable enforcement only after
-      its metering and isolation acceptance criteria pass.
-- [ ] Done when: browser connect produces a verified usable account, three registered accounts
-      never exceed the host's two-live-runner ceiling, disconnect removes the correct volume,
-      and off/auth-loss/rate-limit/restart scenarios behave as specified.
+is built or scheduled. Codex's plan, with its open proposals and the step list he drafted, is in
+[claude-runners.md](claude-runners.md); the owner reviews it before any of it is decided.
 
 ### Later
 
@@ -640,10 +578,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
 - Backups: none while Mologate is in development. Add them later, kept off the box.
-- **Phase 7, deferred (proposal):** add a separate runner-manager and private account volumes.
-  Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
-  runner ports stay unpublished. Start with one live runner on this shared VPS and permit at
-  most two host-wide after memory/CPU tests. See [deployment requirements](../deploy/vps/README.md#phase-7-claude-runners-planned).
+- **Phase 7:** deferred; Codex's hosting proposal is in [claude-runners.md](claude-runners.md).
 
 ---
 
@@ -659,15 +594,6 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: idle owner loan: no owner use for 24 hours lends up to 25 points.
 - 2026-10-11: hosting on the VPS from the start: https://5-83-140-221.sslip.io, compose stack in
   `/opt/mologate`; GLM coding plan connected and Exa web search on.
-- 2026-10-11 (written by Codex, not reviewed by the owner): keep Anthropic API-key accounts in
-  Phase 1; schedule Claude Pro/Max containers as Phase 7, with an early authentication/identity
-  spike allowed after Phase 1. The team requests opt-in subscription pooling and accepts the
-  provider-terms risk described in §3. No claim that an unmodified binary, isolation or pacing
-  makes pooling provider-approved.
-- 2026-10-11 (written by Codex, not reviewed by the owner): Claude Pro is the 1x base paid tier;
-  Max has 5x and 20x variants. Credits require a verified stable identity and a permanent grant
-  record. The proposed token relay handles a credential transiently; only the runner volume
-  persists it. Phase 7 stays disabled by default.
 - 2026-10-11: remove backups for the development period; add them back later, off the VPS.
 - 2026-10-11: no self-registration: admins create every member account. ChatGPT accounts can
   also connect with a sign-in link whose callback address the member pastes back, since a code
@@ -679,9 +605,9 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
   account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
   for the team.
-- 2026-10-12: Claude subscriptions are deferred and disabled. Codex's Phase 7 plan (chat only,
-  no tools, background work and personal keys excluded, traffic caps, a Claude credits row,
-  backups before credentials) is a proposal for later review, not a decision.
+- 2026-10-12: Claude subscriptions are deferred and disabled. Codex's Phase 7 plan, including the
+  two entries he wrote into this log on 2026-10-11, moved to [claude-runners.md](claude-runners.md)
+  as proposals awaiting review; none of it is a decision.
 - 2026-10-12: observe mode never interrupts work; only very critical harm is stopped in any mode
   (no sign-in, someone else's private account, load that would take the server down).
 - 2026-10-12: team accounts: an admin's key or ChatGPT account can belong to no member and serve
