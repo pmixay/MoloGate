@@ -107,9 +107,15 @@ and 443 should be open.
 
 ## Updates
 
-Run `/opt/mologate/update.sh` to pull the selected prebuilt images and restart Mologate and
-codex-lb with a readiness check. Older images stay on the host. Deploy a previous image by setting
-`IMAGE` to its tag or digest in `.env` and running the same script.
+To deploy a commit, check it out in `/root/MoloGate` (`git -C /root/MoloGate fetch origin` then
+`git -C /root/MoloGate checkout <commit>`), set `IMAGE` in `.env` to the image built from it, and
+run `/opt/mologate/update.sh`. The script first applies that checkout's `compose.yaml`,
+`Caddyfile` and `update.sh` (keeping the previous ones under `/root/mologate-config-*`, and putting
+them back if the new compose file is invalid), then pulls the Mologate and codex-lb images, starts
+every service with a readiness check (so a new service such as codex-lb starts too), and reloads
+Caddy. It warns when the checkout is not the commit the image was built from. Set
+`MOLOGATE_SOURCE` to use a checkout elsewhere. Older images stay on the host: to roll back, check
+out the earlier commit, set `IMAGE` to its tag or digest and run the same script.
 
 **There are no backups while Mologate is in development.** Code that predates a database migration
 cannot read the newer schema, so rolling back across a migration loses the data written since.

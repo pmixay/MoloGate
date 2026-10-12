@@ -43,6 +43,28 @@ async def seed_registered_defaults():
     await Config.rename_prefix('rag.web', 'web')
     await Config.repair_config_rows()
     await Config.seed_defaults(DEFAULT_CONFIG)
+    await apply_env_overrides()
+
+
+# Mologate: deployment switches. A value set in the environment wins at every start; left unset,
+# the stored one stays (for auto-reset, whatever a member last chose in the app).
+ENV_OVERRIDES = {
+    'mologate.limits_mode': 'MOLOGATE_LIMITS_MODE',
+    'mologate.auto_reset': 'MOLOGATE_AUTO_RESET',
+}
+
+
+async def apply_env_overrides():
+    updates = {
+        key: DEFAULT_CONFIG[key]
+        for key, name in ENV_OVERRIDES.items()
+        if name in os.environ and await Config.get(key, None) != DEFAULT_CONFIG[key]
+    }
+    if 'mologate.auto_reset' in updates:
+        updates['mologate.auto_reset_changed'] = {'by': 'Server settings', 'at': int(datetime.now().timestamp())}
+    if updates:
+        await Config.upsert(updates)
+        log.info('Applied %s from the environment.', ', '.join(sorted(updates)))
 
 
 async def async_reset_config():

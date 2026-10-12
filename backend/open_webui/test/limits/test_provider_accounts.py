@@ -1096,6 +1096,23 @@ class RouterTests(unittest.TestCase):
             self.assertNotIn('secret', result.json())
             self.assertNotIn('external_account_id', result.json())
 
+    def test_only_an_admin_corrects_a_member_chosen_plan(self):
+        zai = account(provider='zai', plan='lite')
+        with (
+            patch.object(ProviderAccounts, 'get', AsyncMock(return_value=zai)),
+            patch.object(ProviderAccounts, 'update', AsyncMock(return_value=zai)) as update,
+        ):
+            # The owner cannot raise their own plan; an admin can correct it.
+            self.assertEqual(self.client.patch('/accounts/id', json={'plan': 'max'}).status_code, 403)
+            self.app.dependency_overrides[routes.get_verified_user] = lambda: ADMIN
+            self.assertEqual(self.client.patch('/accounts/id', json={'plan': 'max'}).status_code, 200)
+            update.assert_awaited_once_with('id', {'plan': 'max'})
+            self.assertEqual(self.client.patch('/accounts/id', json={'plan': 'enterprise'}).status_code, 422)
+        # ChatGPT and API-key plans come from the provider.
+        for fixed in (account(), account(provider='openrouter', plan='api')):
+            with patch.object(ProviderAccounts, 'get', AsyncMock(return_value=fixed)):
+                self.assertEqual(self.client.patch('/accounts/id', json={'plan': 'pro'}).status_code, 400)
+
     def test_any_member_switches_auto_reset_for_everyone(self):
         stored = {}
 
@@ -1268,6 +1285,30 @@ class AccountNameMigrationTests(unittest.TestCase):
             self.assertRegex(label, GENERATED_NAME)
             self.assertEqual(len(label), len('Account #') + 6)
         self.assertEqual(len(set(rows.values())), 3)
+
+
+class EnvOverrideTests(unittest.IsolatedAsyncioTestCase):
+    async def test_switches_set_in_the_environment_win_at_every_start(self):
+        from open_webui import config
+
+        stored = {'mologate.limits_mode': 'off', 'mologate.auto_reset': True}
+        upsert = AsyncMock(side_effect=stored.update)
+        defaults = {**config.DEFAULT_CONFIG, 'mologate.limits_mode': 'observe', 'mologate.auto_reset': False}
+        with (
+            patch.object(config, 'DEFAULT_CONFIG', defaults),
+            patch.object(config.Config, 'get', AsyncMock(side_effect=lambda key, default=None: stored.get(key))),
+            patch.object(config.Config, 'upsert', upsert),
+        ):
+            # Unset in the environment: the stored values (a member's auto-reset choice) stay.
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop('MOLOGATE_LIMITS_MODE', None)
+                os.environ.pop('MOLOGATE_AUTO_RESET', None)
+                await config.apply_env_overrides()
+            upsert.assert_not_awaited()
+            with patch.dict(os.environ, {'MOLOGATE_LIMITS_MODE': 'observe', 'MOLOGATE_AUTO_RESET': 'false'}):
+                await config.apply_env_overrides()
+        self.assertEqual((stored['mologate.limits_mode'], stored['mologate.auto_reset']), ('observe', False))
+        self.assertEqual(stored['mologate.auto_reset_changed']['by'], 'Server settings')
 
 
 class SignupTests(unittest.IsolatedAsyncioTestCase):

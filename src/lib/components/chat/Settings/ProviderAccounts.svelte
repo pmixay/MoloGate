@@ -722,6 +722,23 @@
 													{/each}
 												</select>
 											</label>
+											{#if $user?.role === 'admin' && account.provider === 'zai' && account.plan !== 'api'}
+												<!-- Mologate: members pick their Z.ai coding plan; an admin can correct it. -->
+												<label class="flex items-center gap-2 text-gray-600 dark:text-gray-400"
+													>Plan
+													<select
+														value={account.plan}
+														disabled={busy}
+														class="rounded-xl bg-gray-50 py-1 pl-2 pr-7 text-gray-900 outline-hidden dark:bg-gray-850 dark:text-white"
+														on:change={(event) =>
+															change(account, { plan: event.currentTarget.value })}
+													>
+														{#each ['lite', 'pro', 'max'] as value}
+															<option {value}>{planName(value)}</option>
+														{/each}
+													</select>
+												</label>
+											{/if}
 											<div class="flex items-center gap-1.5">
 												<button
 													type="button"

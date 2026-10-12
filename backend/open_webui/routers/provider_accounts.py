@@ -87,6 +87,8 @@ class AccountUpdateForm(BaseModel):
     sharing: Sharing | None = None
     budget: Budget | None = None
     capacity_weight: float | None = Field(default=None, gt=0, le=1000, allow_inf_nan=False)
+    # Mologate: an admin corrects a Z.ai coding plan the member picked; other plans come from the provider.
+    plan: Literal['lite', 'pro', 'max'] | None = None
 
 
 class AutoResetForm(BaseModel):
@@ -218,6 +220,11 @@ async def update_account(account_id: str, form: AccountUpdateForm, user=Depends(
         raise HTTPException(400, 'Account settings cannot be empty.')
     if account.plan == 'api' and 'budget' in values and values['budget'] is None:
         raise HTTPException(400, 'API-key accounts need a monthly budget.')
+    if 'plan' in values:
+        if user.role != 'admin':
+            raise HTTPException(403, 'Only an admin can correct a plan.')
+        if account.provider != 'zai' or account.plan == 'api':
+            raise HTTPException(400, 'This plan comes from the provider and cannot be changed.')
     return await ProviderAccounts.update(account_id, values)
 
 

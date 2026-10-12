@@ -19,6 +19,9 @@ services:
         condition: service_healthy
     environment:
       WEBUI_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      # Only the site itself may call the API with a member's session, and the cookie stays HTTPS-only.
+      CORS_ALLOW_ORIGIN: https://${DOMAIN}
+      WEBUI_SESSION_COOKIE_SECURE: "true"
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY in .env}
       WEBUI_AUTH: "True"
       DATABASE_URL: postgresql://mologate:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/mologate
