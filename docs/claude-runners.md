@@ -1,8 +1,16 @@
 # Phase 7: Claude subscription runners
 
-Status: **planned, not implemented**. Added on 2026-10-11 to the
-[Limits and Accounts Roadmap](limits-and-accounts.md). This is the implementation handoff for
-automatic provisioning: **one connected Claude subscription = one isolated container**.
+Status: **deferred and disabled (2026-10-12).** Claude subscriptions are not part of the pool and
+nothing here is built or scheduled. This plan was written by Codex on 2026-10-11 and has not been
+reviewed by the owner: its design choices are proposals, not decisions. That includes chat-only
+use, no tools (so no web search), keeping background work, sub-agents and personal API keys away
+from Claude subscriptions, the traffic caps in §9, the configuration defaults in §10, the Claude
+plan multipliers and credits, and any backup prerequisite. They are decided when the owner
+restarts this phase.
+
+Added on 2026-10-11 to the [Limits and Accounts Roadmap](limits-and-accounts.md). This is the
+implementation handoff for automatic provisioning: **one connected Claude subscription = one
+isolated container**.
 
 Read the main roadmap and [Phase 1 implementation notes](phase1-accounts.md) first. The roadmap,
 account implementation and this specification all use **`limits-and-accounts`**. Continue work
@@ -40,9 +48,10 @@ Anthropic's distinction between hosted personal CLI use and subscription credent
 still applies. This architecture does not establish permission or guarantee against suspension.
 
 `MOLOGATE_LIMITS_MODE=off|observe|enforce` retains its existing meaning, with default `observe`.
-Add `MOLOGATE_CLAUDE_RUNNERS=off` as an independent deployment kill-switch. Allowance decisions
-are observational in `observe`; ownership, authentication, backoff, worker exclusions and hard
-resource caps are always enforced.
+Add `MOLOGATE_CLAUDE_RUNNERS=off` as an independent deployment kill-switch. In `observe` nothing
+blocks or slows work (see the main roadmap §1); in every mode only very critical harm is stopped:
+requests without sign-in, using someone else's private account, and load that would take the
+server down (the hard memory limits of runner containers).
 
 **Credential boundary:** SQL and Redis contain runner references, not Claude tokens. Flow A
 does pass a token through the browser, backend and manager in memory; the manager persists it
@@ -512,12 +521,11 @@ Keep main roadmap §§3, 6, 8, 9, 12 and 14 consistent with this specification. 
 compose overlay ships. Record image digests, tested CLI schema, resource measurements and the
 selected identity mechanism. Do not mark the phase done from mocked tests alone.
 
-Before first credentials, add encrypted/restricted runner-volume backups with a documented
-retention policy and a restore test. There are no backups during development, and app-data
-backups, once they return, will not automatically cover new Docker volumes. Treat resumed
-conversation files as sensitive as credentials; apply chat retention and owner-deletion policy.
-Disconnect deletes the live volume after drain; backup expiry follows the documented retention
-schedule, and owners can revoke credentials at Anthropic.
+Backups are off during development. Whether runner volumes are backed up is decided with the
+rest of the backup plan when backups return; it is not a separate prerequisite for this phase.
+Treat resumed conversation files as sensitive as credentials; apply chat retention and
+owner-deletion policy. Disconnect deletes the live volume after drain, and owners can revoke
+credentials at Anthropic.
 
 Rollback: disable runtime dispatch, stop/drain runners, retain account volumes and restore the
 previous pinned image/config. Back up the database before migrations; restore a matching schema

@@ -12,8 +12,10 @@ passed on both architectures. The live image is pinned to
 Existing production users, provider connections, data and registration policy are retained.
 Later commits on the branch are not deployed yet: automatic account switching and limit resets,
 admin-only account creation, ChatGPT link sign-in, full-text uploads, and ChatGPT accounts through
-codex-lb with generated account names and a single team-wide auto-reset switch. They add migrations `c3d9e7a5b1f0`, `d8e2b6c4a9f3` and
-`e5a3c1f8d2b7`, and a `codex-lb` service in the compose file.
+codex-lb with generated account names and a single team-wide auto-reset switch, and team accounts
+(admin connections to a supported provider move into them on the first start). They add
+migrations `c3d9e7a5b1f0`, `d8e2b6c4a9f3`, `e5a3c1f8d2b7` and `f7c2a9d4b8e1`, and a `codex-lb`
+service in the compose file.
 [Draft PR #3](https://github.com/pmixay/MoloGate/pull/3) contains the consolidated implementation.
 Deployment for testing does not mean the PR has merged or Phase 1 acceptance is complete.
 
@@ -99,9 +101,12 @@ The initial Z.ai spike on the VPS read the existing key in memory. The
 coding model endpoint returned 11 models, rejected a deliberately invalid key with HTTP 401, and
 did not return limit headers. `GET https://api.z.ai/api/monitor/usage/quota/limit` returned two
 `CREDIT_LIMIT` windows: `(unit=3, number=5)` for five hours and `(unit=6, number=1)` for a week,
-with `percentage` and `nextResetTime`. Connect/verify reads these as best-effort observations.
-Unknown window types or unavailable quota never imply zero usage. This console endpoint can
-change independently of the published inference API.
+with `percentage` and `nextResetTime`. Z.ai's own usage plugin sends the key itself in
+`Authorization` (no `Bearer`), names the windows `TOKENS_LIMIT` and treats `TIME_LIMIT` as the
+monthly MCP allowance; Mologate now calls it the same way and reads both window types. The quota
+is read at connect and Verify, when the accounts page lists the account, and after each request,
+at most once a minute per account. Unknown window types or unavailable quota never imply zero
+usage. This console endpoint is undocumented and can change independently of the inference API.
 
 ## Verification
 

@@ -181,9 +181,10 @@ docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adap
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
-## Phase 7: Claude runners (planned)
+## Phase 7: Claude runners (deferred)
 
-The [English runner specification](../../docs/claude-runners.md) describes this future addition.
+Claude subscriptions are deferred and disabled. The
+[runner specification](../../docs/claude-runners.md) is an unreviewed proposal kept for later.
 No runner-manager or Claude account containers are deployed by the current compose files.
 Anthropic API-key accounts already belong to Phase 1; subscription runners are separate work.
 

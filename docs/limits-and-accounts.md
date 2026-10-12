@@ -29,9 +29,13 @@ this branch; the current draft is [PR #3](https://github.com/pmixay/MoloGate/pul
   ([section 7](#7-allowance-engine)) must be a pure function with table-driven tests covering every
   worked example in this document.
 - **Modes:** everything here runs behind `MOLOGATE_LIMITS_MODE` = `off` | `observe` | `enforce`
-  (default `observe` until phase 4 ships). In `observe` the gate computes decisions and records
-  them but never blocks or swaps models for allowance reasons. Authentication, account privacy,
-  provider backoff, resource caps and disabled integrations still apply in every mode.
+  (default `observe` until phase 4 ships). When the environment sets it, that value wins at every
+  start. In `observe` the gate computes decisions and records them but never blocks, swaps
+  models, delays or caps anyone's work. Like the tool-call review, it stays out of the way: in
+  every mode, only what would harm the system or a member is stopped, and only when it is very
+  critical, namely requests without sign-in, using a member's private account or credentials for
+  someone else, and load that would take the server down. Switching to another account when one
+  is empty or rate-limited is not a block.
 - **Never** log or return secrets. Never put prompts in the usage ledger.
 
 ---
@@ -64,12 +68,13 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
    | ----------------------------------------------------------- | -------------------------------------------------- | --------------- | ----------------- |
    | ChatGPT Plus                                                | 1x                                                 | 10              | 4                 |
    | ChatGPT Pro tiers (for example 5x, 20x)                     | the tier's multiplier                              | 50, 200         | 20, 80            |
-   | Claude Pro / Max 5x / Max 20x (Phase 7)                     | 1x / 5x / 20x relative to Pro                      | 10 / 50 / 200   | 4 / 20 / 80       |
    | GLM coding plan (Lite, Pro, Max)                            | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier    |
    | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20                               | 10 × multiplier | 4 × multiplier    |
 
    The admin keeps the multiplier table in settings. Read the plan from the provider when possible
-   (Codex `account/read`); otherwise the member picks it when connecting and an admin can correct it.
+   (ChatGPT plans come from codex-lb); otherwise the member picks it when connecting and an admin
+   can correct it (Z.ai coding plans: Lite, Pro, Max). Claude subscriptions are deferred (§12,
+   Phase 7), so they have no row here; their credits are decided if that phase starts.
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
@@ -84,16 +89,19 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 This records the project's pool choices and the providers' restrictions, checked on 2026-10-11.
 A team-accepted risk is a project decision, not permission from the provider.
 
-| Provider                                  | Access                                                                    | Into the pool?                          | Limits source                                                                        |
-| ----------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Codex / ChatGPT** (Plus, Pro, Business) | Sign-in link or device code through codex-lb                              | Yes (team-accepted risk, see below)     | codex-lb account summary (5h + weekly), polled from OpenAI every minute              |
-| **Anthropic API key** (Claude Console)    | Key pasted in by its owner                                                | Yes                                     | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits            |
-| **Claude Pro / Max subscription**         | Owner connects an isolated runner using the unmodified Claude Code binary | Planned in Phase 7 (team-accepted risk) | CLI usage and verified stream observations; complete quota visibility is not assumed |
-| **OpenAI API key**, **OpenRouter key**    | Key                                                                       | Yes                                     | Owner-set budget; OpenRouter also reports key usage                                  |
-| **Z.ai GLM coding plan**                  | Key                                                                       | Yes                                     | Coding-plan quota endpoint (5h + weekly `CREDIT_LIMIT`), best effort                 |
-| **OpenCode free models**                  | None (runs in a container)                                                | Not an account                          | Per-user rate limit only                                                             |
+| Provider                                  | Access                                       | Into the pool?                      | Limits source                                                             |
+| ----------------------------------------- | -------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
+| **Codex / ChatGPT** (Plus, Pro, Business) | Sign-in link or device code through codex-lb | Yes (team-accepted risk, see below) | codex-lb account summary (5h + weekly), polled from OpenAI every minute   |
+| **Anthropic API key** (Claude Console)    | Key pasted in by its owner                   | Yes                                 | Owner-set monthly budget; `anthropic-ratelimit-*` headers for rate limits |
+| **Claude Pro / Max subscription**         | Deferred and disabled (Phase 7)              | Not now                             | Decided if Phase 7 starts                                                 |
+| **OpenAI API key**, **OpenRouter key**    | Key                                          | Yes                                 | Owner-set budget; OpenRouter also reports key usage                       |
+| **Z.ai GLM coding plan**                  | Key                                          | Yes                                 | Coding-plan quota endpoint (5h + weekly `CREDIT_LIMIT`), best effort      |
+| **OpenCode free models**                  | None (runs in a container)                   | Not an account                      | Per-user rate limit only                                                  |
 
-**Claude subscriptions:** the team has chosen to plan opt-in pooling through isolated runners.
+**Claude subscriptions:** deferred and disabled on 2026-10-12; they are not part of the pool, and
+nothing for them is built or scheduled. When the owner restarts the work, the earlier plan below
+and in [claude-runners.md](claude-runners.md) is a proposal to review, not a decision. The team had
+chosen to plan opt-in pooling through isolated runners.
 Anthropic distinguishes hosting the unmodified CLI for a user signing in with their own account
 from routing other users' requests through subscription credentials; its published restrictions
 also cover collecting or relaying Claude.ai tokens. Containers and conservative request pacing
@@ -144,7 +152,8 @@ chat, Responses and proxy paths; §10 added `limit_reset_event`. The usage ledge
 
 ## 5. Concepts and units
 
-- **Account:** one connected provider credential with an owner (`provider_account`).
+- **Account:** one connected provider credential with an owner (`provider_account`), or a team
+  account with none. A team account has no owner reserve: its whole window is pool.
 - **Window:** a provider limit window: `5h` and `weekly` for Codex; `budget` (an owner-set monthly
   amount) for API keys. Phase 7 adds Claude windows only when observed from the provider; unknown
   quota stays unknown. Every rule below runs per window, and a request must pass in every window
@@ -170,7 +179,8 @@ chat, Responses and proxy paths; §10 added `limit_reset_event`. The usage ledge
 New tables (Alembic migrations), all with `created_at` and `updated_at` epoch columns.
 
 **`provider_account`**
-`id`, `owner_user_id`, `provider` (`codex` | `anthropic_api` | `openai_api` | `openrouter` |
+`id`, `owner_user_id` (empty for a team account: no owner, admins manage it, everyone uses it, all
+of its use is pool use; migration `f7c2a9d4b8e1`), `provider` (`codex` | `anthropic_api` | `openai_api` | `openrouter` |
 `zai` | `claude_sub` in Phase 7), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
 ID: codex-lb's account ID for ChatGPT, or a SHA-256 fingerprint of an API key), `label` (a generated
 name such as `Account #1n9Dk5`; members do not choose labels), `secret` (Fernet-encrypted JSON; for
@@ -371,7 +381,21 @@ imported into codex-lb from their `auth.json` the first time they are used.
 
 **API keys** (Anthropic, OpenAI, OpenRouter, Z.ai): a form with the key and a monthly budget, a
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the
-permanent Phase 5 `credit_grant` can prevent the same key from earning credits twice.
+permanent Phase 5 `credit_grant` can prevent the same key from earning credits twice. The model
+list leaves out what chat cannot use (embeddings, speech, images, moderation, realtime) and older
+generations (OpenAI's GPT-3.5, GPT-4 and completion-only models, its dated copies of listed
+models, and models OpenRouter is retiring).
+
+**Team accounts:** an admin can connect a key or a ChatGPT account as a team account (the "Team
+account" switch). It belongs to no member: everyone uses it, admins manage it, it is shared or
+paused (never private), and all of its use is pool use. Admin connections to a supported
+provider (OpenAI, Anthropic, OpenRouter, Z.ai) with a plain key become team accounts at startup
+and whenever an admin saves the connections (`utils/connection_accounts.py`), so their models
+come from providers through account selection, failover and per-account limits. Local servers,
+Azure, and connections with custom headers or another sign-in stay connections, as does a key a
+member already connected. The adopted connection's model ids keep working: saved model settings,
+presets, access grants and the default, pinned, ordered and task models move to the account ids,
+and a request naming an old id is sent to the new one (`mologate.model_aliases`).
 
 **Claude subscriptions (Phase 7, not Phase 1):**
 
@@ -434,7 +458,8 @@ codex-lb for ChatGPT accounts. There is no reset button: members never redeem a 
 - **Global switch:** `mologate.auto_reset` (env `MOLOGATE_AUTO_RESET`, default on). Any approved
   member turns it off or on for everyone with the **Auto-reset** switch in **Settings → Provider
   accounts** (`GET`/`PUT /api/v1/provider-accounts/auto-reset`); its tooltip shows who changed it
-  last. It is the only reset switch.
+  last. It is the only reset switch. When `MOLOGATE_AUTO_RESET` is set in the environment, it
+  wins at every start; the switch then holds until the next start.
 - **Rules:** a redemption is irreversible and can't be transferred. The refilled window is split
   50/50 like any other once the allowance engine ships.
 
@@ -461,21 +486,30 @@ Each phase lists what must be true to call it done.
 
 ### Phase 0: host on the VPS
 
-**Done: 2026-10-11.** All Phase 0 acceptance checks below are complete.
+**Mostly done: 2026-10-11.** Hosting runs; the final acceptance check is still open (below).
 
 Hosting files and the deployment procedure are in
-[deploy/vps/README.md](../deploy/vps/README.md). Installed and verified on
-2026-10-11: production has HTTPS, a regular team account completed a chat, and a production
-database backup was restored successfully. The full external TCP scan and
-direct confirmation found only ports 22, 80 and 443 reachable. Self-registration has since been
-disabled in code (`41ae16a`, not deployed yet), so admins create every member account.
+[deploy/vps/README.md](../deploy/vps/README.md). Installed on 2026-10-11 with HTTPS, and a
+production database backup was restored successfully. Evidence, re-checked on 2026-10-12:
+
+- Branch code (local test against a stand-in provider): only the first account on an empty install
+  can sign up; later sign-ups are refused (403) whatever the admin setting or `ENABLE_SIGNUP`
+  says; an admin-created member signs in and chats, streaming and not, in the API and the browser.
+- Production (`ai.arbuz.lol`, still on `05a3311`): HTTPS with a valid certificate, HTTP and the old
+  sslip.io name redirect to it. It still offers sign-up (`enable_signup: true`) until `41ae16a` or
+  later is deployed.
+- Not verified: the 2026-10-11 chat on production was a throwaway test user, not a team member,
+  and the port check needs a scan from outside (`nmap -Pn -p- 5.83.140.221`) plus `ufw status` on
+  the VPS; Codex's earlier TCP scan reported only 22, 80 and 443.
 
 - [x] The VPS runs Mologate behind HTTPS (details in [§13](#13-hosting)): `main` for Phase 0,
       the Phase 1 image since.
 - [x] Team onboarding: admins create every account; members cannot register themselves.
+      Verified for the branch code; production needs `41ae16a` or later deployed.
 - Nightly backups were part of Phase 0 and have been removed for the development period. They
   come back, kept off the VPS, before the team relies on the data.
-- [x] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
+- [ ] Done when: the team can log in and chat, and nothing but 22, 80 and 443 is reachable.
+      Open: a team member signing in and chatting on production, and an external port scan.
 
 ### Phase 1: accounts
 
@@ -495,6 +529,8 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
       `codex app-server`, now through codex-lb.
 - [x] API-key accounts (Anthropic, OpenAI, OpenRouter, Z.ai) with verification.
 - [x] Models come from providers, not connection indices; the gate chooses the account per request.
+      Admin connections to a supported provider become team accounts (§9); local, Azure and
+      custom connections stay connections.
 - [x] Provider limits rekeyed by account ID; `/responses` and the proxy record them too.
 - [x] Z.ai spike: coding-plan quota endpoint reports 5-hour and weekly `CREDIT_LIMIT` windows;
       the model-list response has no rate-limit headers. Empty/unknown quota stays unknown.
@@ -543,7 +579,10 @@ completion requirement; an isolated authentication/protocol spike can follow Pha
 
 ### Phase 7: Claude subscription runners
 
-**Planned, not implemented.** Full English specification: [Claude runners](claude-runners.md).
+**Deferred and disabled (2026-10-12).** Claude subscriptions are not part of the pool and nothing
+is built. The specification below and in [Claude runners](claude-runners.md) is Codex's
+proposal; the owner reviews it before any of it is decided.
+Earlier plan: [Claude runners](claude-runners.md).
 One account gets one isolated runner container and persistent private volume. Ship with the
 integration disabled by default. Infrastructure/authentication work can follow Phase 1;
 the complete feature depends on Phases 2–5 for metering, selection, enforcement and credits.
@@ -601,7 +640,7 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
 - Backups: none while Mologate is in development. Add them later, kept off the box.
-- **Phase 7, planned:** add a separate runner-manager and private account volumes.
+- **Phase 7, deferred (proposal):** add a separate runner-manager and private account volumes.
   Only that service receives `docker.sock`; neither the app nor runners receive it. Manager and
   runner ports stay unpublished. Start with one live runner on this shared VPS and permit at
   most two host-wide after memory/CPU tests. See [deployment requirements](../deploy/vps/README.md#phase-7-claude-runners-planned).
@@ -620,13 +659,15 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: idle owner loan: no owner use for 24 hours lends up to 25 points.
 - 2026-10-11: hosting on the VPS from the start: https://5-83-140-221.sslip.io, compose stack in
   `/opt/mologate`; GLM coding plan connected and Exa web search on.
-- 2026-10-11: keep Anthropic API-key accounts in Phase 1; schedule Claude Pro/Max containers as
-  Phase 7, with an early authentication/identity spike allowed after Phase 1. The team requests
-  opt-in subscription pooling and accepts the provider-terms risk described in §3. No claim that
-  an unmodified binary, isolation or pacing makes pooling provider-approved.
-- 2026-10-11: Claude Pro is the 1x base paid tier; Max has 5x and 20x variants. Credits require a
-  verified stable identity and a permanent grant record. The proposed token relay handles a
-  credential transiently; only the runner volume persists it. Phase 7 stays disabled by default.
+- 2026-10-11 (written by Codex, not reviewed by the owner): keep Anthropic API-key accounts in
+  Phase 1; schedule Claude Pro/Max containers as Phase 7, with an early authentication/identity
+  spike allowed after Phase 1. The team requests opt-in subscription pooling and accepts the
+  provider-terms risk described in §3. No claim that an unmodified binary, isolation or pacing
+  makes pooling provider-approved.
+- 2026-10-11 (written by Codex, not reviewed by the owner): Claude Pro is the 1x base paid tier;
+  Max has 5x and 20x variants. Credits require a verified stable identity and a permanent grant
+  record. The proposed token relay handles a credential transiently; only the runner volume
+  persists it. Phase 7 stays disabled by default.
 - 2026-10-11: remove backups for the development period; add them back later, off the VPS.
 - 2026-10-11: no self-registration: admins create every member account. ChatGPT accounts can
   also connect with a sign-in link whose callback address the member pastes back, since a code
@@ -638,6 +679,15 @@ Phase 6 is not required for the interactive-chat MVP; personal API keys cannot u
 - 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
   account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
   for the team.
+- 2026-10-12: Claude subscriptions are deferred and disabled. Codex's Phase 7 plan (chat only,
+  no tools, background work and personal keys excluded, traffic caps, a Claude credits row,
+  backups before credentials) is a proposal for later review, not a decision.
+- 2026-10-12: observe mode never interrupts work; only very critical harm is stopped in any mode
+  (no sign-in, someone else's private account, load that would take the server down).
+- 2026-10-12: team accounts: an admin's key or ChatGPT account can belong to no member and serve
+  everyone. Admin connections to a supported provider become team accounts; others stay
+  connections. Any approved member can connect an account. Admins can correct a Z.ai coding plan.
+  Deployment switches set in the environment win at every start.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

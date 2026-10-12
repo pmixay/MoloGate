@@ -18,8 +18,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
     every limit window the provider reports with percent used and reset time, who can use it, and
     an API key's monthly budget. A shared account's 5-hour and weekly windows are split into the
     owner's half and the team's half, each with its own bar, estimated from who sent the requests
-    between readings (not enforced yet). Missing: how much of the budget is left, and exact
-    per-member numbers, which need the usage ledger.
+    between readings (not enforced yet). Admins can add team accounts that belong to no member,
+    and admin connections to a supported provider become such accounts. Missing: how much of the
+    budget is left, and exact per-member numbers, which need the usage ledger.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
   - Started: each provider account keeps the limits its provider reports and shows them on its card
