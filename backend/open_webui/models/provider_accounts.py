@@ -20,7 +20,8 @@ class ProviderAccount(Base):
     __tablename__ = 'provider_account'
 
     id = Column(Text, primary_key=True)
-    owner_user_id = Column(Text, nullable=False)
+    # Mologate: no owner means a team account, which serves everyone and admins manage.
+    owner_user_id = Column(Text, nullable=True)
     provider = Column(String(32), nullable=False)
     plan = Column(Text, nullable=False)
     external_account_id = Column(Text, nullable=False)
@@ -79,7 +80,7 @@ class AccountView(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     id: str
-    owner_user_id: str
+    owner_user_id: str | None
     provider: Provider
     plan: str
     label: str

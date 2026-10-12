@@ -40,9 +40,11 @@ from open_webui.routers import openai, provider_accounts as routes
 from open_webui.utils import codex_accounts, codex_lb, provider_account_proxy as proxy
 from open_webui.utils.codex_lb import CodexLBError
 from open_webui.utils.provider_accounts import (
+    TEAM,
     account_models,
     can_manage,
     catalog_model,
+    key_fingerprint,
     can_use,
     choose_account,
     select_account,
@@ -368,6 +370,14 @@ class FakeCodexLB:
 
 
 class PermissionTests(unittest.TestCase):
+    def test_team_accounts_serve_everyone_and_only_admins_manage_them(self):
+        team = account(owner_user_id=None, sharing='shared')
+        self.assertTrue(can_use(team, OWNER))
+        self.assertTrue(can_use(team, OTHER))
+        self.assertFalse(can_manage(team, OWNER))
+        self.assertTrue(can_manage(team, ADMIN))
+        self.assertFalse(can_use(account(owner_user_id=None, sharing='paused'), ADMIN))
+
     def test_private_paused_pending_and_admin_boundaries(self):
         private = account()
         self.assertTrue(can_use(private, OWNER))
@@ -880,6 +890,23 @@ class CodexLBTests(DatabaseCase):
         self.assertTrue(await LimitResetEvents.recent('codex', codex_accounts.RESET_COOLDOWN))
         self.assertFalse(await LimitResetEvents.recent('codex', 0))
 
+    async def test_admin_team_sign_in_creates_an_account_without_owner(self):
+        self.fake.next_account = 'lb-team'
+        identifier = await codex_accounts.start_login(ADMIN, TEAM, method='link')
+        status = await codex_accounts.login_status(identifier, ADMIN)
+        state = parse_qs(urlparse(status['auth_url']).query)['state'][0]
+        done = await codex_accounts.submit_callback(identifier, ADMIN, f'{CALLBACK}?code=fake-code&state={state}')
+        saved = await ProviderAccounts.get(done['account_id'])
+        self.assertEqual((saved.owner_user_id, saved.sharing), (None, 'shared'))
+        self.assertTrue(can_use(saved, OTHER))
+        # All of a team account's use is team use.
+        await proxy.account_completion(self.request(), self.form(), ADMIN)
+        self.fake.accounts['lb-team']['usage']['primaryRemainingPercent'] = 70
+        self.fresh()
+        await codex_accounts.record_summary(None, saved.id, (await codex_lb.list_accounts())['lb-team'])
+        limits = await with_team_use(None, saved.id, await get_provider_limits(None, saved.id))
+        self.assertEqual(limits['windows'][0]['team_percent'], 20)
+
     async def test_link_login_sends_only_code_and_state_of_its_own_flow(self):
         self.fake.next_account = 'lb-link'
         identifier = await codex_accounts.start_login(OWNER, 'shared', method='link')
@@ -1096,6 +1123,34 @@ class RouterTests(unittest.TestCase):
             self.assertNotIn('secret', result.json())
             self.assertNotIn('external_account_id', result.json())
 
+    def test_only_admins_connect_team_accounts_which_stay_shared(self):
+        form = {'provider': 'openrouter', 'api_key': 'test-secret', 'budget': {'amount': 20}, 'team': True}
+        team = account(owner_user_id=None, provider='openrouter', plan='api', sharing='shared')
+        insert = AsyncMock(return_value=team)
+        verified = ({'api_key': 'test-secret', 'base_url': 'https://openrouter.ai/api/v1'}, [{'id': 'model'}])
+        with (
+            patch.object(routes, 'verify_api_key', AsyncMock(return_value=verified)),
+            patch.object(ProviderAccounts, 'insert', insert),
+            patch.object(routes.codex_accounts, 'start_login', AsyncMock()) as start,
+        ):
+            self.assertEqual(self.client.post('/accounts', json=form).status_code, 403)
+            self.assertEqual(self.client.post('/accounts/codex', json={'team': True}).status_code, 403)
+            start.assert_not_awaited()
+            insert.assert_not_awaited()
+            self.app.dependency_overrides[routes.get_verified_user] = lambda: ADMIN
+            self.assertEqual(self.client.post('/accounts', json=form).status_code, 200)
+        self.assertEqual(
+            (insert.await_args.kwargs['owner_user_id'], insert.await_args.kwargs['sharing']), (None, 'shared')
+        )
+        # A team account has no owner to keep it private.
+        with (
+            patch.object(ProviderAccounts, 'get', AsyncMock(return_value=team)),
+            patch.object(ProviderAccounts, 'update', AsyncMock(return_value=team)) as update,
+        ):
+            self.assertEqual(self.client.patch('/accounts/id', json={'sharing': 'private'}).status_code, 400)
+            self.assertEqual(self.client.patch('/accounts/id', json={'sharing': 'paused'}).status_code, 200)
+        update.assert_awaited_once_with('id', {'sharing': 'paused'})
+
     def test_only_an_admin_corrects_a_member_chosen_plan(self):
         zai = account(provider='zai', plan='lite')
         with (
@@ -1285,6 +1340,145 @@ class AccountNameMigrationTests(unittest.TestCase):
             self.assertRegex(label, GENERATED_NAME)
             self.assertEqual(len(label), len('Account #') + 6)
         self.assertEqual(len(set(rows.values())), 3)
+
+
+class ConnectionAdoptionTests(DatabaseCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        from open_webui.models.access_grants import AccessGrant
+        from open_webui.models.models import Model
+
+        self.tables = (Model.__table__, AccessGrant.__table__)
+        async with async_engine.begin() as connection:
+            for table in self.tables:
+                await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
+                await connection.run_sync(table.create)
+
+    async def asyncTearDown(self):
+        async with async_engine.begin() as connection:
+            for table in self.tables:
+                await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
+        await super().asyncTearDown()
+
+    async def test_supported_connections_become_team_accounts_and_old_ids_follow(self):
+        from open_webui.models.models import Model
+        from open_webui.utils import connection_accounts
+
+        stored = {
+            'mologate.limits_mode': 'observe',
+            'openai.enable': True,
+            'openai.api_base_urls': [
+                'https://openrouter.ai/api/v1/',
+                'http://localhost:11434/v1',
+                'https://api.z.ai/api/coding/paas/v4',
+                'https://openrouter.ai/api/v1',
+            ],
+            'openai.api_keys': ['router-key', 'local-key', 'zai-key', 'member-key'],
+            'openai.api_configs': {'0': {'prefix_id': 'or'}, '1': {'tags': ['local']}, '2': {'enable': False}},
+            'task.model.default': 'glm-5.3',
+            'ui.default_models': 'or.vendor/model,local-model',
+            'ui.model_order_list': ['glm-5.3', 'local-model'],
+        }
+        await self.create_account(provider='openrouter', external_account_id=key_fingerprint('member-key'))
+
+        async def verify(provider, key, plan):
+            listed = {
+                'openrouter': [catalog_model('vendor/model', 'Vendor: Model', {'context_length': 1000})],
+                'zai': [catalog_model('glm-5.3', 'GLM-5.3', {})],
+            }
+            return {'api_key': key, 'base_url': 'https://provider.example'}, listed[provider]
+
+        now = int(time.time())
+        async with get_async_db_context() as db:
+            meta = {'capabilities': {'vision': False}}
+            db.add(
+                Model(id='glm-5.3', user_id=ADMIN.id, name='GLM', params={}, meta=meta, created_at=now, updated_at=now)
+            )
+            db.add(
+                Model(
+                    id='team-preset',
+                    user_id=ADMIN.id,
+                    base_model_id='or.vendor/model',
+                    name='Preset',
+                    params={},
+                    meta={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await db.commit()
+        with (
+            patch(
+                'open_webui.models.config.Config.get',
+                AsyncMock(side_effect=lambda key, default=None: stored.get(key, default)),
+            ),
+            patch(
+                'open_webui.models.config.Config.get_many',
+                AsyncMock(side_effect=lambda *keys: {key: stored[key] for key in keys if key in stored}),
+            ),
+            patch('open_webui.models.config.Config.upsert', AsyncMock(side_effect=stored.update)),
+            patch.object(connection_accounts, 'verify_api_key', AsyncMock(side_effect=verify)),
+        ):
+            self.assertEqual(await connection_accounts.adopt_connections(), 2)
+            # Already adopted: nothing more to do.
+            self.assertEqual(await connection_accounts.adopt_connections(), 0)
+            self.assertEqual(
+                await connection_accounts.resolve_model_alias('or.vendor/model'), 'account:openrouter:vendor/model'
+            )
+            self.assertEqual(await connection_accounts.resolve_model_alias('local-model'), 'local-model')
+        team = [item for item in await ProviderAccounts.list() if item.owner_user_id is None]
+        self.assertEqual(
+            sorted((item.provider, item.plan, item.sharing) for item in team),
+            [('openrouter', 'api', 'shared'), ('zai', 'lite', 'paused')],
+        )
+        # The local server, and the key a member already connected, stay connections, renumbered.
+        self.assertEqual(stored['openai.api_base_urls'], ['http://localhost:11434/v1', 'https://openrouter.ai/api/v1'])
+        self.assertEqual(stored['openai.api_keys'], ['local-key', 'member-key'])
+        self.assertEqual(stored['openai.api_configs'], {'0': {'tags': ['local']}})
+        self.assertEqual(stored['task.model.default'], 'account:zai:glm-5.3')
+        self.assertEqual(stored['ui.default_models'], 'account:openrouter:vendor/model,local-model')
+        self.assertEqual(stored['ui.model_order_list'], ['account:zai:glm-5.3', 'local-model'])
+        async with get_async_db_context() as db:
+            self.assertIsNone(await db.get(Model, 'glm-5.3'))
+            self.assertEqual((await db.get(Model, 'account:zai:glm-5.3')).meta, meta)
+            self.assertEqual((await db.get(Model, 'team-preset')).base_model_id, 'account:openrouter:vendor/model')
+
+    async def test_old_model_ids_reach_the_team_account(self):
+        request = SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace(OPENAI_MODELS={})))
+        aliases = {'or.vendor/model': 'account:openrouter:vendor/model'}
+        with (
+            patch(
+                'open_webui.models.config.Config.get',
+                AsyncMock(
+                    side_effect=lambda key, default=None: aliases if key == 'mologate.model_aliases' else default
+                ),
+            ),
+            patch.object(openai, 'account_completion', AsyncMock(return_value={'ok': True})) as route,
+            patch.object(openai.Models, 'get_model_by_id', AsyncMock(return_value=None)),
+        ):
+            payload = {'model': 'or.vendor/model', 'messages': []}
+            self.assertEqual(await openai.generate_chat_completion(request, payload, OWNER), {'ok': True})
+        self.assertEqual(route.await_args.args[1]['model'], 'account:openrouter:vendor/model')
+
+
+class TeamAccountMigrationTests(unittest.TestCase):
+    def test_accounts_may_have_no_owner_and_downgrade_removes_team_accounts(self):
+        migration = importlib.import_module('open_webui.migrations.versions.f7c2a9d4b8e1_team_provider_accounts')
+        self.assertEqual(migration.down_revision, 'e5a3c1f8d2b7')
+        engine = create_engine('sqlite://')
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                'CREATE TABLE provider_account (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL)'
+            )
+            connection.exec_driver_sql("INSERT INTO provider_account VALUES ('member', 'owner')")
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+            connection.exec_driver_sql("INSERT INTO provider_account VALUES ('team', NULL)")
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+            rows = connection.exec_driver_sql('SELECT id FROM provider_account').all()
+        engine.dispose()
+        self.assertEqual(rows, [('member',)])
 
 
 class EnvOverrideTests(unittest.IsolatedAsyncioTestCase):

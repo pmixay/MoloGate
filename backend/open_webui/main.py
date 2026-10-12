@@ -9,6 +9,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from uuid import uuid4
 
 import aiohttp
@@ -342,6 +343,17 @@ https://github.com/open-webui/open-webui
         print(f'Open WebUI v{VERSION} - building the best AI user interface.\nhttps://github.com/open-webui/open-webui')
 
 
+async def adopt_connections_on_start(app):
+    from open_webui.routers.openai import clear_openai_model_cache
+    from open_webui.utils.connection_accounts import adopt_connections
+
+    try:
+        if await adopt_connections():
+            await clear_openai_model_cache(SimpleNamespace(app=app))
+    except Exception:
+        log.exception('Admin connections could not become team accounts; they stay connections.')
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Store reference to main event loop for sync->async calls (e.g., embedding generation)
@@ -367,6 +379,8 @@ async def lifespan(app: FastAPI):
     await import_legacy_config_json()
     await seed_registered_defaults()
     await initialize_runtime_config(app)
+    # Mologate: admin connections to a supported provider become team accounts (needs the network).
+    app.state.connection_adoption = asyncio.create_task(adopt_connections_on_start(app))
     await migrate_legacy_webhook_config()
     await publish_event(app, EVENTS.SYSTEM_STARTUP_STARTED, source='system')
 
@@ -1132,6 +1146,11 @@ async def chat_completion(
     model_id = form_data.get('model', None)
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
+    if model_id not in request.app.state.MODELS and not model_item.get('direct', False):
+        # Mologate: a model of an admin connection that became a team account has a new id.
+        from open_webui.utils.connection_accounts import resolve_model_alias
+
+        model_id = form_data['model'] = await resolve_model_alias(model_id)
 
     metadata = {}
     try:

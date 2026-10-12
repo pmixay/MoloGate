@@ -60,6 +60,8 @@
 	let budget = 20;
 	let plan = 'api';
 	let shareWithTeam = false;
+	// Mologate: an admin's account that belongs to no member and serves the whole team.
+	let teamAccount = false;
 	let login: DeviceLogin | null = null;
 	let loginMethod: 'link' | 'device_code' = 'link';
 	let callbackUrl = '';
@@ -86,6 +88,8 @@
 		plans[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
 	const ownerName = (account: ProviderAccount) =>
 		account.owner_user_id === $user?.id ? 'You' : account.owner_name;
+	// A team account has no owner: no reserve, every use is the team's.
+	const teamOptions = sharingOptions.filter((option) => option.value !== 'private');
 	// Mologate: the same wording as the chat's limits panel ("Weekly limit", "5-hour limit").
 	const limitLabel = (window: LimitWindow) => {
 		if (window.id === 'requests') return 'Requests';
@@ -124,7 +128,8 @@
 	// is the team pool (docs/limits-and-accounts.md, decision 2). Owner use past their half is pool use.
 	const RESERVE = 50;
 	const splitOf = (account: ProviderAccount, window: LimitWindow) => {
-		if (account.sharing !== 'shared' || window.team_percent == null) return null;
+		if (account.sharing !== 'shared' || !account.owner_user_id || window.team_percent == null)
+			return null;
 		const owner = Math.max(0, window.used_percent - window.team_percent);
 		return {
 			reserve: Math.min(owner, RESERVE),
@@ -158,7 +163,7 @@
 			? 'Paused'
 			: account.status !== 'ok'
 				? statusOf(account).text
-				: account.sharing === 'shared'
+				: account.sharing === 'shared' && account.owner_user_id
 					? 'Team'
 					: '';
 	const couponTitle = (account: ProviderAccount) => {
@@ -251,7 +256,11 @@
 		const sharing: Sharing = shareWithTeam ? 'shared' : 'private';
 		try {
 			if (provider === 'codex') {
-				login = await request<DeviceLogin>('/codex', 'POST', { sharing, method: loginMethod });
+				login = await request<DeviceLogin>('/codex', 'POST', {
+					sharing,
+					method: loginMethod,
+					team: teamAccount
+				});
 				localStorage.setItem(`mologate-device-login:${$user?.id}`, login.id);
 			} else {
 				await request('', 'POST', {
@@ -259,6 +268,7 @@
 					api_key: apiKey,
 					plan: provider === 'zai' ? plan : 'api',
 					sharing,
+					team: teamAccount,
 					budget: provider === 'zai' && plan !== 'api' ? null : { amount: budget, currency: 'USD' }
 				});
 				apiKey = '';
@@ -475,10 +485,23 @@
 				{/if}
 
 				<div class="flex items-center justify-between gap-3">
-					<label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-						<Switch bind:state={shareWithTeam} ariaLabel="Share with the team" />
-						Share with the team
-					</label>
+					<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+						{#if $user?.role === 'admin'}
+							<label
+								class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400"
+								title="Belongs to no member: everyone uses it, admins manage it"
+							>
+								<Switch bind:state={teamAccount} ariaLabel="Team account" />
+								Team account
+							</label>
+						{/if}
+						{#if !teamAccount}
+							<label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+								<Switch bind:state={shareWithTeam} ariaLabel="Share with the team" />
+								Share with the team
+							</label>
+						{/if}
+					</div>
 					<div class="flex items-center gap-2">
 						<button
 							type="button"
@@ -717,7 +740,7 @@
 													on:change={(event) =>
 														change(account, { sharing: event.currentTarget.value })}
 												>
-													{#each sharingOptions as option}
+													{#each account.owner_user_id ? sharingOptions : teamOptions as option}
 														<option value={option.value}>{option.label}</option>
 													{/each}
 												</select>

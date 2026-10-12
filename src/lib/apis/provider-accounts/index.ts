@@ -3,7 +3,8 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 export type Sharing = 'private' | 'shared' | 'paused';
 export type ProviderAccount = {
 	id: string;
-	owner_user_id: string;
+	// Mologate: null for a team account, which belongs to no member.
+	owner_user_id: string | null;
 	owner_name: string;
 	provider: string;
 	plan: string;

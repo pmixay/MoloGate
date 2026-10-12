@@ -84,8 +84,17 @@ async def require_accounts_enabled():
         raise HTTPException(503, 'Provider accounts are disabled.')
 
 
+# Mologate: how a team account (no owner) is asked for when connecting a ChatGPT account.
+TEAM = 'team'
+
+
+def is_team_account(account) -> bool:
+    return account.owner_user_id is None
+
+
 def can_manage(account, user):
-    return user.role == 'admin' or account.owner_user_id == user.id
+    # Only admins manage a team account; it has no owner.
+    return user.role == 'admin' or (account.owner_user_id is not None and account.owner_user_id == user.id)
 
 
 def can_use(account, user):

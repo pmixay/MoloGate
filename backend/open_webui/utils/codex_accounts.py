@@ -32,6 +32,7 @@ from open_webui.models.provider_accounts import (
 )
 from open_webui.utils import codex_lb
 from open_webui.utils.codex_lb import CodexLBError
+from open_webui.utils.provider_accounts import TEAM
 from open_webui.utils.provider_limits import record_provider_snapshot
 
 log = logging.getLogger(__name__)
@@ -398,8 +399,11 @@ async def _finalize(attempt, redis=None):
         return
     lb_id = found[0]
     summary = accounts[lb_id]
+    # A team sign-in (an admin's) creates an account that belongs to no member and serves everyone.
+    team = attempt.sharing == TEAM
+    owner = None if team else attempt.owner_user_id
     if existing := mapped.get(lb_id):
-        if existing.owner_user_id != attempt.owner_user_id:
+        if existing.owner_user_id != owner:
             await _finish(attempt.id, 'error', ALREADY_CONNECTED)
             return
         values = {'status': 'ok', 'last_error': None}
@@ -421,12 +425,12 @@ async def _finalize(attempt, redis=None):
         raise
     try:
         account = await ProviderAccounts.insert(
-            owner_user_id=attempt.owner_user_id,
+            owner_user_id=owner,
             provider='codex',
             plan=summary.get('planType') or 'unknown',
             external_account_id=lb_id,
             label=attempt.label,
-            sharing=attempt.sharing,
+            sharing='shared' if team else attempt.sharing,
             capacity_weight=1,
             budget=None,
             status='ok',

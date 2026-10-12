@@ -24,6 +24,7 @@ from open_webui.models.users import Users
 from open_webui.utils import codex_accounts
 from open_webui.utils.auth import get_verified_user
 from open_webui.utils.provider_accounts import (
+    TEAM,
     auto_reset_enabled,
     can_manage,
     key_fingerprint,
@@ -68,6 +69,8 @@ class ApiAccountForm(BaseModel):
     plan: Literal['api', 'lite', 'pro', 'max'] = 'api'
     sharing: Sharing = 'private'
     budget: Budget | None = None
+    # Mologate: an admin's key that belongs to no member and serves the whole team.
+    team: bool = False
 
 
 class CodexAccountForm(BaseModel):
@@ -75,6 +78,7 @@ class CodexAccountForm(BaseModel):
     sharing: Sharing = 'private'
     # A code on OpenAI's device page, or OpenAI's sign-in link with the callback address pasted back.
     method: Literal['device_code', 'link'] = 'device_code'
+    team: bool = False
 
 
 class CodexCallbackForm(BaseModel):
@@ -102,6 +106,11 @@ async def owned_account(account_id, user):
     if not account or not can_manage(account, user):
         raise HTTPException(404, 'Account not found.')
     return account
+
+
+def require_team_admin(team: bool, user):
+    if team and user.role != 'admin':
+        raise HTTPException(403, 'Only an admin can connect a team account.')
 
 
 async def check_rate(request, user):
@@ -147,12 +156,12 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
     await asyncio.gather(*(refresh_zai_limits(account, redis, max_age=ZAI_REFRESH_SECONDS) for account in visible))
     for account in visible:
         managed = can_manage(account, user)
-        owner = await Users.get_user_by_id(account.owner_user_id)
+        owner = await Users.get_user_by_id(account.owner_user_id) if account.owner_user_id else None
         # Each window also says how much of it the rest of the team used (the owner used the rest).
         limits = await with_team_use(redis, account.id, await get_provider_limits(redis, account.id))
         item = AccountView.model_validate(account).model_dump()
         item.update(
-            owner_name=owner.name if owner else 'Former member',
+            owner_name='Team' if account.owner_user_id is None else owner.name if owner else 'Former member',
             can_manage=managed,
             limits=limits,
             last_auto_reset_at=last_resets.get(account.id),
@@ -164,6 +173,7 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
 @router.post('', response_model=AccountView)
 async def create_api_account(request: Request, form: ApiAccountForm, user=Depends(get_verified_user)):
     await check_rate(request, user)
+    require_team_admin(form.team, user)
     if form.provider != 'zai' and form.plan != 'api':
         raise HTTPException(400, 'Select the API plan for this provider.')
     if form.plan == 'api' and form.budget is None:
@@ -172,11 +182,11 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
     secret, models = await verify_api_key(form.provider, key, form.plan)
     try:
         account = await ProviderAccounts.insert(
-            owner_user_id=user.id,
+            owner_user_id=None if form.team else user.id,
             provider=form.provider,
             plan=form.plan,
             external_account_id=key_fingerprint(key),
-            sharing=form.sharing,
+            sharing='shared' if form.team else form.sharing,
             capacity_weight=1,
             budget=form.budget.model_dump() if form.budget else None,
             status='ok',
@@ -192,8 +202,9 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
 @router.post('/codex')
 async def connect_codex(request: Request, form: CodexAccountForm, user=Depends(get_verified_user)):
     await check_rate(request, user)
+    require_team_admin(form.team, user)
     redis = getattr(request.app.state, 'redis', None)
-    identifier = await codex_accounts.start_login(user, form.sharing, redis, form.method)
+    identifier = await codex_accounts.start_login(user, TEAM if form.team else form.sharing, redis, form.method)
     return await codex_accounts.login_status(identifier, user, redis)
 
 
@@ -224,6 +235,9 @@ async def update_account(account_id: str, form: AccountUpdateForm, user=Depends(
         raise HTTPException(400, 'Account settings cannot be empty.')
     if account.plan == 'api' and 'budget' in values and values['budget'] is None:
         raise HTTPException(400, 'API-key accounts need a monthly budget.')
+    # A team account has no owner to keep it private.
+    if account.owner_user_id is None and values.get('sharing') == 'private':
+        raise HTTPException(400, 'A team account is shared with everyone or paused.')
     if 'plan' in values:
         if user.role != 'admin':
             raise HTTPException(403, 'Only an admin can correct a plan.')

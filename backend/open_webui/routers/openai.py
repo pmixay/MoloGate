@@ -577,6 +577,12 @@ async def update_config(request: Request, form_data: OpenAIConfigForm, user=Depe
             'openai.api_configs': api_configs,
         }
     )
+    base_urls = form_data.OPENAI_API_BASE_URLS
+    # Mologate: a connection to a supported provider becomes a team account in Provider accounts.
+    from open_webui.utils.connection_accounts import adopt_connections
+
+    if await adopt_connections():
+        _, base_urls, api_keys, api_configs = await get_openai_runtime_config()
 
     await clear_openai_model_cache(request)
 
@@ -595,7 +601,7 @@ async def update_config(request: Request, form_data: OpenAIConfigForm, user=Depe
 
     return {
         'ENABLE_OPENAI_API': form_data.ENABLE_OPENAI_API,
-        'OPENAI_API_BASE_URLS': form_data.OPENAI_API_BASE_URLS,
+        'OPENAI_API_BASE_URLS': base_urls,
         'OPENAI_API_KEYS': api_keys,
         'OPENAI_API_CONFIGS': api_configs,
     }
@@ -1521,6 +1527,13 @@ async def generate_chat_completion(
 
     model_id = form_data.get('model')
     model_info = await Models.get_model_by_id(model_id)
+    if model_info is None and model_id not in (getattr(request.app.state, 'OPENAI_MODELS', None) or {}):
+        # Mologate: an adopted connection's model ids now name team account models.
+        from open_webui.utils.connection_accounts import resolve_model_alias
+
+        if (resolved := await resolve_model_alias(model_id)) != model_id:
+            model_id = payload['model'] = resolved
+            model_info = await Models.get_model_by_id(model_id)
 
     # Check model info and override the payload
     if model_info:
@@ -1528,7 +1541,9 @@ async def generate_chat_completion(
             base_model_id = (
                 request.base_model_id if hasattr(request, 'base_model_id') else model_info.base_model_id
             )  # Use request's base_model_id if available
-            payload['model'] = base_model_id
+            from open_webui.utils.connection_accounts import resolve_model_alias
+
+            payload['model'] = base_model_id = await resolve_model_alias(base_model_id)
             model_id = base_model_id
 
         params = model_info.params.model_dump()
