@@ -121,6 +121,8 @@ ADMIN_CONFIG_KEYS = {
     'FOLDER_MAX_FILE_COUNT': 'folders.max_file_count',
     'AUTOMATION_MAX_COUNT': 'automations.max_count',
     'AUTOMATION_MIN_INTERVAL': 'automations.min_interval',
+    # Mologate: chats one member can have generating at once (utils/chat_slots.py).
+    'MAX_CONCURRENT_CHATS': 'mologate.max_concurrent_chats',
     'ENABLE_AUTOMATIONS': 'automations.enable',
     'ENABLE_CHANNELS': 'channels.enable',
     'CHANNEL_MODEL_RESPONSE_MODE': 'channels.model_response_mode',
@@ -1226,6 +1228,7 @@ class AdminConfig(BaseModel):
     FOLDER_MAX_FILE_COUNT: int | str | None = None
     AUTOMATION_MAX_COUNT: int | str | None = None
     AUTOMATION_MIN_INTERVAL: int | str | None = None
+    MAX_CONCURRENT_CHATS: int | None = None
     ENABLE_AUTOMATIONS: bool
     ENABLE_CHANNELS: bool
     CHANNEL_MODEL_RESPONSE_MODE: str = 'thread'
@@ -1279,6 +1282,12 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     updates['automations.min_interval'] = (
         int(form_data.AUTOMATION_MIN_INTERVAL) if form_data.AUTOMATION_MIN_INTERVAL else ''
     )
+
+    # Mologate: up to the hard cap of 10; left out, the stored value stays.
+    if form_data.MAX_CONCURRENT_CHATS is None:
+        updates.pop('mologate.max_concurrent_chats', None)
+    else:
+        updates['mologate.max_concurrent_chats'] = max(1, min(10, form_data.MAX_CONCURRENT_CHATS))
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:
         updates.pop('ui.default_user_role', None)

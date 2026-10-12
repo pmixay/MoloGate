@@ -5,6 +5,8 @@
 	import Search from '$lib/components/icons/Search.svelte';
 	import { t } from 'i18next';
 
+	// Mologate: typed, so the status fields below type-check (a bare null made them all `never`).
+	/** @type {Record<string, any> | null} */
 	export let status = null;
 	export let done = false;
 </script>
@@ -120,6 +122,27 @@
 							count: status.count
 						})}
 					{/if}
+				</div>
+			</div>
+		{:else if status?.action === 'queue' && status?.place !== undefined}
+			<!-- Mologate: waiting for one of the member's chats to finish (utils/chat_slots.py). -->
+			<div class="flex flex-col justify-center -space-y-0.5">
+				<div
+					class="{(done || status?.done) === false
+						? 'shimmer'
+						: ''} text-gray-500 dark:text-gray-500 text-[13px] leading-[18px] line-clamp-1 text-wrap"
+				>
+					{status.place === 0
+						? $i18n.t(
+								'Waiting: {{COUNT}} of your chats are already generating. This one is next.',
+								{
+									COUNT: status.active
+								}
+							)
+						: $i18n.t(
+								'Waiting: {{COUNT}} of your chats are already generating. {{AHEAD}} ahead of this one.',
+								{ COUNT: status.active, AHEAD: status.place }
+							)}
 				</div>
 			</div>
 		{:else}

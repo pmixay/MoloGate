@@ -359,6 +359,23 @@
 				>
 					<Switch bind:state={adminConfig.ENABLE_AUTOMATIONS} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
+				<!-- Mologate: the per-member cap on chats generating at once (utils/chat_slots.py). -->
+				<AdminSettingField
+					label={$i18n.t('Chats generating at once, per member')}
+					description={$i18n.t(
+						'Up to 10. Past it, a member’s next chat waits in line until one of theirs finishes. Sub-agents, background tasks and automations don’t count. Applies when limits are enforced.'
+					)}
+				>
+					<input
+						class={inputClass}
+						type="number"
+						min="1"
+						max="10"
+						step="1"
+						placeholder="3"
+						bind:value={adminConfig.MAX_CONCURRENT_CHATS}
+					/>
+				</AdminSettingField>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.userWebhooks.label')}
 					description={$i18n.t('settings.admin.general.userWebhooks.description')}

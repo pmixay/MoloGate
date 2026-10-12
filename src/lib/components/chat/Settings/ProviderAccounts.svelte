@@ -16,8 +16,16 @@
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
-
-	type LimitWindow = NonNullable<ProviderAccount['limits']>['windows'][number];
+	// Mologate: the same wording as the chat's limits panel ("Weekly limit", "Monthly budget").
+	import {
+		amountText,
+		formatCount,
+		formatDollars,
+		limitLabel,
+		mainWindows,
+		shortLabel,
+		type LimitWindow
+	} from '$lib/utils/providerLimits';
 
 	const providers: Record<string, string> = {
 		codex: 'ChatGPT',
@@ -90,24 +98,6 @@
 		account.owner_user_id === $user?.id ? 'You' : account.owner_name;
 	// A team account has no owner: no reserve, every use is the team's.
 	const teamOptions = sharingOptions.filter((option) => option.value !== 'private');
-	// Mologate: the same wording as the chat's limits panel ("Weekly limit", "5-hour limit").
-	const limitLabel = (window: LimitWindow) => {
-		if (window.id === 'requests') return 'Requests';
-		if (window.id === 'tokens' || window.id.endsWith('-tokens')) return 'Tokens';
-		const minutes = window.window_minutes;
-		if (minutes === 10080) return 'Weekly limit';
-		if (minutes && minutes % 1440 === 0) return `${minutes / 1440}-day limit`;
-		if (minutes && minutes % 60 === 0) return `${minutes / 60}-hour limit`;
-		if (minutes) return `${minutes}-minute limit`;
-		return window.id === 'primary' ? 'Short-term limit' : 'Long-term limit';
-	};
-	const shortLabel = (window: LimitWindow) => {
-		const minutes = window.window_minutes;
-		if (minutes === 10080) return 'Week';
-		if (minutes && minutes % 1440 === 0) return `${minutes / 1440}d`;
-		if (minutes && minutes % 60 === 0) return `${minutes / 60}h`;
-		return limitLabel(window);
-	};
 	const resetText = (resetsAt?: number) => {
 		if (!resetsAt) return '';
 		const seconds = resetsAt - Date.now() / 1000;
@@ -693,7 +683,9 @@
 													<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
 														<span>{limitLabel(window)}</span>
 														<span
-															>{Math.round(window.used_percent)}% used{window.resets_at
+															>{window.unit === 'usd'
+																? amountText(window)
+																: `${Math.round(window.used_percent)}% used`}{window.resets_at
 																? ` · ${resetText(window.resets_at)}`
 																: ''}</span
 														>
@@ -710,6 +702,13 @@
 															</div>
 														{/each}
 													</div>
+													{#if window.source === 'ledger'}
+														<p class="mt-0.5 text-[0.625rem] text-gray-500">
+															Estimated from token counts and published prices{window.unpriced
+																? `; ${window.unpriced} ${window.unpriced === 1 ? 'request' : 'requests'} without a published price not counted`
+																: ''}.
+														</p>
+													{/if}
 													{#if split}
 														<div
 															class="mt-0.5 flex justify-between gap-2 text-[0.625rem] text-gray-500"
@@ -727,6 +726,32 @@
 										</div>
 									{:else if !account.last_error}
 										<p class="text-gray-500">No limits reported yet.</p>
+									{/if}
+
+									{#if account.usage?.members.length}
+										<!-- Mologate: each member's use, counted in the usage ledger. -->
+										<div>
+											<div class="mb-1 text-gray-600 dark:text-gray-400">
+												{account.usage.period === 'month' ? 'Use this month' : 'Use this week'}
+											</div>
+											<ul class="space-y-0.5 text-[0.6875rem] text-gray-500">
+												{#each account.usage.members as member (member.user_id)}
+													<li class="flex justify-between gap-2">
+														<span class="truncate"
+															>{member.user_id === $user?.id ? 'You' : member.name}</span
+														>
+														<span class="shrink-0 font-mono"
+															>{member.requests}
+															{member.requests === 1 ? 'request' : 'requests'} · {formatCount(
+																member.input_tokens + member.output_tokens
+															)} tokens{member.cost !== null
+																? ` · ${formatDollars(member.cost)}`
+																: ''}</span
+														>
+													</li>
+												{/each}
+											</ul>
+										</div>
 									{/if}
 
 									{#if account.can_manage}

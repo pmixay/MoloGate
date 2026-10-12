@@ -74,6 +74,7 @@
 	import ModelSelector from './ModelSelector.svelte';
 	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
 	import ContextIndicator from './ContextIndicator.svelte';
+	import LimitsIndicator from './LimitsIndicator.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -2303,6 +2304,9 @@
 								</div>
 
 								<div class="self-end flex items-center gap-1 mr-0.5 min-w-0 min-h-11">
+									<!-- Mologate: the selected model's 5-hour and weekly limits, next to the model selector. -->
+									<LimitsIndicator selectedModels={selectedModelIds} {history} />
+
 									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[14rem]">
 										<ModelSelector
 											bind:this={modelSelector}

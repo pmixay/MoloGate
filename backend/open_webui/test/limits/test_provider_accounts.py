@@ -36,8 +36,9 @@ from open_webui.models.provider_accounts import (
     open_secret,
     seal_secret,
 )
+from open_webui.models.usage_events import UsageEvent
 from open_webui.routers import openai, provider_accounts as routes
-from open_webui.utils import codex_accounts, codex_lb, provider_account_proxy as proxy
+from open_webui.utils import codex_accounts, codex_lb, provider_account_proxy as proxy, usage_ledger
 from open_webui.utils.codex_lb import CodexLBError
 from open_webui.utils.provider_accounts import (
     TEAM,
@@ -69,6 +70,7 @@ OTHER = SimpleNamespace(id='other', role='user', name='Other')
 ADMIN = SimpleNamespace(id='admin', role='admin', name='Admin')
 GENERATED_NAME = re.compile(r'Account #[0-9A-Za-z]{6}')
 CALLBACK = 'http://localhost:1455/auth/callback'
+TABLES = (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__, UsageEvent.__table__)
 
 
 def account(**overrides):
@@ -517,7 +519,7 @@ class DatabaseCase(unittest.IsolatedAsyncioTestCase):
         if 'provider-tests' not in str(async_engine.url):
             raise RuntimeError('Use an isolated provider-tests database.')
         async with async_engine.begin() as connection:
-            for table in (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__):
+            for table in TABLES:
                 await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
                 await connection.run_sync(table.create)
         self.config_patch = patch('open_webui.models.config.Config.get', AsyncMock(return_value='observe'))
@@ -526,8 +528,9 @@ class DatabaseCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.config_patch.stop()
         await codex_accounts.shutdown()
+        await usage_ledger.flush()
         async with async_engine.begin() as connection:
-            for table in (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__):
+            for table in TABLES:
                 await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
         await async_engine.dispose()
 
@@ -1608,6 +1611,15 @@ def chat_chunk(finish_reason=None, **delta):
 
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        # These tests use no database; the usage ledger has its own (test_usage_limits.py).
+        self.ledger = patch('open_webui.utils.usage_ledger.UsageEvents.insert', AsyncMock())
+        self.ledger.start()
+
+    async def asyncTearDown(self):
+        await usage_ledger.flush()
+        self.ledger.stop()
+
     async def test_account_model_acl_update_redirects_to_account_sharing(self):
         from open_webui.routers.models import ModelAccessGrantsForm, update_model_access_by_id
 
@@ -1714,9 +1726,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             secret=seal_secret({'api_key': 'zai-test-key', 'base_url': 'https://api.z.ai/api/coding/paas/v4'}),
         )
         with patch('open_webui.utils.provider_accounts.aiohttp.ClientSession', return_value=manager):
-            await provider_accounts.refresh_zai_limits(coding, None, max_age=60)
+            await provider_accounts.refresh_account_limits(coding, None, max_age=60)
             # A reading less than a minute old is kept.
-            await provider_accounts.refresh_zai_limits(coding, None, max_age=60)
+            await provider_accounts.refresh_account_limits(coding, None, max_age=60)
         self.assertEqual(
             seen, [(provider_accounts.ZAI_QUOTA_URL, {'Authorization': 'zai-test-key', 'Accept-Language': 'en-US,en'})]
         )

@@ -210,7 +210,7 @@ from open_webui.tasks import (
     stop_item_tasks,
     stop_task,
 )  # Import from tasks.py
-from open_webui.utils import logger
+from open_webui.utils import chat_slots, logger
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.actions import chat_action as chat_action_handler
@@ -1674,8 +1674,14 @@ async def chat_completion(
         )
 
     async def process_chat(request, form_data, user, metadata, model, tasks=None):
+        # Mologate: a member's chats generating at once are capped; past the cap they wait in line.
+        slot = None
         try:
             ctx = None
+            if chat_slots.counts(metadata):
+                slot = await chat_slots.acquire(
+                    request.app.state.redis, user.id, metadata['chat_id'], chat_slots.queue_notice(metadata)
+                )
             if metadata.get('assistant_message_id'):
                 ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, [])
             form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
@@ -1759,6 +1765,11 @@ async def chat_completion(
                     detail=error_detail,
                 )
         finally:
+            try:
+                await chat_slots.release(request.app.state.redis, slot)
+            except Exception as e:
+                log.debug('Could not free the chat slot: %s', e)
+
             # Clean up MCP clients.  Each client is isolated so one
             # failure doesn't skip the rest.
             #

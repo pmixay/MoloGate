@@ -74,9 +74,10 @@ OPENAI_OLD_MODELS = re.compile(
 # Other providers use date suffixes for newer releases (qwen3-...-2507), so this is OpenAI-only.
 DATED_SNAPSHOT = re.compile(r'^(.+?)-(\d{4}-\d{2}-\d{2}|\d{8}|\d{4})$')
 ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
-ZAI_REFRESH_SECONDS = 60
-_zai_refreshed: dict[str, float] = {}
-_zai_tasks: set = set()
+OPENROUTER_KEY_URL = API_BASES['openrouter'] + '/key'
+LIMITS_REFRESH_SECONDS = 60
+_limits_refreshed: dict[str, float] = {}
+_refresh_tasks: set = set()
 
 
 async def require_accounts_enabled():
@@ -265,37 +266,51 @@ def without_dated_copies(models: list[dict]) -> list[dict]:
     return [model for model in models if not ((match := DATED_SNAPSHOT.match(model['id'])) and match.group(1) in names)]
 
 
-async def refresh_zai_limits(account, redis, max_age: float = 0):
-    """Read a Z.ai coding plan's 5-hour and weekly quota. Best effort: missing quota data never
-    blocks an otherwise valid key. With max_age, a reading that recent is kept."""
-    if account.provider != 'zai' or account.plan == 'api':
+def reports_limits(account) -> bool:
+    """Z.ai coding plans and OpenRouter keys report limits only through their own endpoints."""
+    return (account.provider == 'zai' and account.plan != 'api') or account.provider == 'openrouter'
+
+
+async def refresh_account_limits(account, redis, max_age: float = 0):
+    """Read a Z.ai coding plan's 5-hour and weekly quota, or an OpenRouter key's credit limit and
+    this month's spend. Best effort: missing data never blocks an otherwise valid key, and unknown
+    quota is never zero usage. With max_age, a reading that recent is kept."""
+    if not reports_limits(account):
         return
     now = time.monotonic()
-    if max_age and now - _zai_refreshed.get(account.id, -math.inf) < max_age:
+    if max_age and now - _limits_refreshed.get(account.id, -math.inf) < max_age:
         return
-    _zai_refreshed[account.id] = now
-    from open_webui.utils.provider_limits import parse_zai_quota, record_provider_snapshot
+    _limits_refreshed[account.id] = now
+    from open_webui.utils.provider_limits import parse_openrouter_key, parse_zai_quota, record_provider_snapshot
 
+    key = (open_secret(account.secret) or {}).get('api_key')
+    if not key:
+        return
+    if account.provider == 'openrouter':
+        url, headers = OPENROUTER_KEY_URL, {'Authorization': f'Bearer {key}'}
+    else:
+        # Z.ai's monitor endpoints take the key itself, without "Bearer" (as its own usage plugin sends it).
+        url, headers = ZAI_QUOTA_URL, {'Authorization': key, 'Accept-Language': 'en-US,en'}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.get(
-                ZAI_QUOTA_URL,
-                # Z.ai's monitor endpoints take the key itself, without "Bearer" (as its own usage plugin sends it).
-                headers={'Authorization': open_secret(account.secret)['api_key'], 'Accept-Language': 'en-US,en'},
-                allow_redirects=False,
-            ) as response:
-                if response.status == 200:
-                    windows = parse_zai_quota(await response.json())
-                    if windows:
-                        await record_provider_snapshot(redis, account.id, windows)
+            async with session.get(url, headers=headers, allow_redirects=False) as response:
+                if response.status != 200:
+                    return
+                result = await response.json()
+        if account.provider == 'openrouter':
+            windows = parse_openrouter_key(result.get('data') or {}, account.budget)
+            if windows:
+                await record_provider_snapshot(redis, account.id, windows, source='key')
+        elif windows := parse_zai_quota(result):
+            await record_provider_snapshot(redis, account.id, windows)
     except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, AttributeError):
         pass
 
 
-def refresh_zai_limits_soon(account, redis):
-    """Z.ai answers carry no limit headers: read the quota again in the background after use."""
-    if account.provider != 'zai' or account.plan == 'api':
+def refresh_limits_soon(account, redis):
+    """Their answers carry no such limits: read them again in the background after use."""
+    if not reports_limits(account):
         return
-    task = asyncio.create_task(refresh_zai_limits(account, redis, max_age=ZAI_REFRESH_SECONDS))
-    _zai_tasks.add(task)
-    task.add_done_callback(_zai_tasks.discard)
+    task = asyncio.create_task(refresh_account_limits(account, redis, max_age=LIMITS_REFRESH_SECONDS))
+    _refresh_tasks.add(task)
+    task.add_done_callback(_refresh_tasks.discard)

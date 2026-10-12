@@ -1564,7 +1564,7 @@ async def generate_chat_completion(
 
     # Mologate: dedicated accounts do not depend on the legacy OpenAI connection toggle.
     if str(model_id).startswith('account:'):
-        return await account_completion(request, payload, user)
+        return await account_completion(request, payload, user, metadata=metadata)
     if not await Config.get('openai.enable'):
         raise HTTPException(status_code=503, detail='OpenAI API is disabled')
 

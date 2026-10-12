@@ -31,8 +31,9 @@ from open_webui.utils.provider_accounts import (
     require_accounts_enabled,
     verify_api_key,
 )
-from open_webui.utils.provider_accounts import ZAI_REFRESH_SECONDS, refresh_zai_limits
-from open_webui.utils.provider_limits import get_provider_limits, with_team_use
+from open_webui.utils.provider_accounts import LIMITS_REFRESH_SECONDS, refresh_account_limits
+from open_webui.models.usage_events import UsageEvents
+from open_webui.utils.provider_limits import budget_window, get_provider_limits, period_start, with_team_use
 from open_webui.utils.rate_limit import RateLimiter
 
 
@@ -152,22 +153,62 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
     visible = [
         account for account in await ProviderAccounts.list() if can_manage(account, user) or account.sharing == 'shared'
     ]
-    # Z.ai answers carry no limit headers; read coding-plan quotas again when a minute old.
-    await asyncio.gather(*(refresh_zai_limits(account, redis, max_age=ZAI_REFRESH_SECONDS) for account in visible))
+    # Z.ai coding-plan quotas and OpenRouter key limits are not in answer headers; read them when a minute old.
+    await asyncio.gather(
+        *(refresh_account_limits(account, redis, max_age=LIMITS_REFRESH_SECONDS) for account in visible)
+    )
+    names = {}
     for account in visible:
         managed = can_manage(account, user)
         owner = await Users.get_user_by_id(account.owner_user_id) if account.owner_user_id else None
         # Each window also says how much of it the rest of the team used (the owner used the rest).
         limits = await with_team_use(redis, account.id, await get_provider_limits(redis, account.id))
+        usage = await member_usage(account, limits, names)
         item = AccountView.model_validate(account).model_dump()
         item.update(
             owner_name='Team' if account.owner_user_id is None else owner.name if owner else 'Former member',
             can_manage=managed,
-            limits=limits,
+            limits=with_ledger_budget(account, limits, usage),
+            usage=usage,
             last_auto_reset_at=last_resets.get(account.id),
         )
         result.append(item)
     return {'data': result}
+
+
+async def member_usage(account, limits: dict | None, names: dict) -> dict:
+    """Each member's requests, tokens and cost on the account from the usage ledger: this month for
+    an API key, the current weekly window (or the last 7 days) for a subscription."""
+    now = time.time()
+    if account.plan == 'api':
+        period, since = 'month', period_start('monthly', now)
+    else:
+        weekly = next((window for window in (limits or {}).get('windows', []) if window.get('id') == 'secondary'), {})
+        resets_at, minutes = weekly.get('resets_at'), weekly.get('window_minutes')
+        period, since = 'week', int(now - 7 * 86400)
+        if resets_at and minutes and resets_at - minutes * 60 <= now:
+            since = int(resets_at - minutes * 60)
+    members = await UsageEvents.by_member(account.id, since)
+    for member in members:
+        if member['user_id'] not in names:
+            found = await Users.get_user_by_id(member['user_id'])
+            names[member['user_id']] = found.name if found else 'Former member'
+        member['name'] = names[member['user_id']]
+    members.sort(key=lambda member: -(member['input_tokens'] + member['output_tokens']))
+    return {'period': period, 'since': since, 'members': members}
+
+
+def with_ledger_budget(account, limits: dict | None, usage: dict) -> dict | None:
+    """An API key's monthly budget against this month's spend in the ledger. OpenAI, Anthropic and
+    Z.ai keys cannot read their own spending; OpenRouter's comes from its key (provider_limits)."""
+    amount = (account.budget or {}).get('amount')
+    windows = (limits or {}).get('windows', [])
+    if account.plan != 'api' or not amount or usage['period'] != 'month' or any(w['id'] == 'budget' for w in windows):
+        return limits
+    spent = sum(member['cost'] or 0 for member in usage['members'])
+    window = budget_window(amount, spent, time.time(), 'ledger')
+    window['unpriced'] = sum(member['unpriced'] for member in usage['members'])
+    return {**(limits or {'updated_at': int(time.time())}), 'windows': [*windows, window]}
 
 
 @router.post('', response_model=AccountView)
@@ -195,7 +236,7 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
         )
     except IntegrityError:
         raise HTTPException(409, 'This provider key is already connected.') from None
-    await refresh_zai_limits(account, getattr(request.app.state, 'redis', None))
+    await refresh_account_limits(account, getattr(request.app.state, 'redis', None))
     return account
 
 
@@ -228,7 +269,7 @@ async def cancel_codex_login(identifier: str, user=Depends(get_verified_user)):
 
 
 @router.patch('/{account_id}', response_model=AccountView)
-async def update_account(account_id: str, form: AccountUpdateForm, user=Depends(get_verified_user)):
+async def update_account(account_id: str, form: AccountUpdateForm, request: Request, user=Depends(get_verified_user)):
     account = await owned_account(account_id, user)
     values = form.model_dump(exclude_unset=True)
     if any(value is None for key, value in values.items() if key != 'budget'):
@@ -243,7 +284,11 @@ async def update_account(account_id: str, form: AccountUpdateForm, user=Depends(
             raise HTTPException(403, 'Only an admin can correct a plan.')
         if account.provider != 'zai' or account.plan == 'api':
             raise HTTPException(400, 'This plan comes from the provider and cannot be changed.')
-    return await ProviderAccounts.update(account_id, values)
+    updated = await ProviderAccounts.update(account_id, values)
+    if updated and 'budget' in values:
+        # An OpenRouter key's spend is shown against the new budget straight away.
+        await refresh_account_limits(updated, getattr(request.app.state, 'redis', None))
+    return updated
 
 
 @router.post('/{account_id}/verify', response_model=AccountView)
@@ -253,7 +298,7 @@ async def verify_account(account_id: str, request: Request, user=Depends(get_ver
     if account.provider == 'codex':
         return await codex_accounts.verify(account, getattr(request.app.state, 'redis', None))
     secret, models = await verify_api_key(account.provider, open_secret(account.secret)['api_key'], account.plan)
-    await refresh_zai_limits(account, getattr(request.app.state, 'redis', None))
+    await refresh_account_limits(account, getattr(request.app.state, 'redis', None))
     return await ProviderAccounts.update(
         account.id, {'status': 'ok', 'last_error': None, 'models': models, 'secret': seal_secret(secret)}
     )

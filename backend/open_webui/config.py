@@ -3133,6 +3133,8 @@ DEFAULT_CONFIG = {
     'mologate.limits_mode': os.getenv('MOLOGATE_LIMITS_MODE', 'observe'),
     # Mologate: redeem a Codex reset coupon automatically once every eligible account is empty.
     'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
+    # Mologate: chats one member can have generating at once (hard cap 10; utils/chat_slots.py).
+    'mologate.max_concurrent_chats': int(os.getenv('MOLOGATE_MAX_CONCURRENT_CHATS', '3')),
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,
