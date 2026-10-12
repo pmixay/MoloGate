@@ -42,6 +42,7 @@ from open_webui.utils.codex_lb import CodexLBError
 from open_webui.utils.provider_accounts import (
     account_models,
     can_manage,
+    catalog_model,
     can_use,
     choose_account,
     select_account,
@@ -111,6 +112,27 @@ def lb_summary(account_id, remaining=90, status='active', reset_in=3600, credits
     }
 
 
+def codex_model(slug, name=None, **overrides):
+    """A CodexModelEntry from codex-lb v1.24.0's GET /backend-api/codex/models."""
+    return {
+        'slug': slug,
+        'display_name': name or slug,
+        'description': '',
+        'base_instructions': 'Long Codex instructions that Mologate never stores.',
+        'default_reasoning_level': 'medium',
+        'supported_reasoning_levels': [
+            {'effort': 'low', 'description': 'Fast'},
+            {'effort': 'medium', 'description': 'Balanced'},
+            {'effort': 'ultra', 'description': 'Deepest'},
+        ],
+        'supported_in_api': True,
+        'context_window': 272000,
+        'input_modalities': ['text', 'image'],
+        'visibility': 'list',
+        'priority': 1,
+    } | overrides
+
+
 def coupon(identifier, expires_in, status='available'):
     return {
         'id': identifier,
@@ -160,9 +182,11 @@ class FakeCodexLB:
         self.deleted_accounts = []
         self.inference = []
         self.replies = {}
-        self.models = [
-            {'id': 'test-model', 'name': 'Test model', 'sourceOnly': False},
-            {'id': 'source-model', 'name': 'Source', 'sourceOnly': True},
+        # GET /backend-api/codex/models: the Codex catalog, with hidden and API-unsupported entries.
+        self.catalog = [
+            codex_model('test-model', 'Test model'),
+            codex_model('hidden-model', 'Hidden', visibility='hide'),
+            codex_model('internal-model', 'Internal', supported_in_api=False),
         ]
         self.app = web.Application(middlewares=[self.record])
         routes = self.app.router
@@ -174,7 +198,7 @@ class FakeCodexLB:
         routes.add_put('/api/accounts/{id}/alias', self.alias)
         routes.add_get('/api/accounts/{id}/rate-limit-reset-credits', self.get_credits)
         routes.add_post('/api/accounts/{id}/rate-limit-reset-credits/consume', self.consume)
-        routes.add_get('/api/models', self.list_models)
+        routes.add_get('/backend-api/codex/models', self.codex_models)
         routes.add_post('/api/oauth/start', self.oauth_start)
         routes.add_get('/api/oauth/status', self.oauth_status)
         routes.add_post('/api/oauth/manual-callback', self.manual_callback)
@@ -246,8 +270,11 @@ class FakeCodexLB:
         self.credits.pop(account_id, None)
         return web.json_response({'code': 'reset', 'windowsReset': 1, 'redeemedAt': iso(0)})
 
-    async def list_models(self, request):
-        return web.json_response({'models': self.models})
+    async def codex_models(self, request):
+        token = request.headers.get('Authorization', '').removeprefix('Bearer ')
+        if self.settings['apiKeyAuthEnabled'] and not any(key['key'] == token for key in self.keys.values()):
+            return lb_error(401, 'invalid_api_key')
+        return web.json_response({'models': self.catalog, 'data': []})
 
     async def oauth_start(self, request):
         body = await request.json()
@@ -593,6 +620,19 @@ class DatabaseTests(DatabaseCase):
                 await select_account('account:codex:test-model', OWNER)
             self.assertEqual(error.exception.status_code, 503)
 
+    async def test_only_a_refused_key_takes_a_shared_account_offline(self):
+        shared = await self.create_account(sharing='shared')
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        form = {'model': 'account:openai_api:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+        # A 403 answers one request (a moderation flag, say); a 401 means the key itself is refused.
+        for status, expected in ((403, 'ok'), (401, 'needs_login')):
+            session = SimpleNamespace(post=AsyncMock(return_value=Response(status=status)))
+            with patch.object(proxy, 'get_session', AsyncMock(return_value=session)):
+                with self.assertRaises(HTTPException) as refused:
+                    await proxy.account_completion(request, form, OTHER)
+            self.assertEqual(refused.exception.status_code, status)
+            self.assertEqual((await ProviderAccounts.get(shared.id)).status, expected)
+
     async def test_user_deletion_revokes_shared_accounts(self):
         await self.create_account(sharing='shared')
         await codex_accounts.delete_user_accounts(OWNER.id)
@@ -709,6 +749,33 @@ class CodexLBTests(DatabaseCase):
         # Management calls never carry browser headers.
         self.assertFalse(any({'origin', 'sec-fetch-site'} & headers for _, _, headers in self.fake.requests))
 
+    async def test_account_models_carry_provider_details_like_connection_models(self):
+        from open_webui.utils.context_window import apply_context_windows
+        from open_webui.utils.image_input import apply_image_input_support
+        from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
+
+        self.fake.catalog.append(codex_model('text-model', 'Text only', input_modalities=['text'], context_window=1000))
+        shared = await self.connected('lb-details', sharing='shared')
+        # A request brings the catalog in: new models and their details arrive without opening Settings.
+        await proxy.account_completion(self.request(), self.form(), OWNER)
+        stored = (await ProviderAccounts.get(shared.id)).models
+        self.assertEqual([model['id'] for model in stored], ['test-model', 'text-model'])
+        self.assertNotIn('base_instructions', stored[0]['details'])
+        listing = await account_models(OTHER)
+        for apply in (apply_reasoning_effort_options, apply_image_input_support, apply_context_windows):
+            apply(listing)
+        models = {model['id']: model for model in listing}
+        # Hidden and Codex-internal models are not offered.
+        self.assertEqual(set(models), {'account:codex:test-model', 'account:codex:text-model'})
+        full, text = models['account:codex:test-model'], models['account:codex:text-model']
+        self.assertEqual(full['connection_type'], 'external')
+        self.assertEqual(
+            [level['value'] for level in full['reasoning_effort_options']['levels']], ['low', 'medium', 'ultra']
+        )
+        self.assertEqual(full['reasoning_effort_options']['default'], 'medium')
+        self.assertEqual((full['reads_images'], full['context_window']), (True, 272000))
+        self.assertEqual((text['reads_images'], text['context_window']), (False, 1000))
+
     async def test_team_use_of_a_shared_account_is_split_from_the_owners(self):
         shared = await self.connected('lb-team', owner=OTHER.id, sharing='shared', remaining=90)
 
@@ -755,7 +822,7 @@ class CodexLBTests(DatabaseCase):
         self.assertEqual(self.fake.inference, [])
         # Once codex-lb has the login again, the account list brings it back with new models and plan.
         self.fake.accounts['lb-sync'].update(status='active', planType='pro')
-        self.fake.models.append({'id': 'new-model', 'name': 'New model', 'sourceOnly': False})
+        self.fake.catalog.append(codex_model('new-model', 'New model'))
         self.fresh()
         await codex_accounts.sync_accounts()
         saved = await ProviderAccounts.get(saved.id)
@@ -868,7 +935,7 @@ class CodexLBTests(DatabaseCase):
         )
         self.assertRegex(saved.label, GENERATED_NAME)
         self.assertEqual(self.fake.accounts['lb-link']['alias'], saved.label)
-        self.assertEqual(saved.models, [{'id': 'test-model', 'name': 'Test model'}])
+        self.assertEqual(saved.models, [catalog_model('test-model', 'Test model', codex_model('test-model'))])
         secret = open_secret(saved.secret)
         self.assertEqual(
             self.fake.keys[secret['lb_api_key_id']], {'key': secret['lb_api_key'], 'accounts': ['lb-link']}
@@ -1280,6 +1347,58 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(error.exception.status_code, 400)
         self.assertIn('Provider accounts', error.exception.detail)
+
+    async def test_admin_overrides_on_an_account_model_keep_it_usable(self):
+        request = SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace()))
+
+        def saved(model_id, base_model_id=None):
+            # What Admin -> Models saves: the admin's row, with no access grants for anyone else.
+            return SimpleNamespace(
+                id=model_id,
+                base_model_id=base_model_id,
+                user_id=ADMIN.id,
+                access_grants=[],
+                params=SimpleNamespace(model_dump=lambda: {'temperature': 0.2}),
+            )
+
+        rows = {'account:codex:test-model': saved('account:codex:test-model')}
+        rows['team-preset'] = saved('team-preset', base_model_id='account:codex:test-model')
+        with (
+            patch.object(openai, 'account_completion', AsyncMock(return_value={'ok': True})) as route,
+            patch.object(openai, 'check_model_access', AsyncMock()) as access,
+            patch.object(openai.Models, 'get_model_by_id', AsyncMock(side_effect=rows.get)),
+        ):
+            payload = {'model': 'account:codex:test-model', 'messages': []}
+            self.assertEqual(await openai.generate_chat_completion(request, payload, OWNER), {'ok': True})
+            access.assert_not_awaited()
+            self.assertEqual(route.await_args.args[1]['temperature'], 0.2)
+            # A preset built on the account model still checks its own access.
+            await openai.generate_chat_completion(request, {'model': 'team-preset', 'messages': []}, OWNER)
+            access.assert_awaited_once()
+            self.assertEqual(route.await_args.args[1]['model'], 'account:codex:test-model')
+
+    async def test_api_key_models_keep_provider_details(self):
+        entry = {
+            'id': 'vendor/model',
+            'name': 'Vendor: Model',
+            'context_length': 200000,
+            'architecture': {'input_modalities': ['text']},
+            'supported_parameters': ['reasoning', 'tools'],
+            'pricing': {'prompt': '0.000001'},
+        }
+        self.assertEqual(
+            catalog_model(entry['id'], entry['name'], entry),
+            {
+                'id': 'vendor/model',
+                'name': 'Vendor: Model',
+                'details': {
+                    'supported_parameters': ['reasoning', 'tools'],
+                    'architecture': {'input_modalities': ['text']},
+                    'context_length': 200000,
+                },
+            },
+        )
+        self.assertEqual(catalog_model('bare', None, {'id': 'bare'}), {'id': 'bare', 'name': 'bare'})
 
     async def test_audit_body_logging_redacts_keys_and_device_codes(self):
         from starlette.requests import Request

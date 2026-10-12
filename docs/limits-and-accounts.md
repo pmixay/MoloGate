@@ -362,9 +362,12 @@ that account. codex-lb sends them upstream as the official Codex CLI (client nam
 per-account installation ID, store disabled) and refreshes tokens. Mologate requires codex-lb's
 API-key authentication to be on and refuses ChatGPT traffic otherwise, translates the SSE
 text/tool deltas and final usage into Chat Completions, and preserves native SSE for `/responses`.
-The model list comes from codex-lb's catalog, synced from OpenAI every 5 minutes. Accounts that
-were connected through the earlier `codex app-server` integration are imported into codex-lb from
-their `auth.json` the first time they are used.
+The model list is codex-lb's Codex catalog (`GET /backend-api/codex/models`, read with an
+account's key and cached for 5 minutes), the same entries the Codex client reads: each model keeps
+its effort levels, input types and context window, so the effort selector, the image check and the
+context indicator work as for any configured connection. Requests and the accounts page bring new
+models in. Accounts that were connected through the earlier `codex app-server` integration are
+imported into codex-lb from their `auth.json` the first time they are used.
 
 **API keys** (Anthropic, OpenAI, OpenRouter, Z.ai): a form with the key and a monthly budget, a
 "Verify" call, then the account is created. `external_account_id` is the key fingerprint, so the

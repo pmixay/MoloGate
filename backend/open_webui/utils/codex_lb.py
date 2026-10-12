@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from open_webui.utils.provider_accounts import catalog_model
 from open_webui.utils.provider_limits import window_exhausted
 
 log = logging.getLogger(__name__)
@@ -145,17 +146,23 @@ async def list_accounts(fresh: bool = False) -> dict[str, dict]:
     return accounts
 
 
-async def models(fresh: bool = False) -> list[dict]:
-    """The Codex catalog codex-lb syncs from OpenAI; models of extra sources are left out."""
+async def models(api_key: str, fresh: bool = False) -> list[dict]:
+    """The Codex catalog codex-lb syncs from OpenAI, as the Codex client reads it: with each model's
+    effort levels, input types and context window. Every account's key gets the same catalog."""
     global _models_cache
     now = time.monotonic()
     if not fresh and _models_cache is not None and now - _models_cache[0] < MODELS_TTL:
         return _models_cache[1]
-    data = await request('GET', '/api/models')
+    data = await request('GET', '/backend-api/codex/models', headers={'Authorization': 'Bearer ' + api_key})
     result = [
-        {'id': item['id'], 'name': item.get('name') or item['id']}
+        catalog_model(item['slug'], item.get('display_name'), item)
         for item in (data or {}).get('models') or []
-        if isinstance(item, dict) and isinstance(item.get('id'), str) and not item.get('sourceOnly')
+        if isinstance(item, dict)
+        and isinstance(item.get('slug'), str)
+        and item['slug']
+        # The models codex-lb offers for use; hidden and Codex-internal ones stay out.
+        and item.get('visibility', 'list') == 'list'
+        and item.get('supported_in_api') is not False
     ]
     if result:
         _models_cache = (now, result)

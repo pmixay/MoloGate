@@ -65,6 +65,14 @@ offering it is shared with approved members. Otherwise it is **Private** to its 
 This label follows current account sharing, including when multiple accounts offer the same model;
 saved model ACLs do not override it. Its sharing controls open **Provider accounts**. Public here
 means available to approved team members; it does not grant anonymous or pending users access.
+An admin's overrides on an account model (name, vision, effort levels, context window, hiding)
+change how it behaves, never who may use it: chat requests decide access by account sharing alone,
+while presets built on an account model keep their own access settings.
+
+Account models carry the details their provider lists for them (effort levels, input types,
+context window) under `openai`, like models from a configured connection, so the effort selector,
+the image check and the context indicator treat them the same way. Only a 401 from the provider
+marks an account "Sign-in required"; a 403 refuses that one request and leaves the account in use.
 
 The new catalog is refreshed separately from legacy connection caches. Existing configured
 connections remain usable. New snapshots use provider-account UUIDs; legacy snapshots use a hash
@@ -97,7 +105,7 @@ change independently of the published inference API.
 
 ## Verification
 
-- The suite now has 51 backend tests; image CI runs them on amd64 and arm64 before publishing.
+- The suite now has 55 backend tests; image CI runs them on amd64 and arm64 before publishing.
   The 38-test suite of `aec1626` passed there:
   [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).
 - Shared-account visibility regression: all 24 backend tests of that change passed, including

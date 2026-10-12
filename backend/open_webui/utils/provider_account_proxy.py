@@ -283,7 +283,9 @@ async def account_request(request, account, form_data, endpoint, user):
             if await error_code(response) in codex_lb.UNAVAILABLE_CODES:
                 raise AccountExhausted()
         if response.status >= 300:
-            if response.status in (401, 403):
+            # Mologate: only a refused credential takes the account offline. A 403 answers this
+            # request alone (moderation, model permissions), so one prompt cannot hide a shared key.
+            if response.status == 401:
                 await ProviderAccounts.update(
                     account.id,
                     {

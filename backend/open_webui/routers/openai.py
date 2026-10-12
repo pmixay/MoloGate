@@ -1540,7 +1540,10 @@ async def generate_chat_completion(
             if not bypass_system_prompt:
                 payload = await apply_system_prompt_to_body(system, payload, metadata, user)
 
-        await check_model_access(user, model_info, bypass_filter)
+        # Mologate: an account model's own row only carries an admin's overrides; account sharing
+        # decides who may use it (account_completion selects again). Presets keep their own access.
+        if not str(model_info.id).startswith('account:'):
+            await check_model_access(user, model_info, bypass_filter)
     elif not str(model_id).startswith('account:'):
         await check_model_access(user, None, bypass_filter)
 

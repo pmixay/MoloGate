@@ -174,7 +174,11 @@ async def prepare_request(account) -> tuple[str, dict]:
     except CodexLBError:
         raise unavailable() from None
     summary = accounts.get(binding['lb_account_id'])
-    if (await sync_account(account, summary)).status != 'ok':
+    catalog = None
+    with contextlib.suppress(CodexLBError):
+        # Cached for a few minutes: new models and their details arrive without opening Settings.
+        catalog = await codex_lb.models(binding['lb_api_key'])
+    if (await sync_account(account, summary, catalog)).status != 'ok':
         raise HTTPException(401, NEEDS_LOGIN)
     return binding['lb_api_key'], summary
 
@@ -184,7 +188,7 @@ async def verify(account, redis=None):
     binding = await account_secret(account)
     try:
         summary = (await codex_lb.list_accounts(fresh=True)).get(binding['lb_account_id'])
-        catalog = await codex_lb.models(fresh=True)
+        catalog = await codex_lb.models(binding['lb_api_key'], fresh=True)
     except CodexLBError:
         raise unavailable() from None
     account = await sync_account(await ProviderAccounts.get(account.id) or account, summary, catalog)
@@ -202,12 +206,13 @@ async def sync_accounts(redis=None):
     bindings = {}
     try:
         summaries = await codex_lb.list_accounts()
-        catalog = await codex_lb.models()
         for account in accounts:
             with contextlib.suppress(HTTPException):
                 bindings[account.id] = await account_secret(account)
         if any(binding['lb_account_id'] not in summaries for binding in bindings.values()):
             summaries = await codex_lb.list_accounts(fresh=True)
+        # Any account's key reads the same catalog.
+        catalog = await codex_lb.models(next(iter(bindings.values()))['lb_api_key']) if bindings else None
     except CodexLBError:
         log.debug('codex-lb is unavailable; ChatGPT accounts keep their last known state.')
         return
@@ -405,10 +410,15 @@ async def _finalize(attempt, redis=None):
         await _finish(attempt.id, 'completed', account_id=existing.id)
         log.info('ChatGPT account %s reconnected.', existing.id)
         return
-    catalog = await codex_lb.models()
-    if not catalog:
-        raise CodexLBError(502, 'no_models')
     key = await codex_lb.create_key('mologate-' + attempt.id, lb_id)
+    try:
+        # The catalog is read with the new key, the way every request will reach codex-lb.
+        catalog = await codex_lb.models(key['key'])
+        if not catalog:
+            raise CodexLBError(502, 'no_models')
+    except CodexLBError:
+        await _forget_key(key['id'])
+        raise
     try:
         account = await ProviderAccounts.insert(
             owner_user_id=attempt.owner_user_id,

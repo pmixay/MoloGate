@@ -17,6 +17,29 @@ API_BASES = {
 }
 ZAI_CODING_BASE = 'https://api.z.ai/api/coding/paas/v4'
 MODEL_PREFIX = 'account:'
+# Mologate: what the effort selector, image check and context indicator read from a provider's
+# /models entry (utils/reasoning_effort.py, image_input.py, context_window.py). Account models keep
+# these, so they behave like models from a configured connection.
+MODEL_DETAIL_KEYS = (
+    'supported_reasoning_levels',
+    'supported_reasoning_efforts',
+    'reasoning_efforts',
+    'default_reasoning_level',
+    'default_reasoning_effort',
+    'supported_parameters',
+    'input_modalities',
+    'architecture',
+    'modalities',
+    'supports_vision',
+    'context_window',
+    'context_length',
+    'max_context_length',
+    'max_model_len',
+    'max_input_tokens',
+    'input_token_limit',
+    'inputTokenLimit',
+    'top_provider',
+)
 
 
 async def require_accounts_enabled():
@@ -40,6 +63,15 @@ def can_use(account, user):
 
 def model_id(provider: str, upstream_id: str):
     return f'{MODEL_PREFIX}{provider}:{upstream_id}'
+
+
+def catalog_model(upstream_id: str, name, entry: dict) -> dict:
+    """An account's model as stored: its id, name and the provider details features read."""
+    model = {'id': upstream_id, 'name': name if isinstance(name, str) and name else upstream_id}
+    details = {key: entry[key] for key in MODEL_DETAIL_KEYS if entry.get(key) is not None}
+    if details:
+        model['details'] = details
+    return model
 
 
 def split_model_id(value: str):
@@ -101,6 +133,10 @@ async def account_models(user=None):
                 'object': 'model',
                 'created': 0,
                 'owned_by': 'openai',
+                # Like a configured connection's model: the provider's entry under 'openai', so
+                # effort levels, image input and the context window come from the provider.
+                'openai': {**(model.get('details') or {}), 'id': model['id']},
+                'connection_type': 'external',
                 'provider_account_provider': account.provider,
                 'provider_account_sharing': 'shared' if shared else 'private',
                 'upstream_model_id': model['id'],
@@ -142,7 +178,7 @@ async def verify_api_key(provider: str, key: str, plan: str = 'api'):
                 for item in data.get('data', []):
                     if isinstance(item, dict) and isinstance(item.get('id'), str):
                         if not any(word in item['id'].lower() for word in ('embedding', 'whisper', 'tts', 'dall-e')):
-                            models.append({'id': item['id'], 'name': item.get('display_name') or item['id']})
+                            models.append(catalog_model(item['id'], item.get('display_name') or item.get('name'), item))
                 if provider != 'anthropic_api' or not data.get('has_more') or not data.get('last_id'):
                     break
                 params = {'after_id': data['last_id']}
