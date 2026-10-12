@@ -50,6 +50,7 @@ from open_webui.utils.provider_accounts import (
     select_account,
     verify_api_key,
 )
+from open_webui.utils.provider_errors import clean_message, error_kind, error_message, provider_error
 from open_webui.utils.provider_limits import (
     count_account_request,
     get_provider_limits,
@@ -1543,13 +1544,17 @@ class SignupTests(unittest.IsolatedAsyncioTestCase):
 
 
 class Response:
-    def __init__(self, data=None, status=200, events=None):
+    """An aiohttp response. Events are sent as SSE (a string as raw data); drop cuts the connection after them."""
+
+    def __init__(self, data=None, status=200, events=None, headers=None, drop=False):
         self.status = status
         self.data = data or {}
         self.headers = {'Content-Type': 'text/event-stream' if events is not None else 'application/json'}
+        self.headers.update(headers or {})
         self.closed = False
         self.content = self
         self.events = events or []
+        self.drop = drop
 
     async def __aenter__(self):
         return self
@@ -1564,9 +1569,42 @@ class Response:
         self.closed = True
 
     async def iter_chunks(self):
-        raw = ''.join('data: ' + json.dumps(event, ensure_ascii=False) + '\r\n\r\n' for event in self.events).encode()
+        raw = ''.join(
+            'data: ' + (event if isinstance(event, str) else json.dumps(event, ensure_ascii=False)) + '\r\n\r\n'
+            for event in self.events
+        ).encode()
         for index in range(0, len(raw), 3):
             yield raw[index : index + 3], False
+        if self.drop:
+            raise ConnectionResetError('Connection reset by peer')
+
+
+async def read_stream(stream):
+    """A chat stream's JSON chunks; it must end with [DONE]."""
+    parts = [part.removeprefix('data: ') for part in ''.join([chunk async for chunk in stream]).split('\n\n') if part]
+    assert parts[-1] == '[DONE]', parts
+    return [json.loads(part) for part in parts[:-1]]
+
+
+def chat_reply(content=None, finish_reason='stop', **message):
+    return {
+        'id': 'chatcmpl-1',
+        'object': 'chat.completion',
+        'choices': [
+            {
+                'index': 0,
+                'message': {'role': 'assistant', 'content': content, **message},
+                'finish_reason': finish_reason,
+            }
+        ],
+    }
+
+
+def chat_chunk(finish_reason=None, **delta):
+    return {
+        'object': 'chat.completion.chunk',
+        'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish_reason}],
+    }
 
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -1892,6 +1930,431 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('turned off', error.exception.detail)
         reset.assert_not_awaited()
         session.post.assert_not_awaited()
+
+    def key_account(self, identifier, provider='openrouter'):
+        secret = seal_secret({'api_key': f'sk-test-{identifier}-secret', 'base_url': 'https://provider.example/v1'})
+        return account(id=identifier, provider=provider, plan='api', secret=secret)
+
+    def key_patches(self, accounts, replies):
+        session = SimpleNamespace(post=AsyncMock(side_effect=replies))
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(proxy, 'select_accounts', AsyncMock(return_value=accounts)))
+        stack.enter_context(patch.object(proxy, 'get_session', AsyncMock(return_value=session)))
+        stack.enter_context(patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)))
+        return stack, session
+
+    def chat_form(self, provider='openrouter', stream=False):
+        form = {'model': f'account:{provider}:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+        return form | {'stream': True} if stream else form
+
+    async def test_provider_error_shapes_are_read_and_credentials_redacted(self):
+        shapes = [
+            {'error': {'message': 'openai', 'type': 'invalid_request_error', 'code': 'model_not_found'}},
+            {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'anthropic'}},
+            {'error': {'code': 'no_accounts', 'message': 'codex-lb'}},
+            {'type': 'error', 'code': 'server_error', 'message': 'responses event'},
+            {'type': 'response.failed', 'response': {'status': 'failed', 'error': {'code': 'x', 'message': 'failed'}}},
+        ]
+        self.assertEqual(
+            [error_message(provider_error(shape)) for shape in shapes],
+            ['openai', 'anthropic', 'codex-lb', 'responses event', 'failed'],
+        )
+        # OpenRouter wraps the upstream provider's words, which say what went wrong.
+        wrapped = {
+            'message': 'Provider returned error',
+            'metadata': {'raw': '{"error": {"message": "prompt too long"}}'},
+        }
+        self.assertEqual(error_message(wrapped), 'Provider returned error: prompt too long')
+        secrets = (
+            'sk-proj-abcDEF123456',
+            'sk-ant-api03-abcdef123456_XY',
+            'sk-or-v1-' + 'ab12' * 16,
+            'sk-clb-key-1',
+            'sk-abc12****************wxyz',
+            'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
+            '0123456789abcdef' * 3,
+            '0123456789abcdef0123456789abcdef.AbCdEfGh12345678',
+            'QWxhZGRpbjpvcGVuIHNlc2FtZQ12+/==',
+        )
+        for secret in secrets:
+            cleaned = clean_message(f'Incorrect API key provided: {secret}. Try again.')
+            self.assertEqual(cleaned, 'Incorrect API key provided: [redacted]. Try again.', secret)
+        self.assertEqual(
+            clean_message('Authorization: Bearer abc.def-ghi failed'), 'Authorization: Bearer [redacted] failed'
+        )
+        self.assertEqual(clean_message('bad api_key=hunter2 here'), 'bad api_key=[redacted] here')
+        # Model names, dates and links stay readable.
+        kept = (
+            'Model anthropic/claude-3-5-sonnet-20241022 or gpt-4o-2024-08-06 at https://openrouter.ai/settings/credits.'
+        )
+        self.assertEqual(clean_message(kept), kept)
+        self.assertEqual(clean_message('one\nline\x00\x07 ‮only'), 'one line only')
+        self.assertEqual(len(clean_message('x' * 2000)), 500)
+        self.assertIsNone(clean_message(None))
+        self.assertEqual(
+            [
+                error_kind(402, {}),
+                error_kind(429, {}),
+                error_kind(None, {'code': 'usage_limit_reached'}),
+                error_kind(429, {'code': '1113', 'message': 'Insufficient balance or no resource package.'}),
+                error_kind(400, {'message': 'Your credit balance is too low to access the Anthropic API.'}),
+                error_kind(403, {'message': 'Your input was flagged for "violence".'}),
+                error_kind(400, {'code': 'context_length_exceeded', 'message': 'Too long.'}),
+            ],
+            ['credit', 'limit', 'limit', 'credit', 'credit', 'refusal', None],
+        )
+
+    async def test_provider_message_reaches_the_member_without_credentials(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        message = (
+            "This model's maximum context length is 128000 tokens.\nIncorrect API key provided: "
+            'sk-or-v1-0123456789abcdef0123456789abcdef. Sent: Bearer abc.def.ghi\x1b ' + 'x' * 600
+        )
+        rejected = Response(
+            {'error': {'message': message, 'type': 'invalid_request_error', 'code': 'context_length_exceeded'}},
+            status=400,
+        )
+        stack, session = self.key_patches([self.key_account('key-context'), self.key_account('key-spare')], [rejected])
+        with stack, self.assertNoLogs(proxy.log, level='DEBUG'), self.assertRaises(HTTPException) as refused:
+            await proxy.account_completion(request, self.chat_form(), OWNER)
+        detail = refused.exception.detail
+        self.assertEqual(refused.exception.status_code, 400)
+        self.assertTrue(
+            detail.startswith(
+                "The provider rejected the request (HTTP 400): This model's maximum context length is 128000 tokens. "
+                'Incorrect API key provided: [redacted]. Sent: Bearer [redacted] xxx'
+            ),
+            detail,
+        )
+        for leaked in ('0123456789abcdef', 'abc.def', 'sk-test', '\n', '\x1b'):
+            self.assertNotIn(leaked, detail)
+        self.assertLess(len(detail), 600)
+        # Not a quota problem: the next key is not tried for it.
+        session.post.assert_awaited_once()
+        self.assertTrue(rejected.closed)
+
+    async def test_credit_and_limit_errors_hand_the_request_to_the_next_key(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        names = ('openrouter-402', 'openai-429', 'zai-balance', 'anthropic-credit', 'zai-200-limit', 'serving')
+        accounts = [self.key_account('key-' + name) for name in names]
+        replies = [
+            Response({'error': {'message': 'Insufficient credits', 'code': 402}}, status=402),
+            Response(
+                {'error': {'message': 'Rate limit reached for requests', 'code': 'rate_limit_exceeded'}},
+                status=429,
+                headers={'retry-after': '90'},
+            ),
+            Response(
+                {'error': {'code': '1113', 'message': 'Insufficient balance or no resource package.'}}, status=429
+            ),
+            Response(
+                {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low.'},
+                },
+                status=400,
+            ),
+            Response({'error': {'code': '1308', 'message': 'Usage limit reached for 5 hour.'}}),
+            Response(chat_reply('Hello')),
+        ]
+        stack, session = self.key_patches(accounts, replies)
+        with stack:
+            answer = await proxy.account_completion(request, self.chat_form(), OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Hello')
+        self.assertEqual(
+            [call.kwargs['headers']['Authorization'] for call in session.post.call_args_list],
+            [f'Bearer sk-test-key-{name}-secret' for name in names],
+        )
+        self.assertTrue(all(reply.closed for reply in replies[:-1]))
+
+        # When no key has credit left, the member is told so, with the provider's own words.
+        stack, _ = self.key_patches(
+            [self.key_account('key-broke')],
+            [Response({'error': {'message': 'Insufficient credits', 'code': 402}}, status=402)],
+        )
+        with stack, self.assertRaises(HTTPException) as broke:
+            await proxy.account_completion(request, self.chat_form(), OWNER)
+        self.assertEqual(broke.exception.status_code, 402)
+        self.assertEqual(
+            broke.exception.detail,
+            'The API key for this model is out of credit. Add credit with the provider or pick another model. '
+            'The provider says: Insufficient credits',
+        )
+
+        # A rate limit names the wait the provider asked for.
+        limited = Response({'error': {'code': 'rate_limit_exceeded'}}, status=429, headers={'Retry-After': '90'})
+        stack, _ = self.key_patches([self.key_account('key-busy')], [limited])
+        with stack, self.assertRaises(HTTPException) as busy:
+            await proxy.account_completion(request, self.chat_form(), OWNER)
+        self.assertEqual(busy.exception.status_code, 429)
+        self.assertEqual(
+            busy.exception.detail,
+            'Every account for this model has reached its usage limit. The first one resets in 2 min.',
+        )
+
+    async def test_codex_quota_failure_before_output_fails_over_even_when_streaming(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        first = account(id='stream-limited')
+        second = account(id='stream-serving', owner_user_id=OTHER.id, sharing='shared')
+        error = {'code': 'usage_limit_reached', 'message': 'The usage limit has been reached', 'resets_in_seconds': 600}
+        failed = Response(
+            events=[
+                {'type': 'response.created', 'response': {'id': 'r1'}},
+                {'type': 'response.in_progress', 'response': {'id': 'r1'}},
+                {'type': 'response.failed', 'response': {'status': 'failed', 'error': error}},
+            ]
+        )
+        serving = Response(
+            events=[
+                {'type': 'response.created', 'response': {'id': 'r2'}},
+                {'type': 'response.output_text.delta', 'delta': 'Hello'},
+                {'type': 'response.completed', 'response': {}},
+            ]
+        )
+        session = SimpleNamespace(post=AsyncMock(side_effect=[failed, serving]))
+        stack, _ = self.codex_patches([first, second], {first.id: lb_summary('a'), second.id: lb_summary('b')}, session)
+        with stack:
+            reply = await proxy.account_completion(request, self.chat_form('codex', stream=True), OWNER)
+            chunks = await read_stream(reply.body_iterator)
+        self.assertEqual(chunks[0]['id'], 'r2')
+        self.assertEqual(chunks[0]['choices'][0]['delta']['content'], 'Hello')
+        self.assertEqual(chunks[-1]['choices'][0]['finish_reason'], 'stop')
+        self.assertFalse(any('error' in chunk for chunk in chunks))
+        self.assertTrue(failed.closed and serving.closed)
+
+        # Without another account, the wait comes from the provider's reset time.
+        failed = Response(events=[{'type': 'response.failed', 'response': {'error': error}}])
+        session = SimpleNamespace(post=AsyncMock(return_value=failed))
+        stack, _ = self.codex_patches([account(id='only-limited')], {'only-limited': lb_summary('a')}, session)
+        with stack, self.assertRaises(HTTPException) as limited:
+            await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertEqual(limited.exception.status_code, 429)
+        self.assertIn('resets in 10 min.', limited.exception.detail)
+
+    async def test_refusals_are_shown_and_never_fail_over(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        words = "I'm sorry, but I can't help with that."
+        # Responses: refusal deltas become the reply's text.
+        response = Response(
+            events=[
+                {'type': 'response.refusal.delta', 'delta': words},
+                {
+                    'type': 'response.output_item.done',
+                    'item': {'type': 'message', 'content': [{'type': 'refusal', 'refusal': words}]},
+                },
+                {'type': 'response.completed', 'response': {}},
+            ]
+        )
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual([chunk['choices'][0]['delta'].get('content') for chunk in chunks], [words, None])
+        self.assertEqual(chunks[-1]['choices'][0]['finish_reason'], 'stop')
+        # A refusal only in the final output, without streaming.
+        output = [{'type': 'message', 'content': [{'type': 'refusal', 'refusal': words}]}]
+        session = SimpleNamespace(
+            post=AsyncMock(
+                return_value=Response(events=[{'type': 'response.completed', 'response': {'output': output}}])
+            )
+        )
+        stack, _ = self.codex_patches([account(id='refusing')], {'refusing': lb_summary('a')}, session)
+        with stack:
+            answer = await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], words)
+        # The provider's content filter.
+        response = Response(
+            events=[
+                {
+                    'type': 'response.incomplete',
+                    'response': {'status': 'incomplete', 'incomplete_details': {'reason': 'content_filter'}},
+                }
+            ]
+        )
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual(chunks[0]['choices'][0]['finish_reason'], 'content_filter')
+        self.assertEqual(
+            chunks[1]['error'],
+            {
+                'message': "The model declined to answer: the provider's content filter stopped this response.",
+                'type': 'content_filter',
+            },
+        )
+
+        # Chat Completions: message.refusal and delta.refusal become text.
+        stack, _ = self.key_patches(
+            [self.key_account('key-refusing', 'openai_api')], [Response(chat_reply(None, refusal=words))]
+        )
+        with stack:
+            answer = await proxy.account_completion(request, self.chat_form('openai_api'), OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], words)
+        stream = Response(events=[chat_chunk(refusal=words), chat_chunk('content_filter'), '[DONE]'])
+        stack, _ = self.key_patches([self.key_account('key-filtered', 'openai_api')], [stream])
+        with stack:
+            reply = await proxy.account_completion(request, self.chat_form('openai_api', stream=True), OWNER)
+            chunks = await read_stream(reply.body_iterator)
+        self.assertEqual(chunks[0]['choices'][0]['delta'], {'content': words})
+        self.assertEqual(chunks[1]['choices'][0]['finish_reason'], 'content_filter')
+        self.assertEqual(chunks[2]['error']['message'], "The provider's content filter stopped this answer.")
+        # A filtered reply with nothing in it is an error, not an empty answer.
+        stack, _ = self.key_patches(
+            [self.key_account('key-empty-filter', 'openai_api')], [Response(chat_reply('', 'content_filter'))]
+        )
+        with stack, self.assertRaises(HTTPException) as filtered:
+            await proxy.account_completion(request, self.chat_form('openai_api'), OWNER)
+        self.assertEqual(filtered.exception.status_code, 400)
+        self.assertTrue(filtered.exception.detail.startswith('The model declined to answer'))
+
+        # A moderation 403 is the member's answer: no other account is tried and the key stays usable.
+        flagged = {
+            'error': {
+                'code': 403,
+                'message': 'test-model requires moderation. Your input was flagged for "violence".',
+                'metadata': {'reasons': ['violence'], 'flagged_input': 'Hi'},
+            }
+        }
+        stack, session = self.key_patches(
+            [self.key_account('key-moderated'), self.key_account('key-other')], [Response(flagged, status=403)]
+        )
+        with stack, self.assertRaises(HTTPException) as moderated:
+            await proxy.account_completion(request, self.chat_form(), OWNER)
+        self.assertEqual(moderated.exception.status_code, 403)
+        self.assertEqual(
+            moderated.exception.detail,
+            'The model declined to answer: test-model requires moderation. Your input was flagged for "violence".',
+        )
+        session.post.assert_awaited_once()
+
+    async def test_interrupted_answers_keep_their_text_and_say_why(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        # The connection drops mid-answer.
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Half an'}], drop=True)
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual(chunks[0]['choices'][0]['delta']['content'], 'Half an')
+        self.assertEqual(
+            chunks[1],
+            {
+                'error': {
+                    'message': 'The answer was interrupted: the connection to the provider was lost.',
+                    'type': 'interrupted',
+                }
+            },
+        )
+        self.assertTrue(response.closed)
+        # The provider reports an error after some text; its message is cleaned.
+        failure = {'type': 'error', 'code': 'server_error', 'message': 'Upstream failed for sk-proj-abcdef123456.'}
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Half'}, failure])
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual(chunks[0]['choices'][0]['delta']['content'], 'Half')
+        self.assertEqual(
+            chunks[1]['error'],
+            {
+                'message': 'The provider stopped this answer with an error: Upstream failed for [redacted].',
+                'type': 'provider_error',
+            },
+        )
+        # A quota running out mid-answer cannot move to another account any more; it says so.
+        limit = {
+            'type': 'response.failed',
+            'response': {'error': {'code': 'rate_limit_exceeded', 'message': 'Slow down.'}},
+        }
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Half'}, limit])
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual(
+            chunks[1]['error']['message'],
+            'The account reached its usage limit before the answer was complete: Slow down.',
+        )
+
+        # An API-key stream that stops without finishing, and one that loses its connection.
+        for drop, note in ((False, 'the provider stream ended before completion.'), (True, 'was lost.')):
+            stream = Response(events=[chat_chunk(content='Half')], drop=drop)
+            stack, _ = self.key_patches([self.key_account(f'key-cut-{drop}')], [stream])
+            with stack:
+                reply = await proxy.account_completion(request, self.chat_form(stream=True), OWNER)
+                chunks = await read_stream(reply.body_iterator)
+            self.assertEqual(chunks[0]['choices'][0]['delta']['content'], 'Half')
+            self.assertEqual(chunks[1]['error']['type'], 'interrupted')
+            self.assertTrue(chunks[1]['error']['message'].endswith(note))
+            self.assertTrue(stream.closed)
+        # OpenRouter reports a mid-stream error inside a chunk with choices; the chat shows it.
+        stream = Response(
+            events=[
+                chat_chunk(content='Half'),
+                {'error': {'code': 502, 'message': 'Provider disconnected'}, **chat_chunk('error', content='')},
+                '[DONE]',
+            ]
+        )
+        stack, _ = self.key_patches([self.key_account('key-midstream')], [stream])
+        with stack:
+            reply = await proxy.account_completion(request, self.chat_form(stream=True), OWNER)
+            chunks = await read_stream(reply.body_iterator)
+        self.assertEqual(
+            chunks[1],
+            {
+                'error': {
+                    'message': 'The provider stopped this answer with an error: Provider disconnected',
+                    'type': 'provider_error',
+                }
+            },
+        )
+
+        # Without streaming, the text written so far comes back with the reason.
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Half'}], drop=True)
+        session = SimpleNamespace(post=AsyncMock(return_value=response))
+        stack, _ = self.codex_patches([account(id='dropping')], {'dropping': lb_summary('a')}, session)
+        with stack:
+            answer = await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Half')
+        self.assertEqual(answer['choices'][0]['finish_reason'], 'error')
+        self.assertEqual(answer['error']['type'], 'interrupted')
+        # With nothing written, the reason is the error.
+        response = Response(events=[{'type': 'response.created', 'response': {}}], drop=True)
+        session = SimpleNamespace(post=AsyncMock(return_value=response))
+        stack, _ = self.codex_patches([account(id='dropping-early')], {'dropping-early': lb_summary('a')}, session)
+        with stack, self.assertRaises(HTTPException) as dropped:
+            await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertEqual(dropped.exception.status_code, 502)
+        self.assertIn('connection to the provider was lost', dropped.exception.detail)
+
+    async def test_output_token_limit_ends_with_length(self):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        incomplete = {
+            'type': 'response.incomplete',
+            'response': {
+                'status': 'incomplete',
+                'incomplete_details': {'reason': 'max_output_tokens'},
+                'usage': {'input_tokens': 5, 'output_tokens': 7},
+            },
+        }
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Long'}, incomplete])
+        chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
+        self.assertEqual(chunks[1]['choices'][0]['finish_reason'], 'length')
+        self.assertEqual(chunks[1]['usage']['completion_tokens'], 7)
+        self.assertEqual(
+            chunks[2]['error'],
+            {'message': 'The answer reached the output token limit and was cut off.', 'type': 'length'},
+        )
+        # Without streaming: the partial text with finish_reason length.
+        response = Response(events=[{'type': 'response.output_text.delta', 'delta': 'Long'}, incomplete])
+        session = SimpleNamespace(post=AsyncMock(return_value=response))
+        stack, _ = self.codex_patches([account(id='long')], {'long': lb_summary('a')}, session)
+        with stack:
+            answer = await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Long')
+        self.assertEqual(answer['choices'][0]['finish_reason'], 'length')
+        self.assertNotIn('error', answer)
+        # All tokens spent before any text: an error that says how to fix it.
+        response = Response(events=[incomplete])
+        session = SimpleNamespace(post=AsyncMock(return_value=response))
+        stack, _ = self.codex_patches([account(id='thinking')], {'thinking': lb_summary('a')}, session)
+        with stack, self.assertRaises(HTTPException) as spent:
+            await proxy.account_completion(request, self.chat_form('codex'), OWNER)
+        self.assertIn('before any answer was written', spent.exception.detail)
+        # API-key streams say the same.
+        stream = Response(events=[chat_chunk(content='Long'), chat_chunk('length'), '[DONE]'])
+        stack, _ = self.key_patches([self.key_account('key-long')], [stream])
+        with stack:
+            reply = await proxy.account_completion(request, self.chat_form(stream=True), OWNER)
+            chunks = await read_stream(reply.body_iterator)
+        self.assertEqual(chunks[1]['choices'][0]['finish_reason'], 'length')
+        self.assertEqual(chunks[2]['error']['type'], 'length')
 
     async def test_chat_responses_and_proxy_use_account_route(self):
         request = SimpleNamespace(state=SimpleNamespace(), app=SimpleNamespace(state=SimpleNamespace()), method='POST')

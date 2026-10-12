@@ -76,6 +76,18 @@ context window) under `openai`, like models from a configured connection, so the
 the image check and the context indicator treat them the same way. Only a 401 from the provider
 marks an account "Sign-in required"; a 403 refuses that one request and leaves the account in use.
 
+Provider errors reach the member in the provider's own words (`utils/provider_errors.py`): one
+line of at most 500 characters, control characters removed and anything that looks like a key or
+token redacted, since providers sometimes echo part of a key. Bodies and keys are never logged.
+A used-up quota or credit (HTTP 429 or 402, codes such as `usage_limit_reached`,
+`rate_limit_exceeded` or `insufficient_quota`, or a Responses `response.failed` with such a code
+before any output) hands the request to the next account; when none is left the member sees the
+usage-limit message with the wait (`retry-after` counts too), or that the API key is out of credit.
+A refusal (Responses refusal parts, `message.refusal`, `finish_reason: content_filter`, a
+moderation 403) is shown as the model declining and never fails over. A stream that stops early
+keeps its text and ends with a `length` or `content_filter` finish and an error chunk saying why:
+cut off at the output token limit, filtered, interrupted, or the provider's error.
+
 The new catalog is refreshed separately from legacy connection caches. Existing configured
 connections remain usable. New snapshots use provider-account UUIDs; legacy snapshots use a hash
 of their URL and credential so reordering a connection cannot attach another account's limits.
@@ -110,7 +122,7 @@ usage. This console endpoint is undocumented and can change independently of the
 
 ## Verification
 
-- The suite now has 55 backend tests; image CI runs them on amd64 and arm64 before publishing.
+- The suite now has 72 backend tests; image CI runs them on amd64 and arm64 before publishing.
   The 38-test suite of `aec1626` passed there:
   [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).
 - Shared-account visibility regression: all 24 backend tests of that change passed, including
@@ -155,7 +167,8 @@ The stdlib regression suite lives at `backend/open_webui/test/limits/test_provid
 It covers at-rest encryption and response redaction, database deduplication, owner/admin/private
 permissions, live visibility changes, disabled mode, owner deletion, ChatGPT sign-in through a
 fake codex-lb (link and device code, one connection at a time, reconnects), single-account key
-scoping, legacy account import, SSE chunk boundaries/Unicode/tools/usage, provider errors,
+scoping, legacy account import, SSE chunk boundaries/Unicode/tools/usage, provider errors
+(messages, key redaction, credit and limit failover, refusals, interrupted and cut-off answers),
 OpenRouter key verification, header/quota parsing, migration up/down, account failover and
 automatic resets, the owner and team usage split, generated account names, sign-up refusal, and
 the full-text upload migration.
