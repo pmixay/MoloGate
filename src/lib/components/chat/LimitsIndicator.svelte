@@ -3,17 +3,20 @@
 	// ring is the 5-hour window, the inner one the weekly window (or an OpenRouter key's credit
 	// limit), added up across every account that can serve the model, since requests move on to
 	// the next account when one runs out. When they run low, a label beside the ring says roughly
-	// how many minutes of work are left at the recent pace (utils/provider_limits.py, `outlook`).
+	// how many minutes of work are left at the recent pace (utils/provider_limits.py, `outlook`),
+	// and LimitsWarning, above the message box, says it in full.
 	import { getContext, onMount, tick } from 'svelte';
 	import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom';
 
-	import { settings, showSettings } from '$lib/stores';
+	import { modelLimits, settings, showSettings } from '$lib/stores';
 	import { getModelLimits } from '$lib/apis/models';
 	import {
-		formatDuration,
 		formatPercent,
-		limitLabel,
-		type LimitWindow
+		lowWindows,
+		outlookName,
+		shortWarning,
+		warningText,
+		type Outlook
 	} from '$lib/utils/providerLimits';
 	import { flyAndScale } from '$lib/utils/transitions';
 
@@ -28,25 +31,7 @@
 		currentId: null
 	};
 
-	type Outlook = {
-		id: string;
-		window_minutes?: number | null;
-		used_percent: number;
-		minutes_left: number | null;
-		lasts_until_reset: boolean;
-		resets_at: number | null;
-		level: 'ok' | 'low' | 'critical' | 'empty';
-	};
-	type Limits = {
-		windows: LimitWindow[];
-		updated_at: number | null;
-		account?: { label: string; provider: string; plan: string } | null;
-		accounts?: number;
-		outlook?: Outlook[];
-	};
-
 	const REFRESH_MS = 60_000;
-	const LEVELS = ['ok', 'low', 'critical', 'empty'];
 	const providers: Record<string, string> = {
 		codex: 'ChatGPT',
 		anthropic_api: 'Anthropic',
@@ -58,25 +43,24 @@
 	let show = false;
 	let triggerElement: HTMLElement | null = null;
 	let contentElement: HTMLElement | null = null;
-	let limits: Limits | null = null;
 	let loadedFor = '';
 	let requestId = 0;
 
 	$: modelId = selectedModels?.[0] ?? '';
 	$: t = (key: string, values?: Record<string, string | number>) => $i18n.t(key, values);
 
+	// The limits go to a store, so the low-limit warning above the message box shows them too.
 	const load = async (id: string) => {
 		const current = ++requestId;
 		const result = id ? await getModelLimits(localStorage.token, id).catch(() => null) : null;
 		// A newer request (another model, a later reply) wins.
 		if (current === requestId) {
-			limits = result;
-			loadedFor = id;
+			modelLimits.set({ modelId: id, limits: result });
 		}
 	};
 
 	$: if (modelId !== loadedFor) {
-		limits = null;
+		modelLimits.set({ modelId, limits: null });
 		loadedFor = modelId;
 		load(modelId);
 	}
@@ -99,75 +83,25 @@
 		return () => clearInterval(timer);
 	});
 
+	$: limits = $modelLimits.modelId === modelId ? $modelLimits.limits : null;
 	$: outlook = limits?.outlook ?? [];
 	// Outer ring: the 5-hour window, or a key's credit limit; inner ring: the weekly window.
 	$: rings = [
 		outlook.find((item) => item.id === 'primary') ?? outlook.find((item) => item.id === 'credits'),
 		outlook.find((item) => item.id === 'secondary')
 	].filter((item): item is Outlook => !!item);
-	$: worst = outlook.reduce<Outlook | null>(
-		(found, item) =>
-			!found || LEVELS.indexOf(item.level) > LEVELS.indexOf(found.level) ? item : found,
-		null
-	);
-	$: warning = worst && worst.level !== 'ok' ? worst : null;
+	$: warning = lowWindows(outlook)[0] ?? null;
 
 	const ringClass = (item: Outlook) =>
 		item.level === 'ok' ? 'ring-normal' : item.level === 'low' ? 'ring-warning' : 'ring-critical';
 
-	const windowName = (item: Outlook) =>
-		limitLabel(
-			{ id: item.id, used_percent: item.used_percent, window_minutes: item.window_minutes },
-			t
-		);
-
-	const untilReset = (item: Outlook) =>
-		item.resets_at ? formatDuration(item.resets_at - Date.now() / 1000) : '';
-
-	// The few characters beside the ring while limits run low.
-	const shortWarning = (item: Outlook) => {
-		if (item.level === 'empty') return t('Used up');
-		if (item.minutes_left !== null && !item.lasts_until_reset) {
-			return t('~{{DURATION}} left', { DURATION: formatDuration(item.minutes_left * 60) });
-		}
-		return t('{{PERCENT}} left', { PERCENT: formatPercent(100 - item.used_percent) });
-	};
-
-	const warningText = (item: Outlook) => {
-		const values = {
-			WINDOW: windowName(item),
-			PERCENT: formatPercent(100 - item.used_percent),
-			DURATION: item.minutes_left !== null ? formatDuration(item.minutes_left * 60) : '',
-			RESET: untilReset(item)
-		};
-		if (item.level === 'empty') {
-			return values.RESET
-				? t(
-						'{{WINDOW}} is used up on every account for this model. It resets in {{RESET}}.',
-						values
-					)
-				: t('{{WINDOW}} is used up on every account for this model.', values);
-		}
-		if (item.minutes_left !== null && !item.lasts_until_reset) {
-			return values.RESET
-				? t(
-						'{{WINDOW}}: {{PERCENT}} left, about {{DURATION}} of work at the recent pace. It resets in {{RESET}}.',
-						values
-					)
-				: t('{{WINDOW}}: {{PERCENT}} left, about {{DURATION}} of work at the recent pace.', values);
-		}
-		return values.RESET
-			? t('{{WINDOW}}: only {{PERCENT}} left. It resets in {{RESET}}.', values)
-			: t('{{WINDOW}}: only {{PERCENT}} left.', values);
-	};
-
 	$: summary = warning
-		? warningText(warning)
+		? warningText(warning, t)
 		: rings.length
 			? rings
 					.map((item) =>
 						t('{{WINDOW}}: {{PERCENT}} used', {
-							WINDOW: windowName(item),
+							WINDOW: outlookName(item, t),
 							PERCENT: formatPercent(item.used_percent)
 						})
 					)
@@ -282,7 +216,7 @@
 					<span
 						class="hidden whitespace-nowrap font-mono text-[11px] sm:inline {warning.level === 'low'
 							? 'text-warning'
-							: 'text-critical'}">{shortWarning(warning)}</span
+							: 'text-critical'}">{shortWarning(warning, t)}</span
 					>
 				{/if}
 			</button>
@@ -328,7 +262,7 @@
 								? 'bg-amber-50 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200'
 								: 'bg-red-50 text-red-800 dark:bg-red-500/10 dark:text-red-200'}"
 						>
-							{warningText(item)}
+							{warningText(item, t)}
 						</div>
 					{/each}
 
@@ -339,7 +273,7 @@
 							</div>
 							{#each rings as item (item.id)}
 								<div class="flex items-baseline justify-between gap-3">
-									<span>{windowName(item)}</span>
+									<span>{outlookName(item, t)}</span>
 									<span class="font-mono">{formatPercent(item.used_percent)}</span>
 								</div>
 							{/each}

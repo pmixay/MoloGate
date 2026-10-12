@@ -121,3 +121,83 @@ export const mainWindows = (windows: LimitWindow[]) => {
 
 export const limitLevel = (usedPercent: number) =>
 	usedPercent >= 90 ? 'critical' : usedPercent >= 75 ? 'warning' : 'normal';
+
+// How much of each long window is left across every account that can serve a model, and roughly
+// how many minutes of work that is at the recent pace (`outlook` from GET /models/model/limits).
+export type Outlook = {
+	id: string;
+	window_minutes?: number | null;
+	used_percent: number;
+	minutes_left: number | null;
+	lasts_until_reset: boolean;
+	resets_at: number | null;
+	level: 'ok' | 'low' | 'critical' | 'empty';
+};
+
+export type ModelLimits = {
+	windows: LimitWindow[];
+	updated_at: number | null;
+	account?: { label: string; provider: string; plan: string } | null;
+	accounts?: number;
+	outlook?: Outlook[];
+};
+
+export const OUTLOOK_LEVELS: Outlook['level'][] = ['ok', 'low', 'critical', 'empty'];
+
+export const levelRank = (level: Outlook['level']) => OUTLOOK_LEVELS.indexOf(level);
+
+// The windows running low, the worst first.
+export const lowWindows = (outlook: Outlook[]) =>
+	outlook
+		.filter((item) => item.level !== 'ok')
+		.sort((a, b) => levelRank(b.level) - levelRank(a.level));
+
+export const outlookName = (item: Outlook, t: Translate = plainText) =>
+	limitLabel(
+		{ id: item.id, used_percent: item.used_percent, window_minutes: item.window_minutes },
+		t
+	);
+
+// The few characters beside the limits ring while a window runs low.
+export const shortWarning = (item: Outlook, t: Translate = plainText) => {
+	if (item.level === 'empty') return t('Used up');
+	if (item.minutes_left !== null && !item.lasts_until_reset) {
+		return t('~{{DURATION}} left', { DURATION: formatDuration(item.minutes_left * 60) });
+	}
+	return t('{{PERCENT}} left', { PERCENT: formatPercent(100 - item.used_percent) });
+};
+
+// "5-hour limit: 17% left, about 44m of work at the recent pace. It resets in 1h 58m."
+export const warningText = (item: Outlook, t: Translate = plainText, now = Date.now()) => {
+	const values = {
+		WINDOW: outlookName(item, t),
+		PERCENT: formatPercent(100 - item.used_percent),
+		DURATION: item.minutes_left !== null ? formatDuration(item.minutes_left * 60) : '',
+		RESET: item.resets_at ? formatDuration(item.resets_at - now / 1000) : ''
+	};
+	if (item.level === 'empty') {
+		return values.RESET
+			? t('{{WINDOW}} is used up on every account for this model. It resets in {{RESET}}.', values)
+			: t('{{WINDOW}} is used up on every account for this model.', values);
+	}
+	if (item.minutes_left !== null && !item.lasts_until_reset) {
+		return values.RESET
+			? t(
+					'{{WINDOW}}: {{PERCENT}} left, about {{DURATION}} of work at the recent pace. It resets in {{RESET}}.',
+					values
+				)
+			: t('{{WINDOW}}: {{PERCENT}} left, about {{DURATION}} of work at the recent pace.', values);
+	}
+	return values.RESET
+		? t('{{WINDOW}}: only {{PERCENT}} left. It resets in {{RESET}}.', values)
+		: t('{{WINDOW}}: only {{PERCENT}} left.', values);
+};
+
+// A dismissed warning stays hidden for that window until it gets worse or the window resets.
+export type DismissedWarning = { level: Outlook['level']; resets_at: number | null };
+
+export const stillDismissed = (item: Outlook, dismissed?: DismissedWarning) =>
+	!!dismissed &&
+	levelRank(item.level) <= levelRank(dismissed.level) &&
+	// Readings can move the reset time by seconds; a later window starts the warning over.
+	Math.abs((item.resets_at ?? 0) - (dismissed.resets_at ?? 0)) < 300;

@@ -1162,7 +1162,12 @@
 				const data = event?.data?.data ?? null;
 
 				if (type === 'status') {
-					if (message?.statusHistory) {
+					// Mologate: a waiting chat's place in line comes again every few seconds
+					// (utils/chat_slots.py); only the latest is kept.
+					const last = message?.statusHistory?.at(-1);
+					if (last?.action === 'queue' && data?.action === 'queue') {
+						message.statusHistory[message.statusHistory.length - 1] = data;
+					} else if (message?.statusHistory) {
 						message.statusHistory.push(data);
 					} else {
 						message.statusHistory = [data];

@@ -123,7 +123,7 @@ usage. This console endpoint is undocumented and can change independently of the
 
 ## Verification
 
-- The suite now has 109 backend tests; image CI runs them on amd64 and arm64 before publishing.
+- The suite now has 117 backend tests; image CI runs them on amd64 and arm64 before publishing.
   The limits work after Phase 1 is tested in `test_usage_limits.py`.
   The 38-test suite of `aec1626` passed there:
   [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).

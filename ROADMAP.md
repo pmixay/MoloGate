@@ -58,13 +58,16 @@ The full design and phased plan for accounts, limits, credits and personal API k
     models whose provider reports no 5-hour, weekly or credit limit.
 - [x] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
-  - Done: Mologate keeps the last two hours of readings of each account's 5-hour, weekly and
-    credit windows and measures how fast they rose over the last 30 minutes. When what is left
-    across the model's accounts drops to 20% or less, or would run out within an hour at that
-    pace before the window resets, the limits ring turns amber (red at 10% or 15 minutes) and,
-    on wider screens, says "~25m left" beside it; its tooltip and panel say which limit, how much is left, about
-    how many minutes of work that is, and when it resets. The warning on a member's own share of
-    the pool comes with the allowance engine (Fair use).
+  - Done: when the selected model's 5-hour, weekly or credit limit runs low, a warning above the
+    message box says so, on every screen size: "5-hour limit: 17% left, about 38m of work at the
+    recent pace. It resets in 1h 58m." It counts every account that can serve the model, since a
+    request moves on to the next one when an account runs out. A window warns at 20% left, or when
+    it would run out within an hour before it resets (in red at 10% or 15 minutes, or when used up),
+    and the limits ring turns the same color with "~38m left" beside it. The pace comes from the
+    last 30 minutes of readings of each account, counting only the latest run of use, so an idle
+    hour before a busy session doesn't make the estimate too generous. A dismissed warning stays
+    hidden until it gets worse or the window resets. The warning on a member's own share of the
+    pool comes with the allowance engine (Fair use).
 - [ ] **Fair use:** each shared account is split 50/50 between its owner and a public pool; members
       past their share keep working on cheap worker models. See
       [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
@@ -85,7 +88,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
     change it under Settings → General, up to 10. Slots live in Redis, shared by every worker, and
     free themselves within a minute if a worker stops. Like every limit, it applies when
     `MOLOGATE_LIMITS_MODE` is `enforce`; in `observe`, the default for now, a chat that would
-    have waited is only logged.
+    have waited is only logged. Sub-agents keep Open WebUI's own caps from Settings → Sub-agents:
+    20 running at once and 20 in the background by default, counted across the whole server, not
+    per chat or per member as [Proposed limits](#proposed-limits) suggests.
 
 ## Tools, containers and capabilities
 

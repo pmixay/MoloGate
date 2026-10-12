@@ -152,12 +152,13 @@ class OutlookTests(unittest.IsolatedAsyncioTestCase):
         history = {}
         track_reading(history, [five_hour(10, now=0), {'id': 'requests', 'used_percent': 5}], 0)
         track_reading(history, [five_hour(11, now=0)], 20)
-        # Readings within a minute of each other collapse into the latest.
-        self.assertEqual([point[:2] for point in history['primary']], [[20, 11]])
+        track_reading(history, [five_hour(12, now=0)], 40)
+        # Within a minute, the first reading stays and only the latest after it is kept.
+        self.assertEqual([point[:2] for point in history['primary']], [[0, 10], [40, 12]])
         track_reading(history, [five_hour(14, now=0)], 90)
         track_reading(history, [five_hour(13, now=0)], 200)
         # A slightly lower reading is a stale one; short windows are not tracked.
-        self.assertEqual([point[1] for point in history['primary']], [11, 14, 14])
+        self.assertEqual([point[1] for point in history['primary']], [10, 12, 14, 14])
         self.assertNotIn('requests', history)
         # A reset (the reset time moved on, or a big drop) starts the history over.
         track_reading(history, [five_hour(2, resets_in=5 * 3600, now=4000)], 4000)
@@ -166,17 +167,39 @@ class OutlookTests(unittest.IsolatedAsyncioTestCase):
         track_reading(history, [five_hour(3, resets_in=5 * 3600, now=4000)], 4000 + 3 * 3600)
         self.assertEqual(len(history['primary']), 1)
 
+    def test_first_reading_after_an_idle_stretch_is_kept(self):
+        history = {}
+        track_reading(history, [five_hour(50, now=0)], 0)
+        # An hour later a session starts: requests every few seconds.
+        for offset, used in ((3600, 52), (3610, 53), (3620, 55)):
+            track_reading(history, [five_hour(used, now=0)], offset)
+        self.assertEqual([point[:2] for point in history['primary']], [[0, 50], [3600, 52], [3620, 55]])
+
     def test_pace_is_the_rise_over_the_last_half_hour(self):
         now = 10_000
         self.assertIsNone(burn_rate([], now))
         # One reading tells no pace; nothing read in the last half hour means no recent use.
         self.assertIsNone(burn_rate([[now - 60, 50, None]], now))
         self.assertEqual(burn_rate([[now - 3600, 50, None]], now), 0)
-        points = [[now - 3600, 20, None], [now - 1900, 30, None], [now - 600, 36, None], [now - 60, 42, None]]
-        # From the last reading before the half hour (30 at -1900 s) to 42: 12 points in ~31.7 min.
-        self.assertAlmostEqual(burn_rate(points, now), 12 / (1900 / 60))
+        # Use running on across the half hour: from the reading just before it (30 at -1900 s).
+        steady = [[now - 3600, 20, None], [now - 1900, 30, None]] + [
+            [now - seconds, 42 - (seconds - 60) / 200, None] for seconds in (1500, 1100, 700, 300, 60)
+        ]
+        self.assertAlmostEqual(burn_rate(steady, now), 12 / (1900 / 60))
         # Readings seconds apart are measured over at least five minutes.
         self.assertAlmostEqual(burn_rate([[now - 30, 40, None], [now - 10, 42, None]], now), 2 / 5)
+
+    def test_an_idle_stretch_never_dilutes_a_busy_session(self):
+        now = 10_000
+        # Idle for 80 minutes, then 8 points in the last 10 minutes: the pace is that session's.
+        session = [[now - 5400, 50, None], [now - 600, 52, None], [now - 300, 56, None], [now - 30, 60, None]]
+        self.assertAlmostEqual(burn_rate(session, now), 8 / 10)
+        # A short run, a quiet spell inside the half hour, then a new run: only the new run counts.
+        restarted = [[now - 1500, 40, None], [now - 1400, 41, None], [now - 400, 44, None], [now - 100, 47, None]]
+        self.assertAlmostEqual(burn_rate(restarted, now), 3 / (400 / 60))
+        # A new run of one reading is measured from the reading before it.
+        single = [[now - 1500, 40, None], [now - 20, 46, None]]
+        self.assertAlmostEqual(burn_rate(single, now), 6 / (1500 / 60))
 
     def test_accounts_that_take_over_from_each_other_add_up(self):
         now = 0
@@ -297,7 +320,7 @@ class ChatSlotTests(unittest.IsolatedAsyncioTestCase):
         seen = {'c3': [], 'c4': []}
 
         def notice(chat_id):
-            async def on_wait(place, active, limit):
+            async def on_wait(place, active, limit, repeat=False):
                 seen[chat_id].append((place, active, limit))
 
             return on_wait
@@ -323,17 +346,74 @@ class ChatSlotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stopping_a_waiting_chat_leaves_the_line(self):
         held = [await chat_slots.acquire(self.redis, self.user, f'c{index}') for index in range(2)]
-        waiting = asyncio.create_task(chat_slots.acquire(self.redis, self.user, 'stopped'))
+        notices = []
+
+        async def on_wait(place, active, limit, repeat=False):
+            notices.append(place)
+
+        waiting = asyncio.create_task(chat_slots.acquire(self.redis, self.user, 'stopped', on_wait))
         await asyncio.sleep(0.05)
         waiting.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await waiting
+        # The stopped reply's "Waiting" line is cleared.
+        self.assertEqual(notices, [0, None])
         later = asyncio.create_task(chat_slots.acquire(self.redis, self.user, 'later'))
         await chat_slots.release(self.redis, held[0])
         # The stopped chat is no longer ahead of the later one.
         slot = await asyncio.wait_for(later, 1)
         for item in (held[1], slot):
             await chat_slots.release(self.redis, item)
+
+    async def test_a_waiting_chat_hears_its_place_again_until_its_turn(self):
+        held = [await chat_slots.acquire(self.redis, self.user, f'c{index}') for index in range(2)]
+        notices = []
+
+        async def on_wait(place, active, limit, repeat=False):
+            notices.append((place, repeat))
+
+        with patch.object(chat_slots, 'NOTICE_REPEAT_SECONDS', 0.02):
+            waiting = asyncio.create_task(chat_slots.acquire(self.redis, self.user, 'late', on_wait))
+            await asyncio.sleep(0.1)
+            await chat_slots.release(self.redis, held[0])
+            slot = await asyncio.wait_for(waiting, 1)
+        # A page that missed the first notice (a new chat learns its id late) still gets it.
+        self.assertEqual(notices[0], (0, False))
+        self.assertIn((0, True), notices)
+        self.assertEqual(notices[-1], (None, False))
+        for item in (held[1], slot):
+            await chat_slots.release(self.redis, item)
+
+    async def test_only_changes_in_line_are_saved_on_the_reply(self):
+        sent = []
+
+        async def get_event_emitter(metadata, update_db=True):
+            async def emit(event):
+                sent.append((event['data'].get('place'), update_db))
+
+            return emit
+
+        with patch('open_webui.socket.main.get_event_emitter', get_event_emitter):
+            notice = chat_slots.queue_notice({'chat_id': 'c', 'message_id': 'm'})
+            await notice(1, 3, 3)
+            await notice(1, 3, 3, repeat=True)
+            await notice(None, 0, 3)
+        self.assertEqual(sent, [(1, True), (1, False), (None, True)])
+
+    async def test_a_chat_that_lost_its_lease_takes_its_slot_back_without_queueing(self):
+        self.limit = 1
+        generating = await chat_slots.acquire(self.redis, self.user, 'generating')
+        # Its lease is lost (Redis restarted, or the worker stalled past the lease).
+        await chat_slots.leave(self.redis, self.user, generating.ticket)
+        newer = await asyncio.wait_for(chat_slots.acquire(self.redis, self.user, 'newer'), 1)
+        await chat_slots.renew(self.redis, self.user, generating.ticket)
+        # Still generating, it counts again, and it never stands in line ahead of a waiting chat.
+        self.assertEqual(await chat_slots.active_count(self.redis, self.user), 2)
+        self.assertEqual(await chat_slots.try_acquire(self.redis, self.user, 'waiting', 1, time.time()), 0)
+        for slot in (generating, newer):
+            await chat_slots.release(self.redis, slot)
+        self.assertEqual(await chat_slots.try_acquire(self.redis, self.user, 'waiting', 1, time.time()), -1)
+        await chat_slots.leave(self.redis, self.user, 'waiting')
 
     async def test_models_answering_in_one_chat_share_its_slot(self):
         one = await chat_slots.acquire(self.redis, self.user, 'multi')

@@ -30,6 +30,9 @@ HARD_CAP = 10
 LEASE_SECONDS = 60
 RENEW_SECONDS = 20
 POLL_SECONDS = 1.0
+# A new chat's page learns its chat id only when the request returns, and drops events for a
+# chat it doesn't know yet; the place in line is sent again this often while the chat waits.
+NOTICE_REPEAT_SECONDS = 3
 KEY_PREFIX = 'mologate:chat_slots:'
 
 # Atomically: drop expired slots and waiters, join the line, and take a slot when one is free for
@@ -161,18 +164,40 @@ async def leave(redis, user_id: str, ticket: str) -> None:
             state.line.pop(ticket, None)
 
 
-async def _renew(redis, user_id: str, ticket: str, limit: int) -> None:
+async def renew(redis, user_id: str, ticket: str, now: float | None = None) -> None:
+    """Extend a generating chat's slot. A chat that lost its lease (Redis restarted, a worker
+    stalled) takes its slot back, even past the cap: it is generating, and must never sit in line
+    ahead of chats that are waiting."""
+    now = time.time() if now is None else now
+    if redis is not None:
+        slots, line, leases = _keys(user_id)
+        pipe = redis.pipeline(transaction=False)
+        pipe.zadd(slots, {ticket: now + LEASE_SECONDS})
+        pipe.zrem(line, ticket)
+        pipe.hdel(leases, ticket)
+        for key in (slots, line, leases):
+            pipe.expire(key, LEASE_SECONDS * 2)
+        await pipe.execute()
+        return
+    async with _memory_lock:
+        state = _memory.setdefault(user_id, _Line())
+        state.slots[ticket] = now + LEASE_SECONDS
+        state.line.pop(ticket, None)
+
+
+async def _renew(redis, user_id: str, ticket: str) -> None:
     while True:
         await asyncio.sleep(RENEW_SECONDS)
         try:
-            await try_acquire(redis, user_id, ticket, limit, time.time())
+            await renew(redis, user_id, ticket)
         except Exception as e:
             log.debug('Could not renew a chat slot: %s', e)
 
 
 async def acquire(redis, user_id: str, chat_id: str, on_wait=None) -> Slot | None:
-    """Wait for a slot for this chat. `on_wait(place, active, limit)` is awaited when the place in
-    line changes (place 0 is next) and with place None once the slot is taken after waiting."""
+    """Wait for a slot for this chat. `on_wait(place, active, limit, repeat)` is awaited when the
+    place in line changes (place 0 is next), again every few seconds with `repeat` set, and with
+    place None once the slot is taken after waiting (or the chat was stopped)."""
     mode = await Config.get('mologate.limits_mode', 'observe')
     if mode == 'off':
         return None
@@ -197,24 +222,29 @@ async def acquire(redis, user_id: str, chat_id: str, on_wait=None) -> Slot | Non
         return None
     _holders[ticket] = _holders.get(ticket, 0) + 1
     if ticket not in _renewers:
-        _renewers[ticket] = asyncio.create_task(_renew(redis, user_id, ticket, limit))
+        _renewers[ticket] = asyncio.create_task(_renew(redis, user_id, ticket))
     return Slot(user_id, ticket)
 
 
 async def _wait_in_line(redis, user_id: str, ticket: str, limit: int, on_wait) -> None:
     joined = time.time()
     last_place = None
+    noticed_at = 0.0
     try:
         while (place := await try_acquire(redis, user_id, ticket, limit, joined)) >= 0:
-            if place != last_place and on_wait is not None:
-                last_place = place
+            repeat = place == last_place
+            if on_wait is not None and (not repeat or time.monotonic() - noticed_at >= NOTICE_REPEAT_SECONDS):
+                last_place, noticed_at = place, time.monotonic()
                 with contextlib.suppress(Exception):
-                    await on_wait(place, await active_count(redis, user_id), limit)
+                    await on_wait(place, await active_count(redis, user_id), limit, repeat=repeat)
             await asyncio.sleep(POLL_SECONDS)
     except asyncio.CancelledError:
-        # Stopped while waiting: leave the line.
+        # Stopped while waiting: leave the line, and clear the waiting line under the reply.
         with contextlib.suppress(Exception):
             await asyncio.shield(leave(redis, user_id, ticket))
+        if last_place is not None and on_wait is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.shield(on_wait(None, 0, limit))
         raise
     if last_place is not None and on_wait is not None:
         with contextlib.suppress(Exception):
@@ -238,10 +268,11 @@ async def release(redis, slot: Slot | None) -> None:
 def queue_notice(metadata: dict):
     """Show the waiting chat its place in line, as a status line under its reply."""
 
-    async def on_wait(place: int | None, active: int, limit: int) -> None:
+    async def on_wait(place: int | None, active: int, limit: int, repeat: bool = False) -> None:
         from open_webui.socket.main import get_event_emitter
 
-        emitter = await get_event_emitter(metadata)
+        # A repeat only reaches the open page; the saved reply keeps one line per change.
+        emitter = await get_event_emitter(metadata, update_db=not repeat)
         if not emitter:
             return
         if place is None:

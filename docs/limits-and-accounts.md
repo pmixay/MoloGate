@@ -319,12 +319,14 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   published price has an unknown cost, and the accounts page says how many such requests it
   could not count. Subscriptions have no per-request cost.
 - **Pace (the low-limit warning):** each account keeps two hours of readings of its 5-hour,
-  weekly and credit windows (one per minute, in Redis with the limit snapshots). The rise over the
-  last 30 minutes gives a pace; the remaining shares of every account that can serve a model,
-  weighted by `c_a`, divided by their combined pace, give the minutes of work left
-  (`limit_outlook` in `utils/provider_limits.py`, returned by `GET /api/v1/models/model/limits`).
-  A window is low at 20% left or an hour of work, critical at 10% or 15 minutes, unless it resets
-  first.
+  weekly and credit windows (the first and the latest of each minute, in Redis with the limit
+  snapshots). Readings come with requests, so a gap of over 10 minutes between two is idle time;
+  the rise over the latest run of use within the last 30 minutes gives a pace. The remaining
+  shares of every account that can serve a model, weighted by `c_a`, divided by their combined
+  pace, give the minutes of work left (`limit_outlook` in `utils/provider_limits.py`, returned by
+  `GET /api/v1/models/model/limits`). A window is low at 20% left or an hour of work, critical at
+  10% or 15 minutes, unless it resets first. The chat shows it above the message box
+  (`LimitsWarning.svelte`) and on the limits ring.
 - **Polling:** codex-lb reads each ChatGPT account's windows from OpenAI every minute and from
   every response; Mologate takes them from its account summary. Store them in `account_window`.
 - **Owner and team split (started, an estimate):** until the ledger exists, Mologate counts the

@@ -75,6 +75,7 @@
 	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
 	import ContextIndicator from './ContextIndicator.svelte';
 	import LimitsIndicator from './LimitsIndicator.svelte';
+	import LimitsWarning from './LimitsWarning.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -1777,6 +1778,9 @@
 								</div>
 							</div>
 						{/if}
+
+						<!-- Mologate: the low-limit warning for the selected model (LimitsIndicator loads the limits). -->
+						<LimitsWarning selectedModels={selectedModelIds} />
 
 						<div
 							id="message-input-container"

@@ -58,8 +58,10 @@ HISTORY_KEY_PREFIX = 'mologate:provider_history:'
 TRACKED_WINDOWS = ('primary', 'secondary', 'credits')
 HISTORY_SECONDS = 2 * 60 * 60
 HISTORY_STEP_SECONDS = 60
-HISTORY_POINTS = 150
+HISTORY_POINTS = 300
 RATE_SPAN_SECONDS = 30 * 60
+# No reading for this long means no request: the account sat idle.
+IDLE_GAP_SECONDS = 10 * 60
 # Two readings a few seconds apart say little about a pace.
 MIN_RATE_MINUTES = 5
 # Warn when this much of a window is left across the model's accounts, or this little time at the recent pace.
@@ -385,7 +387,7 @@ def track_reading(history: dict, windows: list[dict], now: float) -> None:
         if window_id not in TRACKED_WINDOWS or used is None:
             continue
         resets_at = _number(window.get('resets_at'))
-        points = history.get(window_id) or []
+        points = list(history.get(window_id) or [])
         if points:
             last_used, last_reset = points[-1][1], points[-1][2]
             started_over = used < last_used - RESET_DROP or (
@@ -393,31 +395,42 @@ def track_reading(history: dict, windows: list[dict], now: float) -> None:
             )
             if started_over:
                 points = []
-            elif now - points[-1][0] < HISTORY_STEP_SECONDS:
-                # Readings come with every request; one per step is enough to see a trend.
-                points = points[:-1]
-            # A slightly lower reading is a stale one.
-            used = max(used, last_used) if points else used
+            else:
+                # A slightly lower reading is a stale one.
+                used = max(used, last_used)
+                # Readings come with every request. Within a step only the latest one after the
+                # step's first is kept, so where each run of use started stays known.
+                if len(points) > 1 and now - points[-2][0] < HISTORY_STEP_SECONDS:
+                    points.pop()
         points.append([round(now, 1), used, resets_at])
         history[window_id] = [point for point in points if point[0] >= now - HISTORY_SECONDS][-HISTORY_POINTS:]
 
 
 def burn_rate(points: list, now: float, span: float = RATE_SPAN_SECONDS) -> float | None:
-    """Percent of the window used per minute over the last `span`, or None when that is unknown.
+    """Percent of the window used per minute recently, or None when that is unknown.
 
-    The reading from just before the span is where it started; with none, the first reading in it.
+    Readings come with requests, so a long gap between two of them is idle time. The pace is
+    measured over the latest run of use within the last `span`, from the reading just before the
+    span when use ran on across it: an idle hour before a busy session never dilutes its pace.
     No reading inside the span means nothing was used recently (rate 0).
     """
     start = now - span
-    before = [point for point in points if point[0] <= start]
-    inside = [point for point in points if point[0] > start]
-    if not inside:
-        return 0.0 if before else None
-    base = before[-1] if before else inside[0]
-    if base is inside[-1]:
+    recent = [point for point in points if point[0] > start]
+    if not recent:
+        return 0.0 if points else None
+    sequence = [point for point in points if point[0] <= start][-1:] + recent
+    first = len(sequence) - 1
+    while first > 0 and sequence[first][0] - sequence[first - 1][0] <= IDLE_GAP_SECONDS:
+        first -= 1
+    if first < len(sequence) - 1:
+        base = sequence[first]
+    elif first > 0:
+        # A run of one reading tells no pace by itself: measure from the reading before it.
+        base = sequence[first - 1]
+    else:
         return None
     minutes = max(MIN_RATE_MINUTES, (now - base[0]) / 60)
-    return max(0.0, inside[-1][1] - base[1]) / minutes
+    return max(0.0, sequence[-1][1] - base[1]) / minutes
 
 
 async def account_rates(redis, account_id: str, now: float | None = None) -> dict[str, float | None]:
