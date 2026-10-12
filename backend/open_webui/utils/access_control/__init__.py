@@ -326,6 +326,17 @@ async def has_base_model_access(
     seen = {model_info.id}
     while base_model_id and base_model_id not in seen:
         seen.add(base_model_id)
+        # Mologate: presets cannot grant access to someone else's private provider account.
+        if base_model_id.startswith('account:'):
+            from types import SimpleNamespace
+            from fastapi import HTTPException
+            from open_webui.utils.provider_accounts import select_account
+
+            try:
+                await select_account(base_model_id, SimpleNamespace(id=user_id, role=user_role))
+                return True
+            except HTTPException:
+                return False
         base_model_info = await Models.get_model_by_id(base_model_id, db=db)
         if base_model_info is None:
             if user_role != 'admin':

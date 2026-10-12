@@ -1,0 +1,3 @@
+.update.lock
+.install.lock
+caddy-sites/*.caddy

@@ -177,13 +177,7 @@
 					<Switch bind:state={adminConfig.ENABLE_LOGIN_FORM} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.authentication.newSignUps.label')}
-					description={$i18n.t('settings.admin.authentication.newSignUps.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_SIGNUP} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
+				<!-- Mologate: no sign-up switch; admins add members in Admin Panel > Users. -->
 
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.authentication.apiKeys.label')}

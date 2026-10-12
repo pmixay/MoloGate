@@ -5,27 +5,56 @@ are not in priority order. Tick an item off when it ships.
 
 ## Limits
 
+The full design and phased plan for accounts, limits, credits and personal API keys is in
+[docs/limits-and-accounts.md](docs/limits-and-accounts.md). It replaces the fair-use proposal below.
+
 - [ ] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
       the subscription type, and whether it is an API key or a full account. Accounts are shared by the
       whole team.
+  - Started: Settings → Provider accounts lists the member's own accounts and every shared one
+    (admins see all) as compact rows, collapsed by default. A row shows the generated name
+    (`Account #1n9Dk5`), the provider, which tells an API key from a ChatGPT account, the plan,
+    owner, the 5-hour and weekly bars and a ChatGPT account's reset coupons. Expanded, it shows
+    every limit window the provider reports with percent used and reset time, who can use it, and
+    an API key's monthly budget. A shared account's 5-hour and weekly windows are split into the
+    owner's half and the team's half, each with its own bar, estimated from who sent the requests
+    between readings (not enforced yet). Admins can add team accounts that belong to no member,
+    and admin connections to a supported provider become such accounts. Missing: how much of the
+    budget is left, and exact per-member numbers, which need the usage ledger.
 - [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
-- [ ] **Account switching and limit resets:**
+  - Started: each provider account keeps the limits its provider reports and shows them on its card
+    in Settings → Provider accounts: Codex's 5-hour and weekly windows, Z.ai's coding-plan quota,
+    and the request and token limits in OpenAI, OpenRouter and Anthropic response headers, which
+    appear once the account has served a request. Missing: an OpenRouter key's credit limit and
+    usage, which its `/key` endpoint reports.
+- [x] **Account switching and limit resets:**
   - When an account reaches 0%, switch automatically to another shared account that still has quota.
   - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
     these).
   - Any team member can turn coupon auto-reset off globally.
+  - Done: a request that finds an account empty, or gets a 429 from it, moves on to the next account
+    that can serve the model: the member's own first, then shared ones. When every one is empty,
+    Mologate redeems the Codex reset coupon that expires soonest and retries, at most once every
+    10 minutes. Any member turns this off for everyone with the Auto-reset switch in Settings →
+    Provider accounts; there is no per-account switch. Each ChatGPT account shows its coupon count,
+    with the last reset in the tooltip. ChatGPT limits and coupons come from codex-lb.
+    Details in [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-automatic-limit-reset).
 - [ ] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
     weekly limits.
   - Started: the context indicator's panel shows the selected model's limits when its provider reports
-    them in response headers (Codex's 5-hour and weekly windows, or OpenAI-style request and token
-    limits). They are kept per connection, so every model on a shared account shows the same ones.
+    them (Codex's 5-hour and weekly windows, Z.ai's coding-plan quota, or OpenAI-, OpenRouter- and
+    Anthropic-style request and token limits). They are kept per account or connection, so every
+    model on one account shows the same ones; for a model several accounts offer, the panel shows
+    the account the member's request would try first. Missing: a ring showing the 5-hour and
+    weekly limits; the existing ring shows the context window.
 - [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
-- [ ] **Fair use:** wide per-person limits on the shared accounts, so one person can't use up the
-      quota for everyone. Proposed defaults under [Proposed limits](#proposed-limits).
+- [ ] **Fair use:** each shared account is split 50/50 between its owner and a public pool; members
+      past their share keep working on cheap worker models. See
+      [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
 - [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
@@ -68,6 +97,8 @@ are not in priority order. Tick an item off when it ships.
 - [ ] Accept files of any type up to 500 MB.
   - Copy attachments into the sandbox automatically.
   - Tell the agent which files were attached, if that isn't already done.
+  - Started: until the sandbox exists, an uploaded file reaches the model as its full extracted
+    text, without embeddings or a vector database. Existing installs are switched over once.
 - [ ] Browse the files in the current container and preview most of them online, with syntax
       highlighting.
 - [ ] **Change summary:**
@@ -134,6 +165,9 @@ are not in priority order. Tick an item off when it ships.
   - When the agent asks the user a question and gets no answer for more than a minute, the recommended
     option is chosen automatically.
   - A crossed-out-timer button turns the timer off, for when the user is still thinking.
+  - **Open WebUI today:** `ask_user` asks one to three questions with two or three options each,
+    and the first option is labelled Recommended. When its timeout (one to four minutes, two by
+    default) runs out, the question is cancelled instead of answered.
 
 ### Tasks
 
@@ -149,6 +183,10 @@ are not in priority order. Tick an item off when it ships.
       [Proposed limits](#proposed-limits)).
 - [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
       [Proposed limits](#proposed-limits)).
+  - **Open WebUI today:** an agent can set a one-shot `timer` that sends a prompt back into the
+    chat. With the automations permission (off for members by default), `create_automation` runs a
+    prompt once or on a recurring schedule; its limits (`AUTOMATION_MAX_COUNT`,
+    `AUTOMATION_MIN_INTERVAL`) are unset by default. None of the proposed limits apply yet.
 - [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
   - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
     panel above the message box lists it with "X out of N tasks completed", but only while a reply is
@@ -200,6 +238,8 @@ are not in priority order. Tick an item off when it ships.
 
 ## Deployment
 
+- [ ] **Backups:** nightly database and data backups kept off the VPS, with a tested restore. They
+      were removed while Mologate is in development.
 - [ ] **Deploy node:**
   - Container nodes for long-running deployments.
   - The agent picks a preset Small, Medium or Large container for a project.
@@ -228,6 +268,7 @@ are not in priority order. Tick an item off when it ships.
 - [ ] **Agent sync:** agents in a workspace's chats can send messages to each other and receive updates
       about what the others are doing, to stay in sync.
 - [ ] **Authorship:** each chat shows who created it, and each message shows who sent it.
+  - Started: the sidebar's Team list shows who created each chat opened to the team.
 - [x] **Personal chats:** chats outside a workspace are private to their creator by default. They can
       be opened to the team with the share feature (see [Interface](#interface)).
 
@@ -314,9 +355,16 @@ are not in priority order. Tick an item off when it ships.
     tools.
   - Open WebUI already has per-user API keys (off by default) and an OpenAI-compatible
     `/api/chat/completions` endpoint to build on.
-- [ ] **codex-lb integration for ChatGPT accounts:**
+- [x] **codex-lb integration for ChatGPT accounts:**
   - Cut codex-lb down to the minimum it needs: accounts and their limits.
   - Show everything inside Mologate instead of the codex-lb interface.
+  - Done: codex-lb runs beside Mologate as a pinned, unmodified image on a private network, with no
+    published port and its dashboard unused. Mologate drives only its sign-in, account, limit,
+    coupon and model endpoints, and sends ChatGPT requests through its proxy, which presents them
+    as the Codex CLI. Each account gets a codex-lb key scoped to that one account, so a private
+    account never serves anyone else. Sign-in, limits and coupons all show in Settings → Provider
+    accounts. Not yet deployed or tried with a live ChatGPT account. Details in
+    [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
 - [ ] **Providers needed now:**
   - Codex, via codex-lb as described above;
   - OpenCode, the free-model setup described above;
@@ -325,6 +373,9 @@ are not in priority order. Tick an item off when it ships.
   - When connecting each provider, check with a real key that the chosen effort level reaches it in
     the format it expects. Only a test server has been checked so far; OpenRouter, for example,
     documents a `reasoning: {effort}` object.
+  - Started: ChatGPT accounts connect through codex-lb (sign-in link or device code), and Z.ai coding
+    plans and OpenRouter keys connect in Settings → Provider accounts, as do Anthropic and OpenAI API
+    keys. A Z.ai coding-plan account has served real chats. OpenCode is not started.
 
 ## Proposed limits
 
@@ -394,15 +445,5 @@ use their own limits in this section.
 
 ### Fair use of shared accounts
 
-Deliberately wide, so they only stop real overuse.
-
-| Limit                                                 | Default | Range   |
-| ----------------------------------------------------- | ------- | ------- |
-| Share of the team's combined 5-hour quota, per person | 70%     | 30–100% |
-| Share of the team's combined weekly quota, per person | 50%     | 20–100% |
-
-- **Warning:** a person sees a warning at 80% of their share.
-- **At the limit:** their new requests wait until the window moves on.
-- **Solo use:** the limit doesn't apply while nobody else on the team has used Mologate in the last
-  24 hours, so a person working alone is never blocked.
-- **Overrides:** any team member can lift the limit for someone temporarily.
+Replaced by the owner reserve, public pool and worker tier in
+[docs/limits-and-accounts.md](docs/limits-and-accounts.md).

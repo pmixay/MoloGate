@@ -12,11 +12,21 @@ or key), so every model served by it shows the same limits. Recognized headers:
 
 Snapshots live in Redis when it is configured, so every worker sees them, and in memory
 otherwise. Providers that send none of these headers simply have no limits to show.
+
+Mologate: the 5-hour and weekly windows of subscription accounts are also split between the owner
+and the rest of the team. Each rise in a window's used percent is shared out by the number of
+requests the owner and the team sent since the previous reading. A rise with no requests from
+Mologate is the owner's use outside it, and so is whatever was used before Mologate first read the
+window. This is an estimate until the usage ledger (docs/limits-and-accounts.md §8) exists.
 """
 
+import asyncio
 import logging
+import hashlib
+import math
 import re
 import time
+from datetime import datetime
 from collections.abc import Mapping
 from typing import Any
 
@@ -25,10 +35,19 @@ from open_webui.utils.json_codec import JSONCodec
 log = logging.getLogger(__name__)
 
 REDIS_KEY_PREFIX = 'mologate:provider_limits:'
+SPLIT_KEY_PREFIX = 'mologate:provider_split:'
 # A snapshot older than this says little about the account now.
 SNAPSHOT_TTL_SECONDS = 8 * 24 * 60 * 60
+# The windows an account's owner and the team share (5-hour and weekly).
+SPLIT_WINDOWS = ('primary', 'secondary')
+# Readings come from several sources and can lag a little; only a bigger drop, or a reset time
+# that moved on, means the window started over.
+RESET_DROP = 5
+RESET_MOVE_SECONDS = 300
 
 _snapshots: dict[str, dict] = {}
+_splits: dict[str, dict] = {}
+_split_lock = asyncio.Lock()
 
 _DURATION_PART = re.compile(r'(\d+(?:\.\d+)?)(ms|h|m|s)')
 
@@ -38,7 +57,7 @@ def _number(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number == number else None  # drop NaN
+    return number if math.isfinite(number) else None
 
 
 def _parse_duration_seconds(value: str | None) -> float | None:
@@ -113,6 +132,27 @@ def parse_rate_limit_headers(headers: Mapping[str, str], now: float | None = Non
         _count_window(headers, 'tokens', '-tokens', now),
         _count_window(headers, 'requests', '', now),
     ]
+    # Mologate: Anthropic uses its own prefix and ISO-8601 reset timestamps.
+    for name in ('requests', 'tokens', 'input-tokens', 'output-tokens'):
+        prefix = f'anthropic-ratelimit-{name}'
+        limit = _number(headers.get(prefix + '-limit'))
+        remaining = _number(headers.get(prefix + '-remaining'))
+        if limit and limit > 0 and remaining is not None:
+            try:
+                resets_at = int(
+                    datetime.fromisoformat(headers.get(prefix + '-reset', '').replace('Z', '+00:00')).timestamp()
+                )
+            except (ValueError, OverflowError):
+                resets_at = None
+            windows.append(
+                {
+                    'id': name,
+                    'used_percent': max(0.0, min(100.0, (1 - remaining / limit) * 100)),
+                    'limit': int(limit),
+                    'remaining': int(remaining),
+                    'resets_at': resets_at,
+                }
+            )
 
     seen = set()
     result = []
@@ -123,28 +163,174 @@ def parse_rate_limit_headers(headers: Mapping[str, str], now: float | None = Non
     return result
 
 
-def connection_key(url_idx: Any) -> str:
-    return f'openai:{url_idx}'
+def legacy_account_key(url: str, key: str) -> str:
+    """Mologate: legacy connections also keep their identity when reordered."""
+    return 'legacy:' + hashlib.sha256(f'{url.rstrip("/")}\0{key}'.encode()).hexdigest()
 
 
-async def record_provider_limits(redis, url_idx: Any, headers: Mapping[str, str]) -> None:
+def window_exhausted(window: dict, now: float) -> bool:
+    resets_at = _number(window.get('resets_at'))
+    return (_number(window.get('used_percent')) or 0) >= 100 and (resets_at is None or resets_at > now)
+
+
+def snapshot_exhausted(snapshot: dict | None, now: float | None = None) -> bool:
+    """Mologate: only a reported empty window counts; unknown quota is never treated as empty."""
+    if not snapshot:
+        return False
+    now = time.time() if now is None else now
+    return any(window_exhausted(window, now) for window in snapshot.get('windows', []))
+
+
+def parse_zai_quota(result: dict) -> list[dict]:
+    """Only map observed coding-plan windows. Unknown/empty quota is not zero usage."""
+    # Z.ai wraps answers as {code, msg, data, success}; some only carry code 200.
+    if result.get('success') is False or (result.get('success') is not True and result.get('code') != 200):
+        return []
+    windows = []
+    for window in (result.get('data') or {}).get('limits', []):
+        if window.get('type') not in ('CREDIT_LIMIT', 'TOKENS_LIMIT'):
+            continue
+        used = _number(window.get('percentage'))
+        # Live coding-plan responses identify the 5-hour window as (3,5), weekly as (6,1).
+        minutes = {(3, 5): 300, (6, 1): 10080}.get((window.get('unit'), window.get('number')))
+        if used is None or minutes is None:
+            continue
+        windows.append(
+            {
+                'id': 'primary' if minutes == 300 else 'secondary',
+                'used_percent': max(0, min(100, used)),
+                'window_minutes': minutes,
+                'resets_at': _parse_reset_at(str(window.get('nextResetTime', '')), time.time()),
+            }
+        )
+    return windows
+
+
+async def record_provider_limits(redis, account_id: str, headers: Mapping[str, str]) -> None:
     """Keep what a response's headers say about the connection's limits. Never raises."""
     try:
         windows = parse_rate_limit_headers(headers)
         if not windows:
             return
 
-        key = connection_key(url_idx)
-        snapshot = {'windows': windows, 'updated_at': int(time.time())}
-        _snapshots[key] = snapshot
-        if redis is not None:
-            await redis.set(f'{REDIS_KEY_PREFIX}{key}', JSONCodec.dumps(snapshot), ex=SNAPSHOT_TTL_SECONDS)
+        # Headers carry no reset coupons; keep the count the account service last reported.
+        previous = await get_provider_limits(redis, account_id) or {}
+        await record_provider_snapshot(redis, account_id, windows, previous.get('reset_credits'))
     except Exception as e:
         log.debug('Could not record provider limits: %s', e)
 
 
-async def get_provider_limits(redis, url_idx: Any) -> dict | None:
-    key = connection_key(url_idx)
+async def record_provider_snapshot(
+    redis, account_id: str, windows: list[dict], reset_credits: float | None = None
+) -> None:
+    snapshot = {'windows': windows, 'updated_at': int(time.time())}
+    if reset_credits is not None:
+        snapshot['reset_credits'] = int(reset_credits)
+    _snapshots[account_id] = snapshot
+    if redis is not None:
+        try:
+            await redis.set(f'{REDIS_KEY_PREFIX}{account_id}', JSONCodec.dumps(snapshot), ex=SNAPSHOT_TTL_SECONDS)
+        except Exception:
+            log.debug('Provider limit storage unavailable; using memory.')
+    if not any(window.get('id') in SPLIT_WINDOWS for window in windows):
+        return
+    try:
+        async with _split_lock:
+            state = await _load_split(redis, account_id)
+            split_reading(state, windows)
+            await _save_split(redis, account_id, state)
+    except Exception as e:
+        log.debug('Could not split provider usage: %s', e)
+
+
+async def _load_split(redis, account_id: str) -> dict:
+    state = None
+    if redis is not None:
+        try:
+            raw = await redis.get(f'{SPLIT_KEY_PREFIX}{account_id}')
+            state = JSONCodec.loads(raw) if raw else None
+        except Exception as e:
+            log.debug('Could not read the usage split: %s', e)
+    state = state or _splits.get(account_id) or {}
+    state.setdefault('windows', {})
+    state.setdefault('pending', {})
+    return state
+
+
+async def _save_split(redis, account_id: str, state: dict) -> None:
+    _splits[account_id] = state
+    if redis is not None:
+        try:
+            await redis.set(f'{SPLIT_KEY_PREFIX}{account_id}', JSONCodec.dumps(state), ex=SNAPSHOT_TTL_SECONDS)
+        except Exception:
+            log.debug('Usage split storage unavailable; using memory.')
+
+
+def split_reading(state: dict, windows: list[dict]) -> None:
+    """Share each window's rise since the last reading between the owner and the team."""
+    for window in windows:
+        window_id = window.get('id')
+        used = _number(window.get('used_percent'))
+        if window_id not in SPLIT_WINDOWS or used is None:
+            continue
+        resets_at = _number(window.get('resets_at'))
+        previous = state['windows'].get(window_id)
+        pending = state['pending'].get(window_id) or {'owner': 0, 'team': 0}
+        if previous is None:
+            # Use before Mologate first read this window is the owner's (decision 4).
+            state['windows'][window_id] = {'used': used, 'resets_at': resets_at, 'team': 0.0}
+            state['pending'].pop(window_id, None)
+            continue
+        started_over = used < previous['used'] - RESET_DROP or (
+            resets_at is not None
+            and previous.get('resets_at') is not None
+            and resets_at > previous['resets_at'] + RESET_MOVE_SECONDS
+        )
+        baseline, team = (0.0, 0.0) if started_over else (previous['used'], previous['team'])
+        rise = used - baseline
+        if rise > 0:
+            requests = pending['owner'] + pending['team']
+            if requests:
+                team += rise * pending['team'] / requests
+            # A rise with no requests from Mologate is the owner's use outside it.
+            state['pending'].pop(window_id, None)
+        state['windows'][window_id] = {
+            # A slightly lower reading is a stale one; it never undoes use already counted.
+            'used': max(used, baseline),
+            'resets_at': resets_at,
+            'team': min(team, max(used, baseline)),
+        }
+
+
+async def count_account_request(redis, account_id: str, by_owner: bool) -> None:
+    """Note who sent a request, so the next rise in the account's windows can be shared out."""
+    try:
+        async with _split_lock:
+            state = await _load_split(redis, account_id)
+            for window_id in SPLIT_WINDOWS:
+                pending = state['pending'].setdefault(window_id, {'owner': 0, 'team': 0})
+                pending['owner' if by_owner else 'team'] += 1
+            await _save_split(redis, account_id, state)
+    except Exception as e:
+        log.debug('Could not count the account request: %s', e)
+
+
+async def with_team_use(redis, account_id: str, snapshot: dict | None) -> dict | None:
+    """The snapshot with each shared window's team use (`team_percent`), in account percent."""
+    if not snapshot:
+        return snapshot
+    state = await _load_split(redis, account_id)
+    windows = []
+    for window in snapshot.get('windows', []):
+        split = state['windows'].get(window.get('id'))
+        if window.get('id') in SPLIT_WINDOWS and split is not None:
+            window = {**window, 'team_percent': round(min(split['team'], window.get('used_percent') or 0), 2)}
+        windows.append(window)
+    return {**snapshot, 'windows': windows}
+
+
+async def get_provider_limits(redis, account_id: str) -> dict | None:
+    key = account_id
     snapshot = None
     if redis is not None:
         try:

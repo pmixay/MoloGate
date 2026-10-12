@@ -1,0 +1,147 @@
+name: mologate
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mologate:
+    image: ${IMAGE:-ghcr.io/pmixay/mologate:main-slim}
+    restart: unless-stopped
+    mem_limit: 1536m
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      WEBUI_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      # Only the site itself may call the API with a member's session, and the cookie stays HTTPS-only.
+      CORS_ALLOW_ORIGIN: https://${DOMAIN}
+      WEBUI_SESSION_COOKIE_SECURE: "true"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY in .env}
+      WEBUI_AUTH: "True"
+      DATABASE_URL: postgresql://mologate:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/mologate
+      REDIS_URL: redis://redis:6379/0
+      WEBSOCKET_MANAGER: redis
+      DEFAULT_USER_ROLE: pending
+      ENABLE_OLLAMA_API: "False"
+      UVICORN_WORKERS: "1"
+      MOLOGATE_LIMITS_MODE: observe
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_OPENAI_API_BASE_URL: ${RAG_OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      RAG_OPENAI_API_KEY: ${RAG_OPENAI_API_KEY:-}
+      VECTOR_DB: pgvector
+      MOLOGATE_CODEX_LB_URL: http://codex-lb:2455
+    volumes:
+      - data:/app/backend/data
+    expose: ["8080"]
+    networks:
+      default:
+      edge:
+        aliases: ["${APP_UPSTREAM:-mologate-production}"]
+      codex_lb:
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ready | jq -e '.status == true' >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # ChatGPT accounts sign in and run through codex-lb. Only Mologate can reach it;
+  # Mologate does not wait for it, so other providers keep working without it.
+  codex-lb:
+    image: ${CODEX_LB_IMAGE:-ghcr.io/soju06/codex-lb:1.24.0@sha256:ba5598aaa70f7acf74a958139037604621ec2582a7fb5fe1e870f08bece807d6}
+    restart: unless-stopped
+    mem_limit: 768m
+    logging: *logging
+    environment:
+      CODEX_LB_DASHBOARD_AUTH_MODE: disabled
+      # Telemetry is on by default; the override must be present before first boot.
+      CODEX_LB_TELEMETRY_ENABLED: "false"
+      # Members paste the callback address back; the listener stays unreachable.
+      CODEX_LB_OAUTH_CALLBACK_HOST: 127.0.0.1
+      CODEX_LB_LEADER_ELECTION_ENABLED: "false"
+      CODEX_LB_LOG_FORMAT: text
+    volumes:
+      - codex_lb_data:/var/lib/codex-lb
+    networks: [codex_lb]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:2455/health/ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  postgres:
+    # Fresh installs support remote embeddings. Preserve the old image when
+    # adopting this file on an existing deployment; see README.md.
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17-bookworm}
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *logging
+    environment:
+      POSTGRES_USER: mologate
+      POSTGRES_DB: mologate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 192m
+    logging: *logging
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    logging: *logging
+    depends_on:
+      mologate:
+        condition: service_healthy
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN}
+      APP_UPSTREAM: ${APP_UPSTREAM:-mologate-production}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+
+networks:
+  edge:
+    name: mologate_edge
+    external: true
+  # Private link to codex-lb. Not internal: codex-lb needs outbound access to OpenAI.
+  codex_lb:
+
+# The production names match the existing /opt/mologate stack.
+volumes:
+  data:
+  pg:
+  redis:
+  caddy_data:
+  caddy_config:
+  # store.db and encryption.key: back up together.
+  codex_lb_data:

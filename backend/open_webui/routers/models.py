@@ -49,7 +49,7 @@ from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_variables import get_chat_variables_schema
 from open_webui.utils.model_labs import detect_lab_from_text, lab_logo
 from open_webui.utils.models import get_all_models
-from open_webui.utils.provider_limits import get_provider_limits
+from open_webui.utils.provider_limits import get_provider_limits, legacy_account_key
 from open_webui.utils.validate import BACKGROUND_IMAGE_MAX_BYTES, validate_background_image
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -820,11 +820,24 @@ async def get_model_limits(request: Request, id: str, user=Depends(get_verified_
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
-    base_model_id = (model.get('info') or {}).get('base_model_id')
-    base_model = request.app.state.MODELS.get(base_model_id) if base_model_id else None
-    url_idx = (base_model or model).get('urlIdx')
+    # Mologate: authorize the model before exposing an account's usage snapshot.
+    from open_webui.utils.models import check_model_access
+    from open_webui.utils.provider_accounts import select_account
+    from open_webui.routers.openai import get_openai_connection
 
-    snapshot = await get_provider_limits(request.app.state.redis, url_idx) if url_idx is not None else None
+    if user.role != 'admin' and not BYPASS_MODEL_ACCESS_CONTROL:
+        await check_model_access(user, model)
+    base_model_id = (model.get('info') or {}).get('base_model_id') or id
+    if base_model_id.startswith('account:'):
+        account_id = (await select_account(base_model_id, user)).id
+    else:
+        base_model = request.app.state.MODELS.get(base_model_id) or model
+        url_idx = base_model.get('urlIdx')
+        if url_idx is None:
+            return {'windows': [], 'updated_at': None}
+        url, key, _ = await get_openai_connection(url_idx)
+        account_id = legacy_account_key(url, key)
+    snapshot = await get_provider_limits(request.app.state.redis, account_id)
     return snapshot or {'windows': [], 'updated_at': None}
 
 
@@ -1111,6 +1124,9 @@ async def update_model_access_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    # Mologate: model ACLs cannot change access to provider-account credentials.
+    if form_data.id.startswith('account:'):
+        raise HTTPException(400, 'Manage sharing in Settings > Provider accounts.')
     model = await Models.get_model_by_id(form_data.id, db=db)
 
     # Non-preset models (e.g. direct Ollama/OpenAI models) may not have a DB

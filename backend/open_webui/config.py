@@ -43,6 +43,28 @@ async def seed_registered_defaults():
     await Config.rename_prefix('rag.web', 'web')
     await Config.repair_config_rows()
     await Config.seed_defaults(DEFAULT_CONFIG)
+    await apply_env_overrides()
+
+
+# Mologate: deployment switches. A value set in the environment wins at every start; left unset,
+# the stored one stays (for auto-reset, whatever a member last chose in the app).
+ENV_OVERRIDES = {
+    'mologate.limits_mode': 'MOLOGATE_LIMITS_MODE',
+    'mologate.auto_reset': 'MOLOGATE_AUTO_RESET',
+}
+
+
+async def apply_env_overrides():
+    updates = {
+        key: DEFAULT_CONFIG[key]
+        for key, name in ENV_OVERRIDES.items()
+        if name in os.environ and await Config.get(key, None) != DEFAULT_CONFIG[key]
+    }
+    if 'mologate.auto_reset' in updates:
+        updates['mologate.auto_reset_changed'] = {'by': 'Server settings', 'at': int(datetime.now().timestamp())}
+    if updates:
+        await Config.upsert(updates)
+        log.info('Applied %s from the environment.', ', '.join(sorted(updates)))
 
 
 async def async_reset_config():
@@ -963,7 +985,8 @@ PADDLEOCR_VL_BASE_URL = os.getenv('PADDLEOCR_VL_BASE_URL', 'http://localhost:808
 
 PADDLEOCR_VL_TOKEN = os.getenv('PADDLEOCR_VL_TOKEN', '')
 
-BYPASS_EMBEDDING_AND_RETRIEVAL = os.getenv('BYPASS_EMBEDDING_AND_RETRIEVAL', 'False').lower() == 'true'
+# Mologate: uploads reach the model as their full text until per-chat sandboxes take the files.
+BYPASS_EMBEDDING_AND_RETRIEVAL = os.getenv('BYPASS_EMBEDDING_AND_RETRIEVAL', 'True').lower() == 'true'
 
 
 RAG_TOP_K = int(os.getenv('RAG_TOP_K', '3'))
@@ -3106,6 +3129,10 @@ DEFAULT_CONFIG = {
     'audio.tts.mistral.api_key': AUDIO_TTS_MISTRAL_API_KEY,
     'audio.tts.mistral.api_base_url': AUDIO_TTS_MISTRAL_API_BASE_URL,
     'webui.url': WEBUI_URL,
+    # Mologate: Phase 1 connects accounts without enforcing later quota rules.
+    'mologate.limits_mode': os.getenv('MOLOGATE_LIMITS_MODE', 'observe'),
+    # Mologate: redeem a Codex reset coupon automatically once every eligible account is empty.
+    'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,

@@ -154,14 +154,19 @@
 				class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
 				on:click={() => runAndClose(privacyHandler)}
 			>
-				{#if isPublicModel(model)}
+				<!-- Mologate: account model sharing is managed on the provider account. -->
+				{#if model?.id?.startsWith('account:')}
+					<Link className="size-3.5" />
+				{:else if isPublicModel(model)}
 					<LockClosed className="size-3.5" />
 				{:else}
 					<GlobeAlt className="size-3.5" />
 				{/if}
 
 				<div class="flex items-center">
-					{#if isPublicModel(model)}
+					{#if model?.id?.startsWith('account:')}
+						{$i18n.t('Provider accounts')}
+					{:else if isPublicModel(model)}
 						{$i18n.t('Make Private')}
 					{:else}
 						{$i18n.t('Make Public')}

@@ -835,11 +835,19 @@
 												className="hidden w-fit sm:inline-flex"
 											/>
 
-											<AccessButton
-												on:click={() => {
-													showAccessControlModal = true;
-												}}
-											/>
+											<!-- Mologate: base account models inherit sharing from Provider accounts. -->
+											{#if id.startsWith('account:') && !preset}
+												<a
+													href={`${WEBUI_BASE_URL}/?settings=provider_accounts`}
+													class="text-xs text-gray-500 underline">{$i18n.t('Provider accounts')}</a
+												>
+											{:else}
+												<AccessButton
+													on:click={() => {
+														showAccessControlModal = true;
+													}}
+												/>
+											{/if}
 										</div>
 
 										{#if editingLocale}

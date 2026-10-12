@@ -1,0 +1,13 @@
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy {$APP_UPSTREAM:mologate-production}:8080
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+# Optional extra sites, served by this same proxy on ports 80 and 443.
+import /etc/caddy/sites/*.caddy

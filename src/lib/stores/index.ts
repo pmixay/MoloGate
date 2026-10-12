@@ -361,6 +361,8 @@ type Config = {
 		enable_plugins?: boolean;
 		enable_autocomplete_generation: boolean;
 		enable_direct_connections: boolean;
+		// Mologate: provider credentials managed by the server.
+		enable_provider_accounts?: boolean;
 		enable_direct_integrations?: boolean;
 		enable_version_update_check: boolean;
 		enable_pyodide_file_persistence?: boolean;

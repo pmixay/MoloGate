@@ -30,6 +30,9 @@ from open_webui.utils.image_input import apply_image_input_support
 from open_webui.utils.model_labs import apply_model_labs
 from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
 
+# Mologate: account catalogs are refreshed independently of the legacy connection cache.
+from open_webui.utils.provider_accounts import account_models, select_account
+
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
 
@@ -111,6 +114,7 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     # deep copy the base models to avoid modifying the original list
     models = [model.copy() for model in base_models]
+    models += await account_models()
 
     # If there are no models, return an empty list
     if len(models) == 0:
@@ -476,6 +480,10 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
 
 async def check_model_access(user, model, model_info=None, db=None):
+    # Mologate: account visibility is an authorization rule even without a model-table row.
+    if model.get('id', '').startswith('account:'):
+        await select_account(model['id'], user)
+        return
     if model.get('arena'):
         meta = model.get('info', {}).get('meta', {})
         access_grants = meta.get('access_grants', [])
@@ -535,6 +543,9 @@ async def check_model_access(user, model, model_info=None, db=None):
 
 
 async def get_filtered_models(models, user, db=None):
+    # Mologate: admin model-ACL bypass must never grant use of another member's private key.
+    account_ids = {model['id'] for model in await account_models(user)}
+    models = [model for model in models if not model['id'].startswith('account:') or model['id'] in account_ids]
     # Filter out models that the user does not have access to
     if (
         user.role == 'user' or (user.role == 'admin' and not BYPASS_ADMIN_ACCESS_CONTROL)
@@ -561,6 +572,9 @@ async def get_filtered_models(models, user, db=None):
 
         filtered_models = []
         for model in models:
+            if model['id'] in account_ids:
+                filtered_models.append(model)
+                continue
             if model.get('arena'):
                 meta = model.get('info', {}).get('meta', {})
                 access_grants = meta.get('access_grants', [])

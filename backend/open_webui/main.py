@@ -9,6 +9,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from uuid import uuid4
 
 import aiohttp
@@ -147,6 +148,7 @@ from open_webui.models.messages import Messages
 from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.users import Users
 from open_webui.routers import (
+    provider_accounts,  # Mologate: owner-managed provider connections.
     analytics,
     audio,
     auths,
@@ -341,6 +343,17 @@ https://github.com/open-webui/open-webui
         print(f'Open WebUI v{VERSION} - building the best AI user interface.\nhttps://github.com/open-webui/open-webui')
 
 
+async def adopt_connections_on_start(app):
+    from open_webui.routers.openai import clear_openai_model_cache
+    from open_webui.utils.connection_accounts import adopt_connections
+
+    try:
+        if await adopt_connections():
+            await clear_openai_model_cache(SimpleNamespace(app=app))
+    except Exception:
+        log.exception('Admin connections could not become team accounts; they stay connections.')
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Store reference to main event loop for sync->async calls (e.g., embedding generation)
@@ -366,12 +379,17 @@ async def lifespan(app: FastAPI):
     await import_legacy_config_json()
     await seed_registered_defaults()
     await initialize_runtime_config(app)
+    # Mologate: admin connections to a supported provider become team accounts (needs the network).
+    app.state.connection_adoption = asyncio.create_task(adopt_connections_on_start(app))
     await migrate_legacy_webhook_config()
     await publish_event(app, EVENTS.SYSTEM_STARTUP_STARTED, source='system')
 
     license_task = None
     if LICENSE_KEY:
         license_task = asyncio.create_task(asyncio.to_thread(get_license_data, app, LICENSE_KEY))
+
+    # Mologate: clear any stored sign-up setting; only admins create member accounts.
+    await Config.upsert({'ui.enable_signup': False})
 
     # Create admin account from env vars if specified and no users exist
     if WEBUI_ADMIN_EMAIL and WEBUI_ADMIN_PASSWORD:
@@ -479,6 +497,10 @@ async def lifespan(app: FastAPI):
     from open_webui.utils.session_pool import close_session
 
     await close_session()
+    # Mologate: close the codex-lb client during shutdown.
+    from open_webui.utils.codex_accounts import shutdown as close_codex_accounts
+
+    await close_codex_accounts()
 
     if hasattr(app.state, 'redis_task_command_listener'):
         app.state.redis_task_command_listener.cancel()
@@ -863,6 +885,8 @@ app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 
 
 app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
+# Mologate: provider accounts have independent ownership and encrypted credentials.
+app.include_router(provider_accounts.router, prefix='/api/v1/provider-accounts', tags=['provider-accounts'])
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
 app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
@@ -946,6 +970,10 @@ async def get_models(request: Request, refresh: bool = False, user=Depends(get_v
 @app.get('/api/models/base')
 async def get_base_models(request: Request, user=Depends(get_admin_user)):
     models = await get_all_base_models(request, user=user)
+    # Mologate: disabled account models still need live sharing metadata in admin settings.
+    from open_webui.utils.provider_accounts import account_models
+
+    models += await account_models(user)
     return {'data': models}
 
 
@@ -1118,6 +1146,11 @@ async def chat_completion(
     model_id = form_data.get('model', None)
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
+    if model_id not in request.app.state.MODELS and not model_item.get('direct', False):
+        # Mologate: a model of an admin connection that became a team account has a new id.
+        from open_webui.utils.connection_accounts import resolve_model_alias
+
+        model_id = form_data['model'] = await resolve_model_alias(model_id)
 
     metadata = {}
     try:
@@ -2261,6 +2294,8 @@ async def get_app_config(request: Request):
     user_count = await Users.get_num_users() if license_metadata else None
     config = await Config.get_many(
         'oauth.enable',
+        # Mologate: hide account management when the feature is explicitly disabled.
+        'mologate.limits_mode',
         'oauth.auto_redirect',
         'ldap.enable',
         'ui.enable_signup',
@@ -2336,7 +2371,8 @@ async def get_app_config(request: Request):
             'auth_trusted_header': bool(WEBUI_AUTH_TRUSTED_EMAIL_HEADER),
             'enable_signup_password_confirmation': ENABLE_SIGNUP_PASSWORD_CONFIRMATION,
             'enable_ldap': config.get('ldap.enable'),
-            'enable_signup': config.get('ui.enable_signup'),
+            # Mologate: self-registration is disabled; admins create member accounts.
+            'enable_signup': False,
             'enable_login_form': config.get('ui.enable_login_form'),
             'enable_websocket': ENABLE_WEBSOCKET_SUPPORT,
             **(
@@ -2354,6 +2390,7 @@ async def get_app_config(request: Request):
                     'enable_public_active_users_count': ENABLE_PUBLIC_ACTIVE_USERS_COUNT,
                     'enable_easter_eggs': ENABLE_EASTER_EGGS,
                     'enable_direct_connections': config.get('direct.enable'),
+                    'enable_provider_accounts': config.get('mologate.limits_mode', 'observe') != 'off',
                     'enable_direct_integrations': config.get('direct.integrations.enable', False),
                     'enable_plugins': ENABLE_PLUGINS,
                     'enable_folders': config.get('folders.enable'),

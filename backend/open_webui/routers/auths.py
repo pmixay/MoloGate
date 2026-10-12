@@ -906,9 +906,9 @@ async def signup(
     has_users = await Users.has_users(db=db)
 
     if WEBUI_AUTH:
+        # Mologate: admins create every member account; only the first admin can sign up.
         if has_users:
-            if not await Config.get('ui.enable_signup') or not await Config.get('ui.enable_login_form'):
-                raise HTTPException(status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
         # Don't gate the first admin on ENABLE_SIGNUP: it auto-disables and can persist stale across a DB reset.
         elif not await Config.get('ui.enable_login_form') and not ENABLE_INITIAL_ADMIN_SIGNUP:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
@@ -1282,6 +1282,9 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:
         updates.pop('ui.default_user_role', None)
+
+    # Mologate: self-registration stays off; admins add members in Admin Panel > Users.
+    updates['ui.enable_signup'] = False
 
     if form_data.CHANNEL_MODEL_RESPONSE_MODE not in ['thread', 'channel']:
         updates.pop('channels.model_response_mode', None)
