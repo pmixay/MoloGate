@@ -1,6 +1,10 @@
 """Verification, visibility and deterministic account selection for Phase 1."""
 
+import asyncio
 import hashlib
+import math
+import re
+import time
 
 import aiohttp
 from fastapi import HTTPException
@@ -40,6 +44,39 @@ MODEL_DETAIL_KEYS = (
     'inputTokenLimit',
     'top_provider',
 )
+
+
+# Mologate: models a key lists but chat cannot use (embeddings, speech, images, moderation, realtime).
+UNUSABLE_MODEL_WORDS = (
+    'embed',
+    'whisper',
+    'tts',
+    'dall-e',
+    'moderation',
+    'realtime',
+    'audio',
+    'transcribe',
+    'speech',
+    'image',
+    'video',
+    'sora',
+    'cogview',
+    'cogvideo',
+    'asr',
+    'rerank',
+    'computer-use',
+)
+# OpenAI's older generations and completion-only models.
+OPENAI_OLD_MODELS = re.compile(
+    r'^(gpt-3\.5|gpt-4($|-)|chatgpt-|babbage|davinci|text-|code-|o1-(mini|preview))|-instruct'
+)
+# OpenAI's dated copy of a model it also lists under its plain name, e.g. gpt-4o-2024-08-06.
+# Other providers use date suffixes for newer releases (qwen3-...-2507), so this is OpenAI-only.
+DATED_SNAPSHOT = re.compile(r'^(.+?)-(\d{4}-\d{2}-\d{2}|\d{8}|\d{4})$')
+ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
+ZAI_REFRESH_SECONDS = 60
+_zai_refreshed: dict[str, float] = {}
+_zai_tasks: set = set()
 
 
 async def require_accounts_enabled():
@@ -176,9 +213,8 @@ async def verify_api_key(provider: str, key: str, plan: str = 'api'):
                         raise HTTPException(400, f'Provider verification failed (HTTP {response.status}).')
                     data = await response.json()
                 for item in data.get('data', []):
-                    if isinstance(item, dict) and isinstance(item.get('id'), str):
-                        if not any(word in item['id'].lower() for word in ('embedding', 'whisper', 'tts', 'dall-e')):
-                            models.append(catalog_model(item['id'], item.get('display_name') or item.get('name'), item))
+                    if isinstance(item, dict) and isinstance(item.get('id'), str) and usable_model(provider, item):
+                        models.append(catalog_model(item['id'], item.get('display_name') or item.get('name'), item))
                 if provider != 'anthropic_api' or not data.get('has_more') or not data.get('last_id'):
                     break
                 params = {'after_id': data['last_id']}
@@ -186,22 +222,57 @@ async def verify_api_key(provider: str, key: str, plan: str = 'api'):
             raise
         except (aiohttp.ClientError, TimeoutError, ValueError):
             raise HTTPException(502, 'The provider could not be verified. Check the key and try again.') from None
+    models = list({item['id']: item for item in models}.values())
+    if provider == 'openai_api':
+        models = without_dated_copies(models)
     if not models:
         raise HTTPException(400, 'The provider returned no chat models for this key.')
-    return {'api_key': key, 'base_url': base}, list({item['id']: item for item in models}.values())
+    return {'api_key': key, 'base_url': base}, models
 
 
-async def refresh_zai_limits(account, redis):
-    """Best-effort observation; missing quota data never blocks an otherwise valid key."""
+def usable_model(provider: str, entry: dict) -> bool:
+    """A model a member can chat with today: not a tool model, not retired, not an older generation."""
+    model = entry['id'].lower()
+    if any(word in model for word in UNUSABLE_MODEL_WORDS):
+        return False
+    if provider == 'openai_api' and OPENAI_OLD_MODELS.search(model):
+        return False
+    if provider == 'openrouter':
+        architecture = entry.get('architecture') if isinstance(entry.get('architecture'), dict) else {}
+        inputs = architecture.get('input_modalities')
+        outputs = architecture.get('output_modalities')
+        if isinstance(outputs, list) and outputs and 'text' not in outputs:
+            return False
+        if isinstance(inputs, list) and inputs and 'text' not in inputs:
+            return False
+        # OpenRouter dates the models it is retiring.
+        if entry.get('expiration_date'):
+            return False
+    return True
+
+
+def without_dated_copies(models: list[dict]) -> list[dict]:
+    names = {model['id'] for model in models}
+    return [model for model in models if not ((match := DATED_SNAPSHOT.match(model['id'])) and match.group(1) in names)]
+
+
+async def refresh_zai_limits(account, redis, max_age: float = 0):
+    """Read a Z.ai coding plan's 5-hour and weekly quota. Best effort: missing quota data never
+    blocks an otherwise valid key. With max_age, a reading that recent is kept."""
     if account.provider != 'zai' or account.plan == 'api':
         return
+    now = time.monotonic()
+    if max_age and now - _zai_refreshed.get(account.id, -math.inf) < max_age:
+        return
+    _zai_refreshed[account.id] = now
     from open_webui.utils.provider_limits import parse_zai_quota, record_provider_snapshot
 
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.get(
-                'https://api.z.ai/api/monitor/usage/quota/limit',
-                headers={'Authorization': 'Bearer ' + open_secret(account.secret)['api_key']},
+                ZAI_QUOTA_URL,
+                # Z.ai's monitor endpoints take the key itself, without "Bearer" (as its own usage plugin sends it).
+                headers={'Authorization': open_secret(account.secret)['api_key'], 'Accept-Language': 'en-US,en'},
                 allow_redirects=False,
             ) as response:
                 if response.status == 200:
@@ -210,3 +281,12 @@ async def refresh_zai_limits(account, redis):
                         await record_provider_snapshot(redis, account.id, windows)
     except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, AttributeError):
         pass
+
+
+def refresh_zai_limits_soon(account, redis):
+    """Z.ai answers carry no limit headers: read the quota again in the background after use."""
+    if account.provider != 'zai' or account.plan == 'api':
+        return
+    task = asyncio.create_task(refresh_zai_limits(account, redis, max_age=ZAI_REFRESH_SECONDS))
+    _zai_tasks.add(task)
+    task.add_done_callback(_zai_tasks.discard)

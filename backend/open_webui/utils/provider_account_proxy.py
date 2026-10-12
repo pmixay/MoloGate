@@ -13,7 +13,12 @@ from fastapi.responses import StreamingResponse
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
 from open_webui.utils import codex_lb
 from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
-from open_webui.utils.provider_accounts import auto_reset_enabled, select_accounts, split_model_id
+from open_webui.utils.provider_accounts import (
+    auto_reset_enabled,
+    refresh_zai_limits_soon,
+    select_accounts,
+    split_model_id,
+)
 from open_webui.utils.provider_limits import (
     count_account_request,
     get_provider_limits,
@@ -302,6 +307,7 @@ async def account_request(request, account, form_data, endpoint, user):
             await count_account_request(
                 getattr(request.app.state, 'redis', None), account.id, account.owner_user_id == user.id
             )
+            refresh_zai_limits_soon(account, getattr(request.app.state, 'redis', None))
         if account.provider == 'codex':
             if wants_stream:
                 streaming = True

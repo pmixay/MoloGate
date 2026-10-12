@@ -1418,6 +1418,79 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             access.assert_awaited_once()
             self.assertEqual(route.await_args.args[1]['model'], 'account:codex:test-model')
 
+    async def test_model_lists_leave_out_old_and_unusable_models(self):
+        from open_webui.utils.provider_accounts import usable_model, without_dated_copies
+
+        listed = [
+            'gpt-5',
+            'gpt-4.1',
+            'gpt-4o',
+            'gpt-4o-2024-08-06',
+            'o3',
+            'o3-2025-04-16',
+            'gpt-4',
+            'gpt-4-turbo',
+            'gpt-3.5-turbo',
+            'gpt-3.5-turbo-instruct',
+            'babbage-002',
+            'text-embedding-3-small',
+            'omni-moderation-latest',
+            'gpt-4o-realtime-preview',
+            'gpt-4o-transcribe',
+            'gpt-image-1',
+            'tts-1',
+            'whisper-1',
+            'computer-use-preview',
+        ]
+        kept = without_dated_copies([{'id': model} for model in listed if usable_model('openai_api', {'id': model})])
+        self.assertEqual([model['id'] for model in kept], ['gpt-5', 'gpt-4.1', 'gpt-4o', 'o3'])
+        # OpenRouter: text chat models stay, image generators and retiring models go.
+        text = {
+            'id': 'qwen/qwen3-235b-a22b-2507',
+            'architecture': {'input_modalities': ['text'], 'output_modalities': ['text']},
+        }
+        painter = {
+            'id': 'vendor/painter',
+            'architecture': {'input_modalities': ['text'], 'output_modalities': ['image']},
+        }
+        retiring = {**text, 'id': 'vendor/old', 'expiration_date': '2026-11-01'}
+        self.assertEqual(
+            [usable_model('openrouter', entry) for entry in (text, painter, retiring)], [True, False, False]
+        )
+        self.assertTrue(usable_model('openrouter', {'id': 'meta-llama/llama-3.3-70b-instruct'}))
+        self.assertFalse(usable_model('zai', {'id': 'cogview-4'}))
+
+    async def test_zai_quota_is_read_with_the_bare_key_and_kept_current(self):
+        from open_webui.utils import provider_accounts
+
+        seen = []
+        reset = int(time.time() + 600) * 1000
+
+        def get(url, **kwargs):
+            seen.append((url, kwargs['headers']))
+            self.assertFalse(kwargs['allow_redirects'])
+            limits = [{'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 5, 'percentage': 37, 'nextResetTime': reset}]
+            return Response({'code': 200, 'msg': 'ok', 'data': {'limits': limits}})
+
+        session = SimpleNamespace(get=get)
+        manager = Response()
+        manager.__class__ = type('SessionContext', (Response,), {'__aenter__': AsyncMock(return_value=session)})
+        coding = account(
+            id='zai-' + uuid.uuid4().hex,
+            provider='zai',
+            plan='lite',
+            secret=seal_secret({'api_key': 'zai-test-key', 'base_url': 'https://api.z.ai/api/coding/paas/v4'}),
+        )
+        with patch('open_webui.utils.provider_accounts.aiohttp.ClientSession', return_value=manager):
+            await provider_accounts.refresh_zai_limits(coding, None, max_age=60)
+            # A reading less than a minute old is kept.
+            await provider_accounts.refresh_zai_limits(coding, None, max_age=60)
+        self.assertEqual(
+            seen, [(provider_accounts.ZAI_QUOTA_URL, {'Authorization': 'zai-test-key', 'Accept-Language': 'en-US,en'})]
+        )
+        self.assertEqual((await get_provider_limits(None, coding.id))['windows'][0]['used_percent'], 37)
+        self.assertEqual(parse_zai_quota({'success': False, 'code': 200, 'data': {'limits': []}}), [])
+
     async def test_api_key_models_keep_provider_details(self):
         entry = {
             'id': 'vendor/model',

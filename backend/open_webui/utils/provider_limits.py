@@ -183,7 +183,8 @@ def snapshot_exhausted(snapshot: dict | None, now: float | None = None) -> bool:
 
 def parse_zai_quota(result: dict) -> list[dict]:
     """Only map observed coding-plan windows. Unknown/empty quota is not zero usage."""
-    if result.get('success') is not True:
+    # Z.ai wraps answers as {code, msg, data, success}; some only carry code 200.
+    if result.get('success') is False or (result.get('success') is not True and result.get('code') != 200):
         return []
     windows = []
     for window in (result.get('data') or {}).get('limits', []):

@@ -1,5 +1,6 @@
 """Authenticated provider account management. Credentials are write-only."""
 
+import asyncio
 import logging
 import time
 from typing import Literal
@@ -29,7 +30,7 @@ from open_webui.utils.provider_accounts import (
     require_accounts_enabled,
     verify_api_key,
 )
-from open_webui.utils.provider_accounts import refresh_zai_limits
+from open_webui.utils.provider_accounts import ZAI_REFRESH_SECONDS, refresh_zai_limits
 from open_webui.utils.provider_limits import get_provider_limits, with_team_use
 from open_webui.utils.rate_limit import RateLimiter
 
@@ -138,12 +139,15 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
     await codex_accounts.sync_accounts(getattr(request.app.state, 'redis', None))
     result = []
     last_resets = await LimitResetEvents.last_resets()
-    for account in await ProviderAccounts.list():
+    redis = getattr(request.app.state, 'redis', None)
+    visible = [
+        account for account in await ProviderAccounts.list() if can_manage(account, user) or account.sharing == 'shared'
+    ]
+    # Z.ai answers carry no limit headers; read coding-plan quotas again when a minute old.
+    await asyncio.gather(*(refresh_zai_limits(account, redis, max_age=ZAI_REFRESH_SECONDS) for account in visible))
+    for account in visible:
         managed = can_manage(account, user)
-        if not managed and account.sharing != 'shared':
-            continue
         owner = await Users.get_user_by_id(account.owner_user_id)
-        redis = getattr(request.app.state, 'redis', None)
         # Each window also says how much of it the rest of the team used (the owner used the rest).
         limits = await with_team_use(redis, account.id, await get_provider_limits(redis, account.id))
         item = AccountView.model_validate(account).model_dump()
