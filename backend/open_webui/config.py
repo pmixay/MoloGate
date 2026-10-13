@@ -57,10 +57,11 @@ ENV_OVERRIDES = {
 
 
 async def apply_env_overrides():
+    # An empty variable counts as unset, so compose files can pass one through without wiping the app's value.
     updates = {
         key: DEFAULT_CONFIG[key]
         for key, name in ENV_OVERRIDES.items()
-        if name in os.environ and await Config.get(key, None) != DEFAULT_CONFIG[key]
+        if os.environ.get(name, '').strip() and await Config.get(key, None) != DEFAULT_CONFIG[key]
     }
     if 'mologate.auto_reset' in updates:
         updates['mologate.auto_reset_changed'] = {'by': 'Server settings', 'at': int(datetime.now().timestamp())}

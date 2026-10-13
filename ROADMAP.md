@@ -110,29 +110,82 @@ The full design and phased plan for accounts, limits, credits and personal API k
 
 ### Container nodes
 
-- [ ] Each chat gets its own container.
-- [ ] The container node can be installed on the same machine as the site or on separate machines.
-- [ ] Support several container nodes with load balancing between them.
-- [ ] Option to cut a container off from the network. The default is full network access.
-- [ ] Basic network rules and settings inside containers so they can't overload or harm the system.
-- [ ] Resource and network limits per container, including bandwidth limits if they can be implemented
+The design, setup and settings are in [docs/container-nodes.md](docs/container-nodes.md).
+
+- [x] Each chat gets its own container.
+  - Done: the first message places the chat's container on a container node; the agent's terminal
+    tools and the file browser work in it through the built-in "Chat container" connection, which
+    new chats select by default. Sub-agents work in their main chat's container, and only the
+    chat's owner can reach it. Files attached to the chat are copied to `/home/user/uploads/`, and
+    the agent's system prompt lists them (marking the ones attached to the current message) along
+    with the container's limits and network state. The container runs Open Terminal (MIT), the API
+    Open WebUI already uses for terminals; Open WebUI's own orchestrator needs an enterprise
+    license, so Mologate runs a small node service of its own.
+- [x] The container node can be installed on the same machine as the site or on separate machines.
+  - Done: `deploy/vps/compose.yaml` runs one beside the site (`COMPOSE_PROFILES=containers`, over a
+    private network), and `deploy/container-node/` runs one on any other machine behind HTTPS,
+    open only to the site's addresses. Admins add, switch off or remove nodes in Admin Settings →
+    Integrations → Chat containers, which shows each node's health and load, or list them in
+    `MOLOGATE_CONTAINER_NODES`.
+- [x] Support several container nodes with load balancing between them.
+  - Done: each node reports its running and paused containers, free memory and CPU load; a new
+    chat goes to the least busy node, preferring one with a warm spare. A stopped container moves
+    before it starts when its node is clearly busier than another (score at least 0.6 and 0.25
+    above the quietest) or takes no new containers: its `/home/user` streams to the other node,
+    files and user-installed packages included, in about 0.1 s for a small workspace. A node full of
+    busy containers hands the chat on, and when a chat's node is unreachable the chat starts over
+    in a fresh container elsewhere and the agent is told.
+- [x] Option to cut a container off from the network. The default is full network access.
+  - Done: the "⋯" (Extra) button next to "+" shows the container's state, limits and node, and a
+    Network access switch, on by default. Switching it works mid-chat and applies to the running
+    container at once; in a new chat the choice goes with the first message. An amber dot on the
+    button shows that the network is off, and the agent is told so it can work offline.
+- [x] Basic network rules and settings inside containers so they can't overload or harm the system.
+  - Done: containers sit on their own bridge where they can't reach each other, and firewall rules
+    keep them off the host, private and link-local ranges (the database, codex-lb, cloud metadata)
+    and outgoing mail on port 25, with at most 256 open TCP connections and 50 new connections a
+    second each. They run with almost all capabilities dropped, `no-new-privileges`, a 512-process
+    limit, rotated logs and a low OOM priority, so the kernel kills sandbox processes before the
+    site's. A node short of disk takes no new containers and stops any container over its disk
+    limit. gVisor can be switched on per node.
+- [x] Resource and network limits per container, including bandwidth limits if they can be implemented
       reliably.
-- [ ] **Container lifecycle:**
+  - Done: 1 CPU at half the CPU weight, 1 GiB of memory without swap, 10 GiB of disk (a Docker quota
+    where the storage driver supports it, otherwise measured), a 256 MiB `/tmp` and 100 MiB/s up and
+    down, all set per node. Bandwidth is shaped with `tc` from outside the container's privileges;
+    kernels without the police action get download shaped on the host side instead. A 2 MiB/s test
+    cap measured 1.8 MB/s down and 1.9 MB/s up.
+- [x] **Container lifecycle:**
   - Pause a container automatically after a period of inactivity.
   - Delete it automatically after 7 days of inactivity.
   - "Warm up" the container as soon as the user starts typing.
   - Keep everything resource-efficient, even though Mologate only serves a few people.
-- [ ] **Base image:** build a container image that ships with Python and the most-needed tools.
+  - Done: a container pauses after 2 minutes without a request (resumes in about 30 ms), stops
+    after 15 minutes to free its memory (resumes in about a second) and is deleted with its files
+    after 7 days, or within 30 minutes of its chat being deleted. Typing wakes the chat's
+    container, or starts a spare for a new chat that the first message then takes over (a spare
+    nobody claims goes after 5 minutes). A node keeps a set number of containers awake and stops
+    the least recently used idle one to make room. The node service uses about 50 MB, and an idle
+    container about 45 MB.
+- [x] **Base image:** build a container image that ships with Python and the most-needed tools.
+  - Done: `containers/sandbox` (`ghcr.io/pmixay/mologate-sandbox`): Debian with Python 3.12, bash,
+    Node.js 24, git, build tools, ripgrep, fd, jq, curl, sqlite3 and archive tools, plus numpy,
+    pandas, matplotlib, requests, Pillow and openpyxl. GitHub Actions builds it and the node image
+    for amd64 and arm64.
 
 ### Files
 
 - [ ] Accept files of any type up to 500 MB.
   - Copy attachments into the sandbox automatically.
   - Tell the agent which files were attached, if that isn't already done.
-  - Started: until the sandbox exists, an uploaded file reaches the model as its full extracted
-    text, without embeddings or a vector database. Existing installs are switched over once.
+  - Started: an uploaded file reaches the model as its full extracted text, without embeddings or
+    a vector database. Existing installs are switched over once.
+  - Done: attachments are copied into the chat's container (`/home/user/uploads/`), and the agent
+    is told their paths. Missing: accepting any type up to 500 MB.
 - [ ] Browse the files in the current container and preview most of them online, with syntax
       highlighting.
+  - Started: Open WebUI's file browser opens the chat's own container, since the container runs
+    Open Terminal. Not yet checked across file types.
 - [ ] **Change summary:**
   - After each turn, show the list of files the agent edited in that turn.
   - Show the number of lines added and removed (+ / −) for the whole session.

@@ -37,6 +37,8 @@ services:
       RAG_OPENAI_API_KEY: ${RAG_OPENAI_API_KEY:-}
       VECTOR_DB: pgvector
       MOLOGATE_CODEX_LB_URL: http://codex-lb:2455
+      # Chat containers (docs/container-nodes.md). Empty keeps the nodes admins set in the app.
+      MOLOGATE_CONTAINER_NODES: ${MOLOGATE_CONTAINER_NODES:-}
     volumes:
       - data:/app/backend/data
     expose: ["8080"]
@@ -45,6 +47,7 @@ services:
       edge:
         aliases: ["${APP_UPSTREAM:-mologate-production}"]
       codex_lb:
+      containers:
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ready | jq -e '.status == true' >/dev/null"]
       interval: 30s
@@ -76,6 +79,32 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # Each chat's own container, on this machine (docs/container-nodes.md). Starts with
+  # COMPOSE_PROFILES=containers in .env. Only Mologate reaches it, over a private network.
+  container-node:
+    profiles: [containers]
+    image: ${CONTAINER_NODE_IMAGE:-ghcr.io/pmixay/mologate-node:latest}
+    restart: unless-stopped
+    mem_limit: 128m
+    logging: *logging
+    environment:
+      NODE_API_KEY: ${CONTAINER_NODE_KEY:-}
+      NODE_ID: vps
+      NODE_NAME: VPS
+      NODE_SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/pmixay/mologate-sandbox:latest}
+      NODE_HELPER_IMAGE: ${CONTAINER_NODE_IMAGE:-ghcr.io/pmixay/mologate-node:latest}
+      # The site shares this machine: at most this many chat containers awake at once. Idle ones
+      # pause after 2 minutes and stop after 15, and the least recently used makes room.
+      NODE_MAX_ACTIVE: ${CONTAINER_NODE_MAX_ACTIVE:-2}
+      NODE_CONTAINER_MEMORY: ${CONTAINER_MEMORY:-1g}
+      NODE_CONTAINER_CPUS: ${CONTAINER_CPUS:-1}
+    volumes:
+      # The node starts containers through the host's Docker; their sockets live in this directory,
+      # which must have the same path inside and outside.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/mologate-node:/var/lib/mologate-node
+    networks: [containers]
 
   postgres:
     # Fresh installs support remote embeddings. Preserve the old image when
@@ -135,6 +164,8 @@ networks:
     external: true
   # Private link to codex-lb. Not internal: codex-lb needs outbound access to OpenAI.
   codex_lb:
+  # Private link to the container node.
+  containers:
 
 # The production names match the existing /opt/mologate stack.
 volumes:

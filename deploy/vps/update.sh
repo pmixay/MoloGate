@@ -30,7 +30,14 @@ docker network inspect mologate_edge >/dev/null 2>&1 || docker network create mo
 # Reuse the GitHub account already registered on this VPS.
 registry_user=$(gh api user --jq .login)
 gh auth token | docker login ghcr.io -u "$registry_user" --password-stdin >/dev/null
-docker compose pull mologate codex-lb
+services=(mologate codex-lb)
+# The container node runs only with COMPOSE_PROFILES=containers. Its sandbox image is pulled here,
+# with this machine's registry login, so new chat containers start from the latest one.
+if docker compose config --services | grep -qx container-node; then
+  services+=(container-node)
+  docker pull "$(docker compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["container-node"]["environment"]["NODE_SANDBOX_IMAGE"])')"
+fi
+docker compose pull "${services[@]}"
 if [[ -d $checkout/.git ]]; then
   image=$(docker compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["mologate"]["image"])')
   built_from=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)

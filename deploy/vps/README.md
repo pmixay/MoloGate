@@ -240,3 +240,11 @@ domain/Phase 1 update described above; current deployment evidence is in the Pha
 
 Passwords remain outside Git. There are no backups during development. Remote document embeddings
 remain unconfigured; the verified team workflow is chat.
+
+## Chat containers
+
+Each chat gets its own container on a container node. The `container-node` service in
+`compose.yaml` runs one on this machine when `.env` sets `COMPOSE_PROFILES=containers`, a
+`CONTAINER_NODE_KEY` and `MOLOGATE_CONTAINER_NODES` (see `.env.example`); `update.sh` then pulls the
+node and sandbox images too. Nodes on other machines use `deploy/container-node/`. Setup, limits,
+guards and lifecycle are in [Chat containers and container nodes](../../docs/container-nodes.md).
