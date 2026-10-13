@@ -24,11 +24,13 @@ from mologate_node import __version__
 from mologate_node.config import Settings
 from mologate_node.guards import POLICE_UNAVAILABLE, bandwidth_script, firewall_script, host_bandwidth_script
 from mologate_node.lifecycle import ACTIVE_STATES, eviction_order, lifecycle_action
+from mologate_node.snapshot import SCRIPT as SNAPSHOT_SCRIPT
 from mologate_node.state import Sandbox, StateStore
 
 log = logging.getLogger('mologate_node')
 
 CONTEXT_RE = re.compile(r'^(chat|automation|spare):[A-Za-z0-9._-]{1,128}$')
+SNAPSHOT_ID_RE = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 WORKSPACE = '/home/user'
 SOCKET_NAME = 'terminal.sock'
 LABEL = 'mologate.managed'
@@ -757,6 +759,47 @@ class SandboxManager:
                 return sandbox
         finally:
             os.unlink(spooled)
+
+    # -- what a response changed ---------------------------------------------------------------
+
+    async def _snapshot_exec(self, context: str, mode: str, snap_id: str) -> dict:
+        if not SNAPSHOT_ID_RE.match(snap_id or ''):
+            raise NodeError('Bad snapshot id.')
+        sandbox = await self.ensure(context)
+        container = await asyncio.to_thread(self._container, sandbox)
+        if container is None:
+            raise NotFoundError('The container is gone.')
+        self.begin(context)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    container.exec_run, ['python3', '-c', SNAPSHOT_SCRIPT, mode, snap_id], user='root', demux=True
+                ),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            raise NodeError('Reading the workspace took too long.')
+        finally:
+            self.end(context)
+        stdout, stderr = result.output if isinstance(result.output, tuple) else (result.output, b'')
+        if result.exit_code != 0:
+            log.warning('Snapshot %s of %s failed: %s', mode, context, (stderr or b'').decode(errors='replace')[-500:])
+            raise NodeError('Could not read the workspace.')
+        try:
+            return json.loads((stdout or b'').decode().strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            raise NodeError('Could not read the workspace.')
+
+    async def snapshot(self, context: str, snap_id: str) -> dict:
+        """Record the workspace when a response starts."""
+        return await self._snapshot_exec(context, 'snapshot', snap_id)
+
+    async def changes(self, context: str, snap_id: str) -> dict:
+        """Files changed since ``snapshot(snap_id)``, with lines added and removed."""
+        result = await self._snapshot_exec(context, 'changes', snap_id)
+        if result.get('error'):
+            raise NotFoundError(result['error'])
+        return result
 
     # -- OpenAPI -------------------------------------------------------------------------------
 

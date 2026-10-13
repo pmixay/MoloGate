@@ -177,6 +177,16 @@ async def import_(request: web.Request) -> web.Response:
     return web.json_response(manager.info(sandbox))
 
 
+async def snapshot(request: web.Request) -> web.Response:
+    result = await request.app[MANAGER].snapshot(_context(request), request.match_info['snap_id'])
+    return web.json_response(result)
+
+
+async def changes(request: web.Request) -> web.Response:
+    result = await request.app[MANAGER].changes(_context(request), request.match_info['snap_id'])
+    return web.json_response(result)
+
+
 async def proxy(request: web.Request) -> web.StreamResponse:
     """Forward a request to the container's Open Terminal, starting or waking the container first."""
     manager = request.app[MANAGER]
@@ -310,6 +320,8 @@ def create_app(settings: Settings, manager: SandboxManager | None = None) -> web
             web.put(f'{sandbox}/files', put_file),
             web.get(f'{sandbox}/export', export),
             web.put(f'{sandbox}/import', import_),
+            web.post(f'{sandbox}/snapshots/{{snap_id}}', snapshot),
+            web.get(f'{sandbox}/snapshots/{{snap_id}}/changes', changes),
             web.route('*', f'{sandbox}/t/{{path:.*}}', proxy),
         ]
     )

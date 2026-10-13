@@ -36,6 +36,18 @@ async def get_chat_container(chat_id: str, user=Depends(get_verified_user)):
     return await containers.describe(await _chat_context(chat_id, user))
 
 
+@router.get('/limits')
+async def get_container_limits(user=Depends(get_verified_user)):
+    """The size of a chat container, for the ⋯ menu of a chat that has none yet."""
+    await _require_enabled()
+    nodes = await containers.get_nodes()
+    statuses = await containers.node_statuses(nodes)
+    node = containers.pick_node(nodes, statuses) or next((node for node in nodes if statuses.get(node['id'])), None)
+    if node is None:
+        raise HTTPException(status_code=503, detail='No container node is available right now.')
+    return statuses[node['id']].get('limits') or {}
+
+
 class NetworkForm(BaseModel):
     enabled: bool
 

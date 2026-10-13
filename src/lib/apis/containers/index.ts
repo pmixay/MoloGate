@@ -3,6 +3,14 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 // Mologate: each chat's own container (docs/container-nodes.md).
 export const CONTAINER_TERMINAL_ID = 'mologate';
 
+export type ContainerLimits = {
+	cpus: number;
+	memory: number;
+	pids: number;
+	disk: number;
+	bandwidth: string;
+};
+
 export type ChatContainer = {
 	exists: boolean;
 	network: boolean;
@@ -10,7 +18,7 @@ export type ChatContainer = {
 	state: string;
 	node: { id: string; name: string } | null;
 	nodes: number;
-	limits?: { cpus: number; memory: number; pids: number; disk: number; bandwidth: string } | null;
+	limits?: ContainerLimits | null;
 	disk_used?: number | null;
 	files?: { id: string; path: string; name: string; size: number; at: number }[];
 };
@@ -61,6 +69,9 @@ export const setChatContainerNetwork = (token: string, chatId: string, enabled: 
 	request<ChatContainer>(token, `/chats/${encodeURIComponent(chatId)}/network`, 'POST', {
 		enabled
 	});
+
+// The size of a chat container, for a chat that doesn't have one yet.
+export const getContainerLimits = (token: string) => request<ContainerLimits>(token, '/limits');
 
 // The user started typing: wake the chat's container, or ready one for a new chat.
 export const warmUpContainer = (token: string, chatId?: string | null) =>

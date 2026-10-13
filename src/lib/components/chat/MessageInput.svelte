@@ -91,6 +91,7 @@
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
 	import ExtraMenu from './MessageInput/ExtraMenu.svelte';
+	import ChatChangesBar from './MessageInput/ChatChangesBar.svelte';
 	import { CONTAINER_TERMINAL_ID, warmUpContainer } from '$lib/apis/containers';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
@@ -1697,6 +1698,11 @@
 									}}
 								/>
 							</div>
+						{/if}
+
+						<!-- Mologate: what the agent changed in the chat's container so far. -->
+						{#if showExtraMenu}
+							<ChatChangesBar {history} />
 						{/if}
 
 						<!-- Task list display -->

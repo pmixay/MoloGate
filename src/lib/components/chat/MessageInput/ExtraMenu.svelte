@@ -8,8 +8,10 @@
 	import { isSavedChatId } from '$lib/utils/chatId';
 	import {
 		getChatContainer,
+		getContainerLimits,
 		setChatContainerNetwork,
-		type ChatContainer
+		type ChatContainer,
+		type ContainerLimits
 	} from '$lib/apis/containers';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
@@ -19,6 +21,7 @@
 	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
+	import InfoCircle from '$lib/components/icons/InfoCircle.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -88,14 +91,6 @@
 		return `${Number(value.toFixed(1))} ${units[unit]}`;
 	};
 
-	const formatRate = (rate: string) => {
-		const match = /^(\d+(?:\.\d+)?)(ki|mi|gi|k|m|g)?(bps|bit)$/i.exec(rate ?? '');
-		if (!match) return rate;
-		const prefix =
-			{ ki: 'Ki', mi: 'Mi', gi: 'Gi', k: 'K', m: 'M', g: 'G' }[match[2]?.toLowerCase()] ?? '';
-		return `${match[1]} ${prefix}${match[3].toLowerCase() === 'bps' ? 'B' : 'bit'}/s`;
-	};
-
 	$: stateLabel = !saved
 		? $i18n.t('Starts when you send')
 		: ({
@@ -115,14 +110,19 @@
 					? 'bg-red-500'
 					: 'bg-gray-400 dark:bg-gray-600';
 
-	$: limits = container?.limits
+	// What the "i" button shows: the container's size, the same on every node.
+	let defaultLimits: ContainerLimits | null = null;
+	$: if (show && !container?.limits && !defaultLimits) {
+		getContainerLimits(localStorage.token)
+			.then((data) => (defaultLimits = data))
+			.catch(() => {});
+	}
+	$: shownLimits = container?.limits ?? defaultLimits;
+	$: limits = shownLimits
 		? [
-				`${container.limits.cpus} CPU`,
-				`${formatBytes(container.limits.memory)} RAM`,
-				...(container.limits.disk
-					? [`${formatBytes(container.limits.disk)} ${$i18n.t('disk')}`]
-					: []),
-				...(container.limits.bandwidth ? [formatRate(container.limits.bandwidth)] : [])
+				`${shownLimits.cpus} CPU`,
+				`${formatBytes(shownLimits.memory)} RAM`,
+				...(shownLimits.disk ? [`${formatBytes(shownLimits.disk)} ${$i18n.t('disk')}`] : [])
 			].join(' · ')
 		: '';
 </script>
@@ -154,6 +154,17 @@
 				<span class="shrink-0 whitespace-nowrap font-medium text-gray-700 dark:text-gray-200"
 					>{$i18n.t('Chat container')}</span
 				>
+				{#if limits}
+					<Tooltip content={limits} placement="top">
+						<button
+							type="button"
+							class="-m-0.5 flex shrink-0 rounded-full p-0.5 text-gray-400 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+							aria-label={$i18n.t('Container resources: {{limits}}', { limits })}
+						>
+							<InfoCircle className="size-3.5" strokeWidth="1.75" />
+						</button>
+					</Tooltip>
+				{/if}
 				<span class="ml-auto flex items-center gap-1.5 min-w-0">
 					<span class="size-1.5 rounded-full shrink-0 {stateColor}" aria-hidden="true"></span>
 					<span class="truncate">{stateLabel}</span>
@@ -184,16 +195,6 @@
 					/>
 				{/key}
 			</div>
-
-			{#if limits || (container?.nodes ?? 0) > 1}
-				<div
-					class="px-2 pt-1 pb-1.5 text-[0.6875rem] text-gray-400 dark:text-gray-500 leading-snug"
-				>
-					{limits}{#if (container?.nodes ?? 0) > 1 && container?.node}{limits
-							? ' · '
-							: ''}{container.node.name}{/if}
-				</div>
-			{/if}
 		</DropdownMenu>
 	</div>
 </Dropdown>

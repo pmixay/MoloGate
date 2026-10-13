@@ -41,6 +41,7 @@
 	import Error from './Error.svelte';
 	import Citations from './Citations.svelte';
 	import CodeExecutions from './CodeExecutions.svelte';
+	import ChangesSummary from './ChangesSummary.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 	import FollowUps from './ResponseMessage/FollowUps.svelte';
@@ -646,6 +647,10 @@
 
 							{#if message.code_executions}
 								<CodeExecutions codeExecutions={message.code_executions} />
+							{/if}
+
+							{#if message.done && message.changes?.total}
+								<ChangesSummary changes={message.changes} />
 							{/if}
 						</div>
 					</div>

@@ -72,23 +72,54 @@
 		}
 	};
 
-	const formatBytes = (bytes: number) => `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
+	const gb = (bytes: number) => Math.round((bytes / 1024 ** 3) * 10) / 10;
 
-	const describe = (node: ContainerNode) => {
+	const meterColor = (ratio: number) =>
+		ratio >= 0.9 ? 'bg-red-500' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-gray-900 dark:bg-accent';
+
+	const meters = (node: ContainerNode) => {
 		const status = node.status;
-		if (!status) return '';
+		if (!status) return [];
+		const memoryUsed = status.memory_total - status.memory_available;
 		return [
-			$i18n.t('{{active}} of {{max}} containers active', {
-				active: status.active,
-				max: status.max_active
-			}),
-			$i18n.t('{{count}} stopped', { count: status.containers.stopped }),
-			$i18n.t('{{size}} RAM free', { size: formatBytes(status.memory_available) }),
-			$i18n.t('load {{percent}}%', { percent: Math.round((node.score ?? 0) * 100) }),
-			...(status.features?.bandwidth === false ? [$i18n.t('no bandwidth limit')] : []),
-			...(status.features?.guards === false ? [$i18n.t('no network guards')] : [])
-		].join(' · ');
+			{
+				label: $i18n.t('Containers'),
+				ratio: status.active / Math.max(1, status.max_active),
+				value: `${status.active} / ${status.max_active}`
+			},
+			{
+				label: $i18n.t('Memory'),
+				ratio: memoryUsed / Math.max(1, status.memory_total),
+				value: `${gb(memoryUsed)} / ${gb(status.memory_total)} GB`
+			},
+			{
+				label: $i18n.t('Load'),
+				ratio: node.score ?? 0,
+				value: `${Math.round((node.score ?? 0) * 100)}%`
+			}
+		];
 	};
+
+	const stateOf = (node: ContainerNode) =>
+		!node.enabled
+			? {
+					label: $i18n.t('Off'),
+					class: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+				}
+			: !node.status
+				? {
+						label: $i18n.t('Unreachable'),
+						class: 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'
+					}
+				: !node.status.accepting
+					? {
+							label: $i18n.t('Low on disk'),
+							class: 'bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300'
+						}
+					: {
+							label: $i18n.t('Online'),
+							class: 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400'
+						};
 
 	onMount(load);
 </script>
@@ -97,115 +128,143 @@
 	<div class="mb-2 flex items-center justify-between">
 		<div class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('Container nodes')}</div>
 
-		<div class="flex items-center gap-1">
-			<Tooltip content={enable ? $i18n.t('Enabled') : $i18n.t('Disabled')}>
-				<Switch state={enable} on:change={(e) => save(nodes, e.detail)} />
-			</Tooltip>
-			<Tooltip content={$i18n.t('Add node')}>
-				<button
-					class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-900 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-white"
-					on:click={() => (adding = !adding)}
-					type="button"
-				>
-					<Plus />
-				</button>
-			</Tooltip>
-		</div>
+		<Tooltip content={enable ? $i18n.t('Enabled') : $i18n.t('Disabled')}>
+			<Switch state={enable} on:change={(e) => save(nodes, e.detail)} />
+		</Tooltip>
 	</div>
 
-	<div class="flex flex-col gap-1.5">
+	<div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
 		{#each nodes as node (node.id)}
 			{@const status = node.status}
-			<div class="flex w-full items-center gap-2 {node.enabled ? '' : 'opacity-50'}">
-				<Tooltip
-					content={!node.enabled
-						? $i18n.t('Disabled')
-						: status
-							? status.accepting
-								? $i18n.t('Online')
-								: $i18n.t('Online, low on disk: takes no new containers')
-							: $i18n.t('Unreachable')}
-				>
-					<span
-						class="block size-2 shrink-0 rounded-full {!node.enabled
-							? 'bg-gray-400'
-							: status
-								? status.accepting
-									? 'bg-green-500'
-									: 'bg-amber-400'
-								: 'bg-red-500'}"
-					></span>
-				</Tooltip>
-				<div class="min-w-0 flex-1">
-					<div class="truncate text-xs text-gray-700 dark:text-gray-300">
-						{node.name} <span class="text-gray-400 dark:text-gray-600">{node.url}</span>
-					</div>
-					{#if status}
-						<div class="truncate text-[0.6875rem] text-gray-400 dark:text-gray-500">
-							{describe(node)}
+			{@const state = stateOf(node)}
+			<div
+				class="flex flex-col gap-2.5 rounded-2xl border border-gray-100 p-3 dark:border-gray-800 {node.enabled
+					? ''
+					: 'opacity-60'}"
+			>
+				<div class="flex items-start gap-2">
+					<div class="min-w-0 flex-1">
+						<div class="flex items-center gap-2">
+							<span class="truncate text-sm font-medium text-gray-900 dark:text-gray-100"
+								>{node.name}</span
+							>
+							<span class="shrink-0 rounded-full px-1.5 py-px text-[0.6875rem] {state.class}"
+								>{state.label}</span
+							>
 						</div>
-					{/if}
+						<div class="truncate text-[0.6875rem] text-gray-400 dark:text-gray-500">
+							{node.url}
+						</div>
+					</div>
+					<Switch
+						state={node.enabled}
+						on:change={(e) =>
+							save(nodes.map((n) => (n.id === node.id ? { ...n, enabled: e.detail } : n)))}
+					/>
+					<Tooltip content={$i18n.t('Remove')}>
+						<button
+							class="-mr-1 rounded-lg p-1 text-gray-400 hover:bg-black/5 hover:text-gray-900 dark:hover:bg-white/5 dark:hover:text-white"
+							type="button"
+							on:click={() => save(nodes.filter((n) => n.id !== node.id))}
+						>
+							<XMark className="size-3.5" />
+						</button>
+					</Tooltip>
 				</div>
-				<Switch
-					state={node.enabled}
-					on:change={(e) =>
-						save(nodes.map((n) => (n.id === node.id ? { ...n, enabled: e.detail } : n)))}
-				/>
-				<Tooltip content={$i18n.t('Remove')}>
-					<button
-						class="p-1 rounded-lg text-gray-400 hover:bg-black/5 hover:text-gray-900 dark:hover:bg-white/5 dark:hover:text-white"
-						type="button"
-						on:click={() => save(nodes.filter((n) => n.id !== node.id))}
-					>
-						<XMark className="size-3.5" />
-					</button>
-				</Tooltip>
+
+				{#if status}
+					<div class="flex flex-col gap-1.5">
+						{#each meters(node) as meter}
+							<div class="grid grid-cols-[5rem_1fr_6.5rem] items-center gap-2 text-[0.6875rem]">
+								<span class="text-gray-500 dark:text-gray-400">{meter.label}</span>
+								<div class="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+									<div
+										class="h-full rounded-full {meterColor(meter.ratio)}"
+										style="width: {Math.min(100, Math.max(2, meter.ratio * 100))}%"
+									></div>
+								</div>
+								<span class="text-right tabular-nums text-gray-600 dark:text-gray-300"
+									>{meter.value}</span
+								>
+							</div>
+						{/each}
+					</div>
+
+					<div class="flex flex-wrap gap-1 text-[0.6875rem]">
+						<span
+							class="rounded-md bg-gray-50 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300"
+							>{$i18n.t('{{count}} running', { count: status.containers.running })}</span
+						>
+						<span
+							class="rounded-md bg-gray-50 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300"
+							>{$i18n.t('{{count}} paused', { count: status.containers.paused })}</span
+						>
+						<span
+							class="rounded-md bg-gray-50 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300"
+							>{$i18n.t('{{count}} stopped', { count: status.containers.stopped })}</span
+						>
+						{#if status.features?.guards === false}
+							<span
+								class="rounded-md bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300"
+								>{$i18n.t('No network guards')}</span
+							>
+						{/if}
+						{#if status.features?.bandwidth === false}
+							<span
+								class="rounded-md bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300"
+								>{$i18n.t('No bandwidth limit')}</span
+							>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{/each}
-	</div>
 
-	{#if loaded && nodes.length === 0 && !adding}
-		<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
-			{$i18n.t('No container nodes yet, so chats have no container.')}
-		</div>
-	{/if}
-
-	{#if adding}
-		<div
-			class="mt-2 flex flex-col gap-1.5 rounded-xl border border-gray-100 p-2 dark:border-gray-800"
-		>
-			<div class="flex gap-1.5">
+		{#if adding}
+			<div class="flex flex-col gap-2 rounded-2xl border border-gray-200 p-3 dark:border-gray-700">
 				<input
-					class="w-1/3 rounded-lg bg-transparent text-xs outline-hidden placeholder:text-gray-400"
+					class="w-full rounded-lg bg-transparent text-sm outline-hidden placeholder:text-gray-400"
 					placeholder={$i18n.t('Name')}
 					bind:value={draft.name}
 				/>
 				<input
-					class="flex-1 rounded-lg bg-transparent text-xs outline-hidden placeholder:text-gray-400"
+					class="w-full rounded-lg bg-transparent text-xs outline-hidden placeholder:text-gray-400"
 					placeholder="https://node-2.example.com"
 					bind:value={draft.url}
 				/>
+				<SensitiveInput
+					placeholder={$i18n.t('Node key (NODE_API_KEY)')}
+					required={false}
+					bind:value={draft.key}
+				/>
+				<div class="flex justify-end gap-1.5">
+					<button
+						class="rounded-full px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+						type="button"
+						on:click={() => (adding = false)}
+					>
+						{$i18n.t('Cancel')}
+					</button>
+					<button
+						class="rounded-full bg-black px-3 py-1 text-xs text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100"
+						type="button"
+						on:click={addNode}
+					>
+						{$i18n.t('Add node')}
+					</button>
+				</div>
 			</div>
-			<SensitiveInput
-				placeholder={$i18n.t('Node key (NODE_API_KEY)')}
-				required={false}
-				bind:value={draft.key}
-			/>
-			<div class="flex justify-end">
-				<button
-					class="rounded-full bg-black px-3 py-1 text-xs text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100"
-					type="button"
-					on:click={addNode}
-				>
-					{$i18n.t('Add node')}
-				</button>
-			</div>
-		</div>
-	{/if}
-
-	<div class="mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
-		{$i18n.t(
-			"Each chat gets its own container on one of these machines. New chats go to the least busy node, and a stopped container moves to a quieter one when its node is busy. A node can run on the site's machine or any other."
-		)}
+		{:else}
+			<button
+				class="flex min-h-24 items-center justify-center gap-1.5 rounded-2xl border border-dashed border-gray-200 text-xs text-gray-500 transition hover:border-gray-300 hover:text-gray-800 dark:border-gray-800 dark:text-gray-500 dark:hover:border-gray-700 dark:hover:text-gray-200"
+				type="button"
+				on:click={() => (adding = true)}
+			>
+				<Plus className="size-3.5" />
+				{loaded && nodes.length === 0
+					? $i18n.t('Add the first container node')
+					: $i18n.t('Add node')}
+			</button>
+		{/if}
 	</div>
 </div>

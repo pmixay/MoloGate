@@ -8,6 +8,7 @@ Routes:
 import asyncio
 import logging
 import posixpath
+import re
 from urllib.parse import unquote
 
 import aiohttp
@@ -42,7 +43,24 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-STREAMING_CONTENT_TYPES = ('application/octet-stream', 'image/', 'application/pdf')
+# Mologate: video, audio, archives, Office and SQLite files stream too, so big previews and
+# downloads from a chat container don't sit in memory.
+STREAMING_CONTENT_TYPES = (
+    'application/octet-stream',
+    'image/',
+    'application/pdf',
+    'video/',
+    'audio/',
+    'application/zip',
+    'application/x-tar',
+    'application/gzip',
+    'application/vnd.',
+    'application/x-sqlite3',
+    'application/vnd.sqlite3',
+)
+# Mologate: the browser addresses a chat container as /{server_id}/c/{chat_id}/..., so file previews
+# in iframes and every file call reach the right chat without an X-Session-Id header.
+CHAT_PATH_RE = re.compile(r'^c/([A-Za-z0-9-]{1,64})/(.*)$', re.DOTALL)
 ADMIN_API_PATHS = ('api/v1/policies', 'api/v1/status', 'api/v1/terminals')
 # Drop the upstream's server and date: uvicorn adds its own and forwarding both duplicates them.
 STRIPPED_RESPONSE_HEADERS = frozenset(
@@ -131,9 +149,12 @@ async def proxy_terminal(
 
     container = is_container_connection(connection)
     container_headers = {}
+    path_chat_id = None
+    if container and (match := CHAT_PATH_RE.match(path)):
+        path_chat_id, path = match.group(1), match.group(2)
     if container:
         # Mologate: the chat's own container, on whichever node holds it.
-        session_id = request.headers.get('x-session-id')
+        session_id = path_chat_id or request.headers.get('x-session-id')
         route = await container_route(
             terminal_context_id(connection, {'chat_id': session_id}, 'chat') if session_id else None, user.id
         )
@@ -165,7 +186,7 @@ async def proxy_terminal(
 
     headers = {'X-User-Id': user.id}
     # Forward per-session cwd tracking header
-    session_id = request.headers.get('x-session-id')
+    session_id = path_chat_id or request.headers.get('x-session-id')
     if session_id:
         headers['X-Session-Id'] = session_id
         if not terminal_context_available(connection, 'chat'):
@@ -332,6 +353,13 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
         await ws.close(code=4003, reason='Terminal server is not available in chats')
         return None
     return user, connection
+
+
+@router.websocket('/{server_id}/c/{chat_id}/api/terminals/{session_id}')
+async def ws_chat_terminal(ws: WebSocket, server_id: str, chat_id: str, session_id: str):
+    """Mologate: a chat container's terminal, addressed with the chat in the path; the chat itself
+    still comes from the authenticated first message."""
+    await ws_terminal(ws, server_id, session_id)
 
 
 @router.websocket('/{server_id}/api/terminals/{session_id}')

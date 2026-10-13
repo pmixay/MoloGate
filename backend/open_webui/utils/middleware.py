@@ -6627,11 +6627,14 @@ async def streaming_chat_response_handler(response, ctx):
 
                 current_output = full_output()
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
+                # Mologate: the files this response changed in the chat's container, with +/- lines.
+                changes = await containers.collect_changes(metadata)
                 data = {
                     'done': True,
                     'output': current_output,
                     'title': title,
                     **({'usage': usage} if usage else {}),
+                    **({'changes': changes} if changes else {}),
                 }
 
                 if save_to_chat:
@@ -6644,6 +6647,7 @@ async def streaming_chat_response_handler(response, ctx):
                             'done': True,
                             'output': current_output,
                             **({'usage': usage} if usage else {}),
+                            **({'changes': changes} if changes else {}),
                         },
                     )
 

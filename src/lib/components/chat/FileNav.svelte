@@ -58,6 +58,7 @@
 	import PortList from './FileNav/PortList.svelte';
 	import PortPreview from './FileNav/PortPreview.svelte';
 	import TerminalDock from './TerminalDock.svelte';
+	import { CONTAINER_TERMINAL_ID } from '$lib/apis/containers';
 
 	const i18n = getContext('i18n');
 
@@ -375,7 +376,12 @@
 		);
 
 		const isSystem = !!systemTerminal;
-		const url = systemTerminal?.url ?? userTerminal?.url ?? '';
+		// Mologate: a chat container is addressed with its chat in the path, so every call (and
+		// previews in iframes, which can't send headers) reaches this chat's container.
+		const url =
+			systemTerminal?.id === CONTAINER_TERMINAL_ID && isSavedChatId(chatId)
+				? `${systemTerminal.url}/c/${chatId}`
+				: (systemTerminal?.url ?? userTerminal?.url ?? '');
 		const key = isSystem ? localStorage.token : (userTerminal?.key ?? '');
 
 		return url ? { url, key } : null;
@@ -1839,6 +1845,7 @@
 					bind:saving
 					bind:currentSlide
 					{selectedFile}
+					onDownload={() => selectedFile && downloadFile(selectedFile)}
 					readOnly={!selectedFileWritable}
 					{fileLoading}
 					{fileImageUrl}

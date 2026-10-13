@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { getContext, onMount, onDestroy, tick } from 'svelte';
-	import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+	// Mologate: the legacy build polyfills APIs pdf.js 5 needs (Map.getOrInsertComputed) for browsers
+	// that lack them; without it PDFs fail to render there.
+	import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 	import panzoom, { type PanZoom } from 'panzoom';
 	import { clampDocumentTargetPage } from '$lib/utils/documentPreview';
 	import Spinner from './Spinner.svelte';
@@ -198,7 +200,7 @@
 	// Re-render existing canvases at a new zoom level (preserves panzoom transform)
 	const rerenderPages = async (forZoom: number) => {
 		if (!pdfDoc || !sceneElement) return;
-		const pdfjs = await import('pdfjs-dist');
+		const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 		const dpr = window.devicePixelRatio || 1;
 
 		const pageWrappers = sceneElement.querySelectorAll('.pdf-page-wrapper');
@@ -261,7 +263,7 @@
 
 		cancelTextLayers();
 
-		const pdfjs = await import('pdfjs-dist');
+		const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 		const dpr = window.devicePixelRatio || 1;
 		const wrappers: HTMLElement[] = [];
 		const firstPage = singlePage ? selectedPage : 1;
@@ -409,7 +411,7 @@
 		pdfDoc = null;
 
 		try {
-			const pdfjs = await import('pdfjs-dist');
+			const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 			pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 			let pdfData: ArrayBuffer | Uint8Array;

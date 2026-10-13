@@ -2678,7 +2678,8 @@
 			selected_model_id,
 			error,
 			usage,
-			context_breakdown
+			context_breakdown,
+			changes
 		} = data;
 
 		// Store raw OR-aligned output items from backend
@@ -2737,6 +2738,11 @@
 
 		if (usage) {
 			message.usage = usage;
+		}
+
+		// Mologate: the files this response changed in the chat's container.
+		if (changes) {
+			message.changes = changes;
 		}
 
 		// Mologate: what the turn's prompt held, for the context indicator.

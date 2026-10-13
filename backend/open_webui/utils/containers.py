@@ -644,18 +644,68 @@ def container_prompt(row: dict, status: dict | None, new_file_ids: list[str]) ->
 
 
 async def turn_context(request, user, metadata: dict) -> str | None:
-    """Ready the container for a turn: place, wake or move it, copy new attachments in, and return
-    what the agent should know. None when the request has no container context."""
+    """Ready the container for a turn: place, wake or move it, copy new attachments in, record the
+    workspace for the change summary, and return what the agent should know. None when the request
+    has no container context."""
     context = await context_for(metadata)
     if context is None:
         return None
     network = metadata.get('network_access')
     node, row = await prepare(context, user_id=user.id, network=network if isinstance(network, bool) else None)
     new_ids = await sync_attachments(context, node, row, metadata.get('files'), user)
+    await start_change_tracking(context, node, metadata)
     prompt = container_prompt(row, await node_status(node), new_ids)
     if row.get('note'):
         await ChatContainers.update(context, note=None)
     return prompt
+
+
+# -- what a response changed ----------------------------------------------------------------------
+
+
+def _snapshot_id(message_id: str | None) -> str | None:
+    if not message_id or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', str(message_id)):
+        return None
+    return str(message_id)
+
+
+async def start_change_tracking(context: str, node: dict, metadata: dict) -> None:
+    """Record the workspace as the response starts, so its end can list what changed."""
+    snap_id = _snapshot_id(metadata.get('message_id'))
+    if snap_id is None:
+        return
+    try:
+        await node_request(node, 'POST', f'{sandbox_path(context)}/snapshots/{snap_id}', timeout=130)
+        metadata['container_snapshot'] = {'context': context, 'id': snap_id}
+    except NodeError as e:
+        log.info('No change tracking for %s: %s', context, e)
+
+
+async def collect_changes(metadata: dict) -> dict | None:
+    """Files the finished response changed in the container, with lines added and removed."""
+    snapshot = metadata.get('container_snapshot')
+    if not snapshot:
+        return None
+    row = await ChatContainers.get(snapshot['context'])
+    node = next((node for node in await get_nodes() if row and node['id'] == row['node_id']), None)
+    if node is None:
+        return None
+    try:
+        result = await node_request(
+            node, 'GET', f'{sandbox_path(snapshot["context"])}/snapshots/{snapshot["id"]}/changes', timeout=130
+        )
+    except NodeError as e:
+        log.info('Could not list changes for %s: %s', snapshot['context'], e)
+        return None
+    if not result.get('total'):
+        return None
+    return {
+        'files': result.get('files') or [],
+        'total': result.get('total', 0),
+        'added': result.get('added', 0),
+        'removed': result.get('removed', 0),
+        'truncated': bool(result.get('truncated')),
+    }
 
 
 def unavailable_prompt(error: Exception) -> str:
