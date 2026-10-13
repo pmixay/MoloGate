@@ -19,6 +19,7 @@
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
+	import { isSavedChatId } from '$lib/utils/chatId';
 
 	const dispatch = createEventDispatcher();
 
@@ -89,6 +90,8 @@
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
+	import ExtraMenu from './MessageInput/ExtraMenu.svelte';
+	import { CONTAINER_TERMINAL_ID, warmUpContainer } from '$lib/apis/containers';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
 
@@ -755,12 +758,30 @@
 	);
 	$: hasDirectToolServerAccess =
 		$_user?.role === 'admin' || ($_user?.permissions?.features?.direct_tool_servers ?? true);
+	// Mologate: every chat gets its own container, so the picker only shows when there is a
+	// choice besides it.
 	$: showTerminalSelector =
 		terminalCapableModels.length > 0 &&
-		(($terminalServers ?? []).some((t) => t.id) ||
+		(($terminalServers ?? []).some((t) => t.id && t.id !== CONTAINER_TERMINAL_ID) ||
 			(hasDirectToolServerAccess &&
 				(($terminalServers ?? []).some((t) => !t.id) ||
 					($settings?.terminalServers ?? []).some((s) => s.url))));
+
+	// Mologate: the "⋯" menu next to "+" holds the chat container's settings.
+	$: showExtraMenu = !!$config?.features?.enable_containers;
+
+	// Mologate: wake the chat's container (or ready one for a new chat) as soon as the user types,
+	// so the first command doesn't wait for it. The server throttles this too.
+	let lastWarmUp = 0;
+	$: if (
+		prompt &&
+		showExtraMenu &&
+		$selectedTerminalId === CONTAINER_TERMINAL_ID &&
+		Date.now() - lastWarmUp > 20000
+	) {
+		lastWarmUp = Date.now();
+		warmUpContainer(localStorage.token, isSavedChatId(chatId) ? chatId : null);
+	}
 
 	let toggleFilters = [];
 	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
@@ -2179,6 +2200,10 @@
 											<PlusAlt className="size-[18px]" />
 										</button>
 									</InputMenu>
+
+									{#if showExtraMenu}
+										<ExtraMenu {chatId} />
+									{/if}
 
 									{#if hasToolbarExtras}
 										<div class="flex self-center w-px h-4 bg-gray-200 dark:bg-gray-800 shrink-0" />

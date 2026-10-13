@@ -198,7 +198,8 @@
 				aria-expanded={show}
 				on:click={toggle}
 			>
-				<svg viewBox="0 0 20 20" class="size-[18px] -rotate-90" aria-hidden="true">
+				<!-- Mologate: lifted 1px so the ring lines up with the model name's capitals, not its box. -->
+				<svg viewBox="0 0 20 20" class="size-[18px] -translate-y-px -rotate-90" aria-hidden="true">
 					<circle
 						cx="10"
 						cy="10"

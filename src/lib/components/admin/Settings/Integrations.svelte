@@ -25,6 +25,7 @@
 	import AddToolServerModal from '$lib/components/AddToolServerModal.svelte';
 	import AddTerminalServerModal from '$lib/components/AddTerminalServerModal.svelte';
 	import ExternalKnowledge from './ExternalKnowledge.svelte';
+	import ContainerNodes from './ContainerNodes.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 
@@ -284,18 +285,21 @@
 								</Tooltip>
 
 								<div class="flex gap-1 items-center">
-									<Tooltip content={$i18n.t('Configure')}>
-										<button
-											class="self-center p-1 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition"
-											on:click={() => {
-												editTerminalIdx = idx;
-												showAddTerminalModal = true;
-											}}
-											type="button"
-										>
-											<Cog6 />
-										</button>
-									</Tooltip>
+									<!-- Mologate: the built-in chat-container connection is set up under Chat containers. -->
+									{#if connection?.server_type !== 'mologate'}
+										<Tooltip content={$i18n.t('Configure')}>
+											<button
+												class="self-center p-1 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition"
+												on:click={() => {
+													editTerminalIdx = idx;
+													showAddTerminalModal = true;
+												}}
+												type="button"
+											>
+												<Cog6 />
+											</button>
+										</Tooltip>
+									{/if}
 
 									<Tooltip
 										content={connection?.enabled !== false
@@ -334,6 +338,10 @@
 						target="_blank">{$i18n.t('Learn more about Open Terminal')} ↗</a
 					>
 				</div>
+			</AdminSettingSection>
+
+			<AdminSettingSection title={$i18n.t('Chat containers')}>
+				<ContainerNodes />
 			</AdminSettingSection>
 
 			<AdminSettingSection title={$i18n.t('settings.admin.integrations.sections.knowledge.title')}>
