@@ -19,7 +19,27 @@ log = logging.getLogger(__name__)
 
 def is_terminal_orchestrator(connection: dict) -> bool:
     """Return whether this connection points at Terminals, not raw Open Terminal."""
-    return connection.get('server_type') == 'orchestrator' or bool(connection.get('policy_id'))
+    # Mologate: the built-in chat-container connection routes per chat like an orchestrator.
+    return connection.get('server_type') in {'orchestrator', 'mologate'} or bool(connection.get('policy_id'))
+
+
+def is_container_connection(connection: dict | None) -> bool:
+    """Mologate: the built-in connection to each chat's own container (utils/containers.py)."""
+    return bool(connection) and connection.get('server_type') == 'mologate'
+
+
+async def container_route(context_id: str | None, user_id: str | None) -> tuple[str, dict] | None:
+    """Mologate: base URL and node headers for a terminal context's container, or None."""
+    from open_webui.utils import containers
+
+    context = await containers.context_from_terminal_id(context_id)
+    if context is None:
+        return None
+    try:
+        return await containers.route(context, user_id)
+    except (containers.NodeUnavailable, containers.NodeError) as e:
+        log.warning('No container for %s: %s', context, e)
+        return None
 
 
 def get_terminal_server_url(connection: dict) -> str:
@@ -163,6 +183,15 @@ async def get_terminal_request_info(request, user, metadata: dict, extra_params:
             headers['X-Session-Id'] = metadata['chat_id']
         if context_id:
             headers[TERMINAL_CONTEXT_HEADER] = context_id
+        if is_container_connection(connection):
+            if metadata.get('container_error'):
+                return None
+            route = await container_route(context_id, user_model.id)
+            if route is None:
+                return None
+            base_url, node_headers = route
+            headers.update(node_headers)
+            return base_url, headers, cookies
         return get_terminal_server_url(connection), headers, cookies
 
     selector = str(terminal_id).rstrip('/')

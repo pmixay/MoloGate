@@ -149,6 +149,7 @@ from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.users import Users
 from open_webui.routers import (
     provider_accounts,  # Mologate: owner-managed provider connections.
+    containers,  # Mologate: each chat's own container.
     analytics,
     audio,
     auths,
@@ -278,6 +279,7 @@ from open_webui.utils.tool_approval import (
     resolve_tool_call_output,
 )
 from open_webui.utils.tools import set_terminal_servers, set_tool_servers
+from open_webui.utils.containers import parse_nodes as chat_containers_parse
 
 if SAFE_MODE:
     print('SAFE MODE ENABLED')
@@ -422,6 +424,13 @@ async def lifespan(app: FastAPI):
 
     app.state.scheduler_worker_loop = asyncio.create_task(scheduler_worker_loop(app))
 
+    # Mologate: the built-in chat-container connection follows the node settings, and containers of
+    # deleted chats are cleaned up.
+    from open_webui.utils import containers as chat_containers
+
+    await chat_containers.sync_connection()
+    app.state.container_cleanup_loop = asyncio.create_task(chat_containers.cleanup_loop())
+
     if await Config.get('models.base_models_cache'):
         try:
             await get_all_models(
@@ -514,6 +523,7 @@ async def lifespan(app: FastAPI):
     app.state.periodic_usage_pool_cleanup.cancel()
     app.state.periodic_session_pool_cleanup.cancel()
     app.state.scheduler_worker_loop.cancel()
+    app.state.container_cleanup_loop.cancel()
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_COMPLETED, source='system')
 
@@ -903,6 +913,7 @@ if ENABLE_ADMIN_ANALYTICS:
     app.include_router(analytics.router, prefix='/api/v1/analytics', tags=['analytics'])
 app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
+app.include_router(containers.router, prefix='/api/v1/containers', tags=['containers'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
 
@@ -1306,6 +1317,8 @@ async def chat_completion(
             'tool_ids': form_data.get('tool_ids', None),
             'tool_servers': tool_servers,
             'files': form_data.get('files', None),
+            # Mologate: the chat container's internet switch, as the ⋯ menu shows it.
+            'network_access': form_data.pop('network_access', None),
             'features': form_data.get('features', {}),
             'variables': form_data.get('variables', {}),
             'chat_variables': chat_variables,
@@ -2307,6 +2320,8 @@ async def get_app_config(request: Request):
         'oauth.enable',
         # Mologate: hide account management when the feature is explicitly disabled.
         'mologate.limits_mode',
+        'containers.enable',
+        'containers.nodes',
         'oauth.auto_redirect',
         'ldap.enable',
         'ui.enable_signup',
@@ -2402,6 +2417,9 @@ async def get_app_config(request: Request):
                     'enable_easter_eggs': ENABLE_EASTER_EGGS,
                     'enable_direct_connections': config.get('direct.enable'),
                     'enable_provider_accounts': config.get('mologate.limits_mode', 'observe') != 'off',
+                    # Mologate: each chat has its own container (the ⋯ menu next to "+").
+                    'enable_containers': bool(config.get('containers.enable'))
+                    and any(node['enabled'] for node in chat_containers_parse(config.get('containers.nodes'))),
                     'enable_direct_integrations': config.get('direct.integrations.enable', False),
                     'enable_plugins': ENABLE_PLUGINS,
                     'enable_folders': config.get('folders.enable'),

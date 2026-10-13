@@ -24,7 +24,9 @@ from open_webui.utils.headers import bearer_auth_header, normalize_bearer_token
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
+    container_route,
     get_terminal_server_url,
+    is_container_connection,
     is_terminal_orchestrator,
     terminal_chat_uploads,
     terminal_context_available,
@@ -127,7 +129,19 @@ async def proxy_terminal(
     if not await has_connection_access(user, connection, user_group_ids):
         return JSONResponse({'error': 'Access denied'}, status_code=403)
 
-    base_url = get_terminal_server_url(connection)
+    container = is_container_connection(connection)
+    container_headers = {}
+    if container:
+        # Mologate: the chat's own container, on whichever node holds it.
+        session_id = request.headers.get('x-session-id')
+        route = await container_route(
+            terminal_context_id(connection, {'chat_id': session_id}, 'chat') if session_id else None, user.id
+        )
+        if route is None:
+            return JSONResponse({'error': 'This chat has no container yet'}, status_code=409)
+        base_url, container_headers = route
+    else:
+        base_url = get_terminal_server_url(connection)
     if not base_url:
         return JSONResponse({'error': 'Terminal server URL not configured'}, status_code=503)
 
@@ -140,7 +154,7 @@ async def proxy_terminal(
     # Check the path aiohttp will send, relative to the configured server root.
     base_path = URL(str(connection.get('url') or '')).path.rstrip('/')
     target_path = URL(target_url).path
-    if any(
+    if not container and any(
         target_path == f'{base_path}/{prefix}' or target_path.startswith(f'{base_path}/{prefix}/')
         for prefix in ADMIN_API_PATHS
     ):
@@ -182,6 +196,7 @@ async def proxy_terminal(
         if oauth_token:
             headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
     # auth_type == "none": no Authorization header
+    headers.update(container_headers)
 
     content_type = request.headers.get('content-type')
     if content_type:
@@ -338,7 +353,15 @@ async def ws_terminal(
         return
     user, connection, chat_id, token = result
 
-    base_url = get_terminal_server_url(connection)
+    container_headers = {}
+    if is_container_connection(connection):
+        route = await container_route(terminal_context_id(connection, {'chat_id': chat_id}, 'chat'), user.id)
+        if route is None:
+            await ws.close(code=4003, reason='This chat has no container yet')
+            return
+        base_url, container_headers = route
+    else:
+        base_url = get_terminal_server_url(connection)
     if not base_url:
         await ws.close(code=4003, reason='Terminal server URL not configured')
         return
@@ -356,6 +379,7 @@ async def ws_terminal(
         return
     if context_id:
         upstream_headers[TERMINAL_CONTEXT_HEADER] = context_id
+    upstream_headers.update(container_headers)
 
     import urllib.parse
 

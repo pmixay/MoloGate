@@ -81,6 +81,7 @@ from open_webui.socket.main import (
     get_event_emitter,
 )
 from open_webui.tasks import clear_response_stream, save_response_stream
+from open_webui.utils import containers
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
@@ -2768,6 +2769,23 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     files = form_data.pop('files', None)
     form_data.pop('folder_id', None)
     metadata['terminal_id'] = terminal_id
+
+    # Mologate: ready this chat's own container before any terminal call (placed on the least busy
+    # node, woken, or moved off a busy one), with the network the user chose and new attachments
+    # copied in. The agent is told about it with the terminal tools below.
+    if (
+        terminal_id == containers.CONNECTION_ID
+        and (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
+        and await containers.containers_enabled()
+    ):
+        try:
+            metadata['container_prompt'] = await containers.turn_context(request, user, metadata)
+        except (containers.NodeUnavailable, containers.NodeError) as e:
+            log.warning('Chat container unavailable: %s', e)
+            metadata['container_error'] = str(e)
+            form_data['messages'] = add_or_update_system_message(
+                containers.unavailable_prompt(e), form_data['messages'], append=True
+            )
     skill_authoring_allowed = bool(terminal_id) and has_prior_real_chat_content(form_data.get('messages', []))
     skill_create_denial_reason = 'empty_chat' if terminal_id else 'disabled'
     apply_skills_create_prompt(
@@ -3050,7 +3068,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         terminal_connection_ids = {
             connection.get('id') for connection in await Config.get('terminal_server.connections', []) or []
         }
-        if terminal_id and terminal_capability and terminal_id in terminal_connection_ids:
+        if (
+            terminal_id
+            and terminal_capability
+            and terminal_id in terminal_connection_ids
+            and not metadata.get('container_error')
+        ):
             try:
                 terminal_result = await get_terminal_tools(
                     request,
@@ -3073,7 +3096,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     )
             except Exception as e:
                 log.exception(e)
-                raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
+                if terminal_id != containers.CONNECTION_ID:
+                    raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
+                # Mologate: a chat whose container is down still gets an answer, without terminal tools.
+                form_data['messages'] = add_or_update_system_message(
+                    containers.unavailable_prompt(e), form_data['messages'], append=True
+                )
 
         if direct_tool_servers:
             for tool_server in direct_tool_servers:
