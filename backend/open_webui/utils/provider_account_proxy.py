@@ -191,6 +191,10 @@ def refusal_text(items):
     )
 
 
+# Mologate: a refusal turned into text keeps this mark, so the chat can still flag it (utils/refusals.py).
+REFUSAL_MARK = {'refusal': True}
+
+
 def error_chunk(kind, message):
     """The stream error chunk the chat shows beside any text already written."""
     return 'data: ' + json.dumps({'error': {'message': message, 'type': kind}}) + '\n\n'
@@ -210,6 +214,7 @@ def settle_chat(result):
     message = choice.get('message') or {}
     if message.get('refusal') and not message.get('content'):
         message['content'] = message['refusal']
+        result['mologate'] = REFUSAL_MARK
     if not message.get('content') and not message.get('tool_calls'):
         if choice.get('finish_reason') == 'content_filter':
             raise HTTPException(400, filter_message())
@@ -228,7 +233,7 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
     usage = None
     note = ('interrupted', ENDED)
 
-    def chunk(delta, finish_reason=None, usage=None):
+    def chunk(delta, finish_reason=None, usage=None, refusal=False):
         data = {
             'id': identifier,
             'object': 'chat.completion.chunk',
@@ -238,6 +243,8 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
         }
         if usage is not None:
             data['usage'] = chat_usage(usage)
+        if refusal:
+            data['mologate'] = REFUSAL_MARK
         return 'data: ' + json.dumps(data) + '\n\n'
 
     try:
@@ -245,6 +252,7 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
             async for event in events or response_events(response):
                 kind = event.get('type')
                 delta = None
+                refusal = False
                 if kind == 'response.created':
                     identifier = event.get('response', {}).get('id', identifier)
                 elif kind == 'response.output_text.delta':
@@ -252,12 +260,12 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
                 elif kind in ('response.reasoning_summary_text.delta', 'response.reasoning_text.delta'):
                     delta = {'reasoning_content': event.get('delta', '')}
                 elif kind == 'response.refusal.delta':
-                    refused = True
+                    refused = refusal = True
                     delta = {'content': event.get('delta', '')}
                 elif kind == 'response.output_item.done' and not refused:
                     # A refusal that arrived without deltas.
                     if text := refusal_text([event.get('item')]):
-                        refused = True
+                        refused = refusal = True
                         delta = {'content': text}
                 elif kind == 'response.output_item.added' and event.get('item', {}).get('type') == 'function_call':
                     item = event['item']
@@ -298,7 +306,7 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
                     break
                 if delta is not None:
                     partial = partial or any(delta.values())
-                    yield chunk(delta)
+                    yield chunk(delta, refusal=refusal)
         except Exception:
             note = ('interrupted', DROPPED)
         if note:
@@ -329,6 +337,7 @@ async def chat_stream(response, model, events=None, on_end=None):
                         continue
                     if refusal := delta.pop('refusal', None):
                         delta['content'] = (delta.get('content') or '') + refusal
+                        event['mologate'] = REFUSAL_MARK
                     partial = partial or any(
                         delta.get(key) for key in ('content', 'reasoning_content', 'reasoning', 'tool_calls')
                     )
@@ -370,12 +379,13 @@ async def codex_result(response, account, endpoint):
     """A whole Responses stream as one result. Text already written survives a failure; without any, it is raised."""
     from open_webui.routers.openai import convert_responses_result
 
-    written, last, dropped = [], {}, False
+    written, last, dropped, refused = [], {}, False, False
     try:
         async for event in response_events(response):
             kind = event.get('type')
             if kind in ('response.output_text.delta', 'response.refusal.delta'):
                 written.append(event.get('delta') or '')
+                refused = refused or kind == 'response.refusal.delta'
             elif kind in FINISHED + FAILED:
                 last = event
                 break
@@ -387,7 +397,10 @@ async def codex_result(response, account, endpoint):
             return result
         converted = convert_responses_result(result)
         choice = converted['choices'][0]
-        choice['message']['content'] = choice['message']['content'] or text or refusal_text(result.get('output'))
+        refusal = refusal_text(result.get('output'))
+        choice['message']['content'] = choice['message']['content'] or text or refusal
+        if refused or refusal:
+            converted['mologate'] = REFUSAL_MARK
         if kind == 'response.incomplete':
             reason = (result.get('incomplete_details') or {}).get('reason')
             choice['finish_reason'] = 'content_filter' if reason == 'content_filter' else 'length'

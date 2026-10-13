@@ -81,7 +81,7 @@ from open_webui.socket.main import (
     get_event_emitter,
 )
 from open_webui.tasks import clear_response_stream, save_response_stream
-from open_webui.utils import containers
+from open_webui.utils import containers, refusals
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
@@ -4311,6 +4311,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                     error = str(error)
 
                 log.error('Provider returned error (non-streaming): %s', error)
+                refusal = refusals.detect_error(response_data.get('error'))
 
                 if save_to_chat:
                     await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -4319,13 +4320,14 @@ async def non_streaming_chat_response_handler(response, ctx):
                         {
                             'error': {'content': error},
                             'done': True,
+                            'refusal': refusal,
                         },
                     )
                 if isinstance(error, str) or isinstance(error, dict):
                     await event_emitter(
                         {
                             'type': 'chat:message:error',
-                            'data': {'error': {'content': error}, 'done': True},
+                            'data': {'error': {'content': error}, 'done': True, 'refusal': refusal},
                         }
                     )
 
@@ -4341,6 +4343,10 @@ async def non_streaming_chat_response_handler(response, ctx):
 
             choices = response_data.get('choices', [])
             response_output = response_data.get('output')
+            # Mologate: a refusal in its own field becomes the answer, and is noted with the finish.
+            refusal_signals = {refusals.signal_from_error(response_data.get('error'))}
+            if choices and isinstance(choices[0], dict):
+                refusal_signals.add(refusals.chat_choice_signal(choices[0], 'message', chunk=response_data))
             content = choices[0].get('message', {}).get('content') if choices else ''
 
             if (continuing and 'error' not in response_data) or (
@@ -4422,6 +4428,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                         response_output = previous + response_output
                         content = get_output_text(response_output)
 
+                    refusal = refusals.detect(response_output, refusal_signals)
                     await event_emitter(
                         {
                             'type': 'chat:completion',
@@ -4430,6 +4437,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'output': response_output,
                                 'title': title,
+                                'refusal': refusal,
                             },
                         }
                     )
@@ -4446,6 +4454,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'role': 'assistant',
                                 'output': response_output,
                                 **({'usage': usage} if usage else {}),
+                                'refusal': refusal,
                             },
                         )
 
@@ -4972,6 +4981,10 @@ async def streaming_chat_response_handler(response, ctx):
                 else:
                     reasoning_tags = DEFAULT_REASONING_TAGS
 
+            # Mologate: what the provider said about declining ('refusal' or 'filter'), for the record
+            # made once the response has finished (utils/refusals.py).
+            refusal_signals = set()
+
             try:
                 for event in events:
                     await event_emitter(
@@ -5206,6 +5219,9 @@ async def streaming_chat_response_handler(response, ctx):
                                     )
                                 # Check for Responses API events (type field starts with "response.")
                                 elif data.get('type', '').startswith('response.'):
+                                    # Mologate: a refusal streams as the answer's text, and is noted.
+                                    if signal := refusals.responses_event_signal(data):
+                                        refusal_signals.add(signal)
                                     response_data_type = data.get('type', '')
                                     response_data_is_delta = response_data_type.endswith('.delta')
                                     output, response_metadata = handle_responses_streaming_event(data, output)
@@ -5301,6 +5317,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     if not choices:
                                         error = data.get('error', {})
                                         if error:
+                                            if signal := refusals.signal_from_error(error):
+                                                refusal_signals.add(signal)
                                             log.error('Provider returned error (streaming): %s', error)
                                             if save_to_chat:
                                                 try:
@@ -5325,6 +5343,11 @@ async def streaming_chat_response_handler(response, ctx):
 
                                     delta = choices[0].get('delta', {})
                                     delta_type = 'content'
+
+                                    # Mologate: a refusal arrives in its own field; show it as the answer
+                                    # and note it, with finishes that mean the provider stopped the answer.
+                                    if signal := refusals.chat_choice_signal(choices[0], chunk=data):
+                                        refusal_signals.add(signal)
 
                                     # Handle delta annotations
                                     annotations = delta.get('annotations')
@@ -6629,12 +6652,15 @@ async def streaming_chat_response_handler(response, ctx):
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
                 # Mologate: the files this response changed in the chat's container, with +/- lines.
                 changes = await containers.collect_changes(metadata)
+                # Mologate: whether the model declined, from the provider's word or the answer's.
+                refusal = refusals.detect(current_output, refusal_signals)
                 data = {
                     'done': True,
                     'output': current_output,
                     'title': title,
                     **({'usage': usage} if usage else {}),
                     **({'changes': changes} if changes else {}),
+                    'refusal': refusal,
                 }
 
                 if save_to_chat:
@@ -6648,6 +6674,7 @@ async def streaming_chat_response_handler(response, ctx):
                             'output': current_output,
                             **({'usage': usage} if usage else {}),
                             **({'changes': changes} if changes else {}),
+                            'refusal': refusal,
                         },
                     )
 

@@ -212,7 +212,7 @@ from open_webui.tasks import (
     stop_item_tasks,
     stop_task,
 )  # Import from tasks.py
-from open_webui.utils import chat_slots, logger
+from open_webui.utils import chat_slots, logger, refusals
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.actions import chat_action as chat_action_handler
@@ -1747,6 +1747,8 @@ async def chat_completion(
             error_detail = e.detail if isinstance(e, HTTPException) else str(e)
             log.error('Error processing chat payload: %s', error_detail)
             if metadata.get('chat_id') and metadata.get('message_id'):
+                # Mologate: a request the provider refused outright is flagged as a refusal too.
+                refusal = refusals.detect_error(error_detail)
                 # Update the chat message with the error
                 try:
                     if is_saved_chat_id(metadata.get('chat_id')):
@@ -1757,6 +1759,7 @@ async def chat_completion(
                                 'parentId': metadata.get('user_message_id', None),
                                 'error': {'content': error_detail},
                                 'done': True,
+                                'refusal': refusal,
                             },
                         )
 
@@ -1765,7 +1768,7 @@ async def chat_completion(
                         await event_emitter(
                             {
                                 'type': 'chat:message:error',
-                                'data': {'error': {'content': error_detail}, 'done': True},
+                                'data': {'error': {'content': error_detail}, 'done': True, 'refusal': refusal},
                             }
                         )
 

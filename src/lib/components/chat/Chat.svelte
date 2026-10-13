@@ -1236,6 +1236,9 @@
 					}, 100);
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
+					if (data.refusal !== undefined) {
+						message.refusal = data.refusal;
+					}
 					if (data.done === true && !message.done) {
 						message.done = true;
 						dismissContextCompactionToast();
@@ -2679,7 +2682,8 @@
 			error,
 			usage,
 			context_breakdown,
-			changes
+			changes,
+			refusal
 		} = data;
 
 		// Store raw OR-aligned output items from backend
@@ -2743,6 +2747,11 @@
 		// Mologate: the files this response changed in the chat's container.
 		if (changes) {
 			message.changes = changes;
+		}
+
+		// Mologate: whether the model declined (sent with the finished response, null when it didn't).
+		if (refusal !== undefined) {
+			message.refusal = refusal;
 		}
 
 		// Mologate: what the turn's prompt held, for the context indicator.
