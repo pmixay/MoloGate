@@ -10,6 +10,10 @@ or key), so every model served by it shows the same limits. Recognized headers:
 - OpenAI-style: ``x-ratelimit-{limit,remaining,reset}-{requests,tokens}``.
 - Plain ``x-ratelimit-{limit,remaining,reset}``, as OpenRouter sends.
 
+Some limits come from elsewhere: Z.ai's coding-plan quota endpoint, and an OpenRouter key's
+``/key`` endpoint (its credit limit, and this month's spend against the owner's budget). Windows
+from another source are kept when headers update a snapshot, and the other way round.
+
 Snapshots live in Redis when it is configured, so every worker sees them, and in memory
 otherwise. Providers that send none of these headers simply have no limits to show.
 
@@ -26,7 +30,7 @@ import hashlib
 import math
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from collections.abc import Mapping
 from typing import Any
 
@@ -44,10 +48,33 @@ SPLIT_WINDOWS = ('primary', 'secondary')
 # that moved on, means the window started over.
 RESET_DROP = 5
 RESET_MOVE_SECONDS = 300
+# The owner's monthly budget is a target, not a provider limit: a key past it still serves.
+SOFT_WINDOWS = ('budget',)
+
+# Mologate: the low-limit warning. Recent readings of the long windows (5-hour, weekly, an
+# OpenRouter key's credit limit) tell how fast they are being used, and so roughly how many
+# minutes of work are left.
+HISTORY_KEY_PREFIX = 'mologate:provider_history:'
+TRACKED_WINDOWS = ('primary', 'secondary', 'credits')
+HISTORY_SECONDS = 2 * 60 * 60
+HISTORY_STEP_SECONDS = 60
+HISTORY_POINTS = 300
+RATE_SPAN_SECONDS = 30 * 60
+# No reading for this long means no request: the account sat idle.
+IDLE_GAP_SECONDS = 10 * 60
+# Two readings a few seconds apart say little about a pace.
+MIN_RATE_MINUTES = 5
+# Warn when this much of a window is left across the model's accounts, or this little time at the recent pace.
+LOW_PERCENT_LEFT = 20
+LOW_MINUTES_LEFT = 60
+CRITICAL_PERCENT_LEFT = 10
+CRITICAL_MINUTES_LEFT = 15
 
 _snapshots: dict[str, dict] = {}
 _splits: dict[str, dict] = {}
+_histories: dict[str, dict] = {}
 _split_lock = asyncio.Lock()
+_history_lock = asyncio.Lock()
 
 _DURATION_PART = re.compile(r'(\d+(?:\.\d+)?)(ms|h|m|s)')
 
@@ -169,6 +196,8 @@ def legacy_account_key(url: str, key: str) -> str:
 
 
 def window_exhausted(window: dict, now: float) -> bool:
+    if window.get('id') in SOFT_WINDOWS:
+        return False
     resets_at = _number(window.get('resets_at'))
     return (_number(window.get('used_percent')) or 0) >= 100 and (resets_at is None or resets_at > now)
 
@@ -206,6 +235,76 @@ def parse_zai_quota(result: dict) -> list[dict]:
     return windows
 
 
+def period_start(period: str, now: float) -> int:
+    """When the UTC day, week (from Monday) or month that contains `now` began."""
+    today = datetime.fromtimestamp(now, UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == 'weekly':
+        today -= timedelta(days=today.weekday())
+    elif period == 'monthly':
+        today = today.replace(day=1)
+    return int(today.timestamp())
+
+
+def period_end(period: str | None, now: float) -> int | None:
+    """When a UTC day, week (Monday to Sunday) or month that contains `now` ends."""
+    today = datetime.fromtimestamp(now, UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == 'daily':
+        return int((today + timedelta(days=1)).timestamp())
+    if period == 'weekly':
+        return int((today + timedelta(days=7 - today.weekday())).timestamp())
+    if period == 'monthly':
+        month = today.replace(day=1)
+        following = (
+            month.replace(year=month.year + 1, month=1) if month.month == 12 else month.replace(month=month.month + 1)
+        )
+        return int(following.timestamp())
+    return None
+
+
+def parse_openrouter_key(info: dict, budget: dict | None, now: float | None = None) -> list[dict]:
+    """An OpenRouter key's credit limit, and this month's spend against the owner's budget, in USD.
+
+    OpenRouter's ``/key`` reports ``limit`` (null without one), ``limit_remaining``, ``limit_reset``
+    (daily, weekly, monthly or null; at midnight UTC) and ``usage_monthly`` for the UTC month.
+    """
+    now = time.time() if now is None else now
+    windows = []
+    limit = _number(info.get('limit'))
+    remaining = _number(info.get('limit_remaining'))
+    if limit and limit > 0 and remaining is not None:
+        windows.append(
+            {
+                'id': 'credits',
+                'used_percent': max(0.0, min(100.0, (1 - remaining / limit) * 100)),
+                'limit': round(limit, 2),
+                'remaining': round(max(0.0, remaining), 2),
+                'unit': 'usd',
+                'resets_at': period_end(info.get('limit_reset'), now),
+                'source': 'key',
+            }
+        )
+    spent = _number(info.get('usage_monthly'))
+    amount = _number((budget or {}).get('amount'))
+    if spent is not None and amount and amount > 0:
+        windows.append(budget_window(amount, spent, now, 'key'))
+    return windows
+
+
+def budget_window(amount: float, spent: float, now: float, source: str) -> dict:
+    """This month's spend against the owner's monthly budget (a target the provider never enforces)."""
+    spent = max(0.0, spent)
+    return {
+        'id': 'budget',
+        'used_percent': max(0.0, min(100.0, spent / amount * 100)),
+        'limit': round(amount, 2),
+        'remaining': round(max(0.0, amount - spent), 2),
+        'spent': round(spent, 4),
+        'unit': 'usd',
+        'resets_at': period_end('monthly', now),
+        'source': source,
+    }
+
+
 async def record_provider_limits(redis, account_id: str, headers: Mapping[str, str]) -> None:
     """Keep what a response's headers say about the connection's limits. Never raises."""
     try:
@@ -213,17 +312,26 @@ async def record_provider_limits(redis, account_id: str, headers: Mapping[str, s
         if not windows:
             return
 
-        # Headers carry no reset coupons; keep the count the account service last reported.
-        previous = await get_provider_limits(redis, account_id) or {}
-        await record_provider_snapshot(redis, account_id, windows, previous.get('reset_credits'))
+        # Headers carry no reset coupons; the count the account service last reported is kept.
+        await record_provider_snapshot(redis, account_id, windows)
     except Exception as e:
         log.debug('Could not record provider limits: %s', e)
 
 
 async def record_provider_snapshot(
-    redis, account_id: str, windows: list[dict], reset_credits: float | None = None
+    redis, account_id: str, windows: list[dict], reset_credits: float | None = None, source: str | None = None
 ) -> None:
-    snapshot = {'windows': windows, 'updated_at': int(time.time())}
+    """Keep a reading. It replaces the windows its source reported before; other sources' stay."""
+    previous = await get_provider_limits(redis, account_id) or {}
+    ids = {window.get('id') for window in windows}
+    kept = [
+        window
+        for window in previous.get('windows', [])
+        if window.get('source') != source and window.get('id') not in ids
+    ]
+    snapshot = {'windows': windows + kept, 'updated_at': int(time.time())}
+    if reset_credits is None:
+        reset_credits = previous.get('reset_credits')
     if reset_credits is not None:
         snapshot['reset_credits'] = int(reset_credits)
     _snapshots[account_id] = snapshot
@@ -232,6 +340,14 @@ async def record_provider_snapshot(
             await redis.set(f'{REDIS_KEY_PREFIX}{account_id}', JSONCodec.dumps(snapshot), ex=SNAPSHOT_TTL_SECONDS)
         except Exception:
             log.debug('Provider limit storage unavailable; using memory.')
+    if any(window.get('id') in TRACKED_WINDOWS for window in windows):
+        try:
+            async with _history_lock:
+                history = await _load_state(redis, HISTORY_KEY_PREFIX, account_id, _histories)
+                track_reading(history, windows, time.time())
+                await _save_state(redis, HISTORY_KEY_PREFIX, account_id, _histories, history, HISTORY_SECONDS)
+        except Exception as e:
+            log.debug('Could not keep the limit history: %s', e)
     if not any(window.get('id') in SPLIT_WINDOWS for window in windows):
         return
     try:
@@ -241,6 +357,147 @@ async def record_provider_snapshot(
             await _save_split(redis, account_id, state)
     except Exception as e:
         log.debug('Could not split provider usage: %s', e)
+
+
+async def _load_state(redis, prefix: str, account_id: str, memory: dict) -> dict:
+    state = None
+    if redis is not None:
+        try:
+            raw = await redis.get(f'{prefix}{account_id}')
+            state = JSONCodec.loads(raw) if raw else None
+        except Exception as e:
+            log.debug('Could not read %s: %s', prefix, e)
+    return state or memory.get(account_id) or {}
+
+
+async def _save_state(redis, prefix: str, account_id: str, memory: dict, state: dict, ttl: int) -> None:
+    memory[account_id] = state
+    if redis is not None:
+        try:
+            await redis.set(f'{prefix}{account_id}', JSONCodec.dumps(state), ex=ttl)
+        except Exception:
+            log.debug('%s storage unavailable; using memory.', prefix)
+
+
+def track_reading(history: dict, windows: list[dict], now: float) -> None:
+    """Keep recent readings of an account's long windows, to tell how fast they are being used."""
+    for window in windows:
+        window_id = window.get('id')
+        used = _number(window.get('used_percent'))
+        if window_id not in TRACKED_WINDOWS or used is None:
+            continue
+        resets_at = _number(window.get('resets_at'))
+        points = list(history.get(window_id) or [])
+        if points:
+            last_used, last_reset = points[-1][1], points[-1][2]
+            started_over = used < last_used - RESET_DROP or (
+                resets_at is not None and last_reset is not None and resets_at > last_reset + RESET_MOVE_SECONDS
+            )
+            if started_over:
+                points = []
+            else:
+                # A slightly lower reading is a stale one.
+                used = max(used, last_used)
+                # Readings come with every request. Within a step only the latest one after the
+                # step's first is kept, so where each run of use started stays known.
+                if len(points) > 1 and now - points[-2][0] < HISTORY_STEP_SECONDS:
+                    points.pop()
+        points.append([round(now, 1), used, resets_at])
+        history[window_id] = [point for point in points if point[0] >= now - HISTORY_SECONDS][-HISTORY_POINTS:]
+
+
+def burn_rate(points: list, now: float, span: float = RATE_SPAN_SECONDS) -> float | None:
+    """Percent of the window used per minute recently, or None when that is unknown.
+
+    Readings come with requests, so a long gap between two of them is idle time. The pace is
+    measured over the latest run of use within the last `span`, from the reading just before the
+    span when use ran on across it: an idle hour before a busy session never dilutes its pace.
+    No reading inside the span means nothing was used recently (rate 0).
+    """
+    start = now - span
+    recent = [point for point in points if point[0] > start]
+    if not recent:
+        return 0.0 if points else None
+    sequence = [point for point in points if point[0] <= start][-1:] + recent
+    first = len(sequence) - 1
+    while first > 0 and sequence[first][0] - sequence[first - 1][0] <= IDLE_GAP_SECONDS:
+        first -= 1
+    if first < len(sequence) - 1:
+        base = sequence[first]
+    elif first > 0:
+        # A run of one reading tells no pace by itself: measure from the reading before it.
+        base = sequence[first - 1]
+    else:
+        return None
+    minutes = max(MIN_RATE_MINUTES, (now - base[0]) / 60)
+    return max(0.0, sequence[-1][1] - base[1]) / minutes
+
+
+async def account_rates(redis, account_id: str, now: float | None = None) -> dict[str, float | None]:
+    """Each long window's recent use per minute (see burn_rate)."""
+    now = time.time() if now is None else now
+    history = await _load_state(redis, HISTORY_KEY_PREFIX, account_id, _histories)
+    return {window_id: burn_rate(points, now) for window_id, points in history.items()}
+
+
+def limit_outlook(accounts: list[dict], now: float | None = None) -> list[dict]:
+    """How much of each long window is left across every account that can serve a model, how many
+    minutes of work that is at the recent pace, and whether it is running low.
+
+    `accounts` holds each account's `weight` (capacity weight), `windows` and `rates`. Accounts take
+    over from each other when one runs out, so their remaining shares add up, weighted by size.
+    """
+    now = time.time() if now is None else now
+    return [pool for window_id in TRACKED_WINDOWS if (pool := _pooled_window(accounts, window_id, now))]
+
+
+def _pooled_window(accounts: list[dict], window_id: str, now: float) -> dict | None:
+    capacity = remaining = rate = 0.0
+    known_rate = False
+    resets = []
+    minutes = None
+    for entry in accounts:
+        window = next((item for item in entry.get('windows') or [] if item.get('id') == window_id), None)
+        used = _number((window or {}).get('used_percent'))
+        if used is None:
+            continue
+        weight = _number(entry.get('weight')) or 1.0
+        capacity += weight * 100
+        remaining += weight * (0.0 if window_exhausted(window, now) else max(0.0, 100 - used))
+        if (resets_at := _number(window.get('resets_at'))) and resets_at > now:
+            resets.append(resets_at)
+        minutes = minutes or window.get('window_minutes')
+        if (account_rate := (entry.get('rates') or {}).get(window_id)) is not None:
+            known_rate = True
+            rate += weight * account_rate
+    if not capacity:
+        return None
+    minutes_left = remaining / rate if rate > 0 else None
+    resets_at = min(resets) if resets else None
+    # Work left that outlasts the first refill does not run out at this pace.
+    lasts = minutes_left is None or (resets_at is not None and minutes_left >= (resets_at - now) / 60)
+    left_percent = remaining / capacity * 100
+    return {
+        'id': window_id,
+        'window_minutes': minutes,
+        'used_percent': round(100 - left_percent, 2),
+        'minutes_left': round(minutes_left) if minutes_left is not None else None,
+        'rate_known': known_rate,
+        'lasts_until_reset': bool(lasts and minutes_left is not None),
+        'resets_at': int(resets_at) if resets_at else None,
+        'level': _outlook_level(left_percent, None if lasts else minutes_left),
+    }
+
+
+def _outlook_level(left_percent: float, runs_out_in: float | None) -> str:
+    """`runs_out_in`: minutes until the window is used up at the recent pace, unless it refills first."""
+    if left_percent <= 0:
+        return 'empty'
+    if left_percent <= CRITICAL_PERCENT_LEFT or (runs_out_in is not None and runs_out_in <= CRITICAL_MINUTES_LEFT):
+        return 'critical'
+    if left_percent <= LOW_PERCENT_LEFT or (runs_out_in is not None and runs_out_in <= LOW_MINUTES_LEFT):
+        return 'low'
+    return 'ok'
 
 
 async def _load_split(redis, account_id: str) -> dict:

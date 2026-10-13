@@ -26,7 +26,8 @@ separate [Phase 7 plan](claude-runners.md); they do not change Phase 1's complet
 
 Open **Settings → Provider accounts** on https://ai.arbuz.lol. Approved members and admins can connect
 ChatGPT/Codex, Anthropic API, OpenAI API, OpenRouter, or Z.ai accounts. API-key accounts require a
-monthly USD budget; this value is stored but spending enforcement belongs to Phase 4. Z.ai coding
+monthly USD budget; the accounts page shows how much of it is left this month (from OpenRouter,
+or estimated from the usage ledger for other keys), but spending enforcement belongs to Phase 4. Z.ai coding
 plans use their dedicated endpoint. New accounts default to private. Owners and admins can verify,
 pause, change sharing/budget, or disconnect an account. A paused account cannot serve anyone.
 
@@ -122,7 +123,8 @@ usage. This console endpoint is undocumented and can change independently of the
 
 ## Verification
 
-- The suite now has 72 backend tests; image CI runs them on amd64 and arm64 before publishing.
+- The suite now has 117 backend tests; image CI runs them on amd64 and arm64 before publishing.
+  The limits work after Phase 1 is tested in `test_usage_limits.py`.
   The 38-test suite of `aec1626` passed there:
   [build 38146942579](https://github.com/pmixay/MoloGate/actions/runs/38146942579).
 - Shared-account visibility regression: all 24 backend tests of that change passed, including
@@ -171,7 +173,10 @@ scoping, legacy account import, SSE chunk boundaries/Unicode/tools/usage, provid
 (messages, key redaction, credit and limit failover, refusals, interrupted and cut-off answers),
 OpenRouter key verification, header/quota parsing, migration up/down, account failover and
 automatic resets, the owner and team usage split, generated account names, sign-up refusal, and
-the full-text upload migration.
+the full-text upload migration. `test_usage_limits.py` covers OpenRouter key limits, the limit
+outlook and pace, the per-member chat queue (in memory, and in Redis with `TEST_REDIS_URL` or
+`fakeredis[lua]`, otherwise skipped), the usage ledger with its cost estimates, and the
+`usage_event` migration.
 Run against an isolated database whose name contains `provider-tests`; never use a live database.
 
 ```bash

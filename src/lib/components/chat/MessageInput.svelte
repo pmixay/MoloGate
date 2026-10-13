@@ -74,6 +74,8 @@
 	import ModelSelector from './ModelSelector.svelte';
 	import EffortSelector from './EffortSelector.svelte'; // Effort selector (agent C)
 	import ContextIndicator from './ContextIndicator.svelte';
+	import LimitsIndicator from './LimitsIndicator.svelte';
+	import LimitsWarning from './LimitsWarning.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -1777,6 +1779,9 @@
 							</div>
 						{/if}
 
+						<!-- Mologate: the low-limit warning for the selected model (LimitsIndicator loads the limits). -->
+						<LimitsWarning selectedModels={selectedModelIds} />
+
 						<div
 							id="message-input-container"
 							class="flex-1 flex flex-col relative w-full rounded-[14px] border {$temporaryChatEnabled
@@ -2303,6 +2308,9 @@
 								</div>
 
 								<div class="self-end flex items-center gap-1 mr-0.5 min-w-0 min-h-11">
+									<!-- Mologate: the selected model's 5-hour and weekly limits, next to the model selector. -->
+									<LimitsIndicator selectedModels={selectedModelIds} {history} />
+
 									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[14rem]">
 										<ModelSelector
 											bind:this={modelSelector}

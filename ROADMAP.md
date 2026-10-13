@@ -8,26 +8,30 @@ are not in priority order. Tick an item off when it ships.
 The full design and phased plan for accounts, limits, credits and personal API keys is in
 [docs/limits-and-accounts.md](docs/limits-and-accounts.md). It replaces the fair-use proposal below.
 
-- [ ] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
+- [x] **Accounts overview:** a list of all connected accounts showing, for each one, the remaining limits,
       the subscription type, and whether it is an API key or a full account. Accounts are shared by the
       whole team.
-  - Started: Settings → Provider accounts lists the member's own accounts and every shared one
+  - Done: Settings → Provider accounts lists the member's own accounts and every shared one
     (admins see all) as compact rows, collapsed by default. A row shows the generated name
     (`Account #1n9Dk5`), the provider, which tells an API key from a ChatGPT account, the plan,
-    owner, the 5-hour and weekly bars and a ChatGPT account's reset coupons. Expanded, it shows
-    every limit window the provider reports with percent used and reset time, who can use it, and
-    an API key's monthly budget. A shared account's 5-hour and weekly windows are split into the
-    owner's half and the team's half, each with its own bar, estimated from who sent the requests
-    between readings (not enforced yet). Admins can add team accounts that belong to no member,
-    and admin connections to a supported provider become such accounts. Missing: how much of the
-    budget is left, and exact per-member numbers, which need the usage ledger.
-- [ ] **Per-account limits:** show usage limits for every connected account or key where the provider
+    owner, the 5-hour and weekly bars (an API key's credit limit and budget instead) and a ChatGPT
+    account's reset coupons. Expanded, it shows every limit window the provider reports with
+    percent used and reset time, how much of an API key's monthly budget is left, each member's
+    requests, tokens and cost on the account (this week for a subscription, this month for a key),
+    who can use it, and the budget. An OpenRouter key's spend comes from OpenRouter; OpenAI,
+    Anthropic and Z.ai keys can't read their own spending, so theirs is estimated from the usage
+    ledger's token counts and published prices (models.dev). A shared account's 5-hour and weekly
+    windows are split into the owner's half and the team's half, each with its own bar, estimated
+    from who sent the requests between readings (not enforced yet). Admins can add team accounts
+    that belong to no member, and admin connections to a supported provider become such accounts.
+- [x] **Per-account limits:** show usage limits for every connected account or key where the provider
       makes them available.
-  - Started: each provider account keeps the limits its provider reports and shows them on its card
+  - Done: each provider account keeps the limits its provider reports and shows them on its card
     in Settings → Provider accounts: Codex's 5-hour and weekly windows, Z.ai's coding-plan quota,
-    and the request and token limits in OpenAI, OpenRouter and Anthropic response headers, which
-    appear once the account has served a request. Missing: an OpenRouter key's credit limit and
-    usage, which its `/key` endpoint reports.
+    an OpenRouter key's credit limit and this month's spend (from its `/key` endpoint, read on
+    connect, on Verify, when the page lists it and after use, at most once a minute), and the
+    request and token limits in OpenAI, OpenRouter and Anthropic response headers, which appear
+    once the account has served a request.
 - [x] **Account switching and limit resets:**
   - When an account reaches 0%, switch automatically to another shared account that still has quota.
   - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
@@ -40,25 +44,53 @@ The full design and phased plan for accounts, limits, credits and personal API k
     Provider accounts; there is no per-account switch. Each ChatGPT account shows its coupon count,
     with the last reset in the tooltip. ChatGPT limits and coupons come from codex-lb.
     Details in [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-automatic-limit-reset).
-- [ ] **Per-model limits:**
+- [x] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and
     weekly limits.
-  - Started: the context indicator's panel shows the selected model's limits when its provider reports
-    them (Codex's 5-hour and weekly windows, Z.ai's coding-plan quota, or OpenAI-, OpenRouter- and
-    Anthropic-style request and token limits). They are kept per account or connection, so every
-    model on one account shows the same ones; for a model several accounts offer, the panel shows
-    the account the member's request would try first. Missing: a ring showing the 5-hour and
-    weekly limits; the existing ring shows the context window.
-- [ ] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
+  - Done: a limits ring sits just left of the model selector: the outer ring is the 5-hour window
+    (or an OpenRouter key's credit limit), the inner one the weekly window. They add up every
+    account that can serve the model, since a request moves on to the next one when an account
+    runs out. Opening it shows every limit of the account the member's next request will use (their
+    own accounts first, accounts known to be empty last), its name, and how many accounts serve
+    the model. The context indicator's panel shows the same limits. Limits are kept per account
+    or connection, so every model on one account shows the same ones. The ring is hidden for
+    models whose provider reports no 5-hour, weekly or credit limit.
+- [x] **Low-limit warning:** warn when remaining limits run low, with an estimate of how many minutes of
       work are left based on recent usage.
+  - Done: when the selected model's 5-hour, weekly or credit limit runs low, a warning above the
+    message box says so, on every screen size: "5-hour limit: 17% left, about 38m of work at the
+    recent pace. It resets in 1h 58m." It counts every account that can serve the model, since a
+    request moves on to the next one when an account runs out. A window warns at 20% left, or when
+    it would run out within an hour before it resets (in red at 10% or 15 minutes, or when used up),
+    and the limits ring turns the same color with "~38m left" beside it. The pace comes from the
+    last 30 minutes of readings of each account, counting only the latest run of use, so an idle
+    hour before a busy session doesn't make the estimate too generous. A dismissed warning stays
+    hidden until it gets worse or the window resets. The warning on a member's own share of the
+    pool comes with the allowance engine (Fair use).
 - [ ] **Fair use:** each shared account is split 50/50 between its owner and a public pool; members
       past their share keep working on cheap worker models. See
       [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
-- [ ] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
+  - Started: the usage ledger records every request a provider account serves or refuses (member,
+    account, model, source, tokens, cost), and the accounts page shows each shared window split
+    between owner and team. Missing: calibrating units against the providers' percentages
+    (phase 2, after a week of real use), the allowance engine that decides each request's tier
+    (phase 3), enforcing it with the swap to worker models (phase 4), and credits (phase 5).
+- [x] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
       defaults under [Proposed limits](#proposed-limits).
+  - Done: a chat the member sends takes a slot while it generates; past the cap, the next one waits
+    in line, in order, and its reply shows "Waiting: 3 of your chats are already generating. This
+    one is next." until a slot frees up. Stopping it leaves the line. Sub-agents, background
+    results, timers, automations and channel replies take no slot, and several models answering
+    in one chat share one. The cap is 3 by default (`MOLOGATE_MAX_CONCURRENT_CHATS`); admins
+    change it under Settings → General, up to 10. Slots live in Redis, shared by every worker, and
+    free themselves within a minute if a worker stops. Like every limit, it applies when
+    `MOLOGATE_LIMITS_MODE` is `enforce`; in `observe`, the default for now, a chat that would
+    have waited is only logged. Sub-agents keep Open WebUI's own caps from Settings → Sub-agents:
+    20 running at once and 20 in the background by default, counted across the whole server, not
+    per chat or per member as [Proposed limits](#proposed-limits) suggests.
 
 ## Tools, containers and capabilities
 

@@ -1,4 +1,5 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
+import type { LimitWindow } from '$lib/utils/providerLimits';
 
 export type Sharing = 'private' | 'shared' | 'paused';
 export type ProviderAccount = {
@@ -17,17 +18,24 @@ export type ProviderAccount = {
 	models: { id: string; name: string }[];
 	limits: {
 		updated_at: number;
-		windows: {
-			id: string;
-			used_percent: number;
-			resets_at?: number;
-			window_minutes?: number;
-			// Mologate: the part of a 5-hour or weekly window the rest of the team used.
-			team_percent?: number;
-		}[];
+		windows: LimitWindow[];
 		reset_credits?: number;
 	} | null;
 	last_auto_reset_at: number | null;
+	// Mologate: each member's use from the usage ledger, this month (API keys) or this week.
+	usage?: {
+		period: 'month' | 'week';
+		since: number;
+		members: {
+			user_id: string;
+			name: string;
+			requests: number;
+			input_tokens: number;
+			output_tokens: number;
+			cost: number | null;
+			unpriced: number;
+		}[];
+	};
 };
 
 export type AutoReset = {

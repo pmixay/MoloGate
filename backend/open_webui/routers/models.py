@@ -49,7 +49,7 @@ from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.chat_variables import get_chat_variables_schema
 from open_webui.utils.model_labs import detect_lab_from_text, lab_logo
 from open_webui.utils.models import get_all_models
-from open_webui.utils.provider_limits import get_provider_limits, legacy_account_key
+from open_webui.utils.provider_limits import account_rates, get_provider_limits, legacy_account_key, limit_outlook
 from open_webui.utils.validate import BACKGROUND_IMAGE_MAX_BYTES, validate_background_image
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -814,7 +814,10 @@ async def get_model_limits(request: Request, id: str, user=Depends(get_verified_
     """Mologate: the usage limits the model's provider account last reported, if it reports any.
 
     Limits belong to the connection (a shared account or key), so a custom model shows its base
-    model's. Answers ``{'windows': []}`` when nothing is known.
+    model's. ``windows`` are those of the account the member's next request would try first;
+    ``outlook`` adds up every account that can serve the model, with an estimate of the minutes of
+    work left at the recent pace (the low-limit warning). Answers ``{'windows': []}`` when nothing
+    is known.
     """
     model = request.app.state.MODELS.get(id)
     if not model:
@@ -822,23 +825,34 @@ async def get_model_limits(request: Request, id: str, user=Depends(get_verified_
 
     # Mologate: authorize the model before exposing an account's usage snapshot.
     from open_webui.utils.models import check_model_access
-    from open_webui.utils.provider_accounts import select_account
+    from open_webui.utils.provider_account_proxy import order_by_headroom
+    from open_webui.utils.provider_accounts import select_accounts
     from open_webui.routers.openai import get_openai_connection
 
     if user.role != 'admin' and not BYPASS_MODEL_ACCESS_CONTROL:
         await check_model_access(user, model)
+    redis = request.app.state.redis
     base_model_id = (model.get('info') or {}).get('base_model_id') or id
     if base_model_id.startswith('account:'):
-        account_id = (await select_account(base_model_id, user)).id
+        # The order a request tries them in: the member's own first, accounts known to be empty last.
+        accounts = await order_by_headroom(redis, await select_accounts(base_model_id, user))
+        entries = [(account.id, account.capacity_weight) for account in accounts]
+        account = accounts[0]
+        about = {'label': account.label, 'provider': account.provider, 'plan': account.plan}
     else:
         base_model = request.app.state.MODELS.get(base_model_id) or model
         url_idx = base_model.get('urlIdx')
         if url_idx is None:
-            return {'windows': [], 'updated_at': None}
+            return {'windows': [], 'updated_at': None, 'outlook': [], 'accounts': 0}
         url, key, _ = await get_openai_connection(url_idx)
-        account_id = legacy_account_key(url, key)
-    snapshot = await get_provider_limits(request.app.state.redis, account_id)
-    return snapshot or {'windows': [], 'updated_at': None}
+        entries, about = [(legacy_account_key(url, key), 1)], None
+    snapshots, pool = [], []
+    for account_id, weight in entries:
+        snapshots.append(await get_provider_limits(redis, account_id))
+        windows = (snapshots[-1] or {}).get('windows', [])
+        pool.append({'weight': weight, 'windows': windows, 'rates': await account_rates(redis, account_id)})
+    snapshot = snapshots[0] or {'windows': [], 'updated_at': None}
+    return {**snapshot, 'account': about, 'accounts': len(entries), 'outlook': limit_outlook(pool)}
 
 
 ###########################

@@ -15,7 +15,7 @@ from open_webui.utils import codex_lb
 from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
 from open_webui.utils.provider_accounts import (
     auto_reset_enabled,
-    refresh_zai_limits_soon,
+    refresh_limits_soon,
     select_accounts,
     split_model_id,
 )
@@ -38,6 +38,7 @@ from open_webui.utils.provider_limits import (
     window_exhausted,
 )
 from open_webui.utils.session_pool import cleanup_response, get_client_timeout, get_session, stream_wrapper
+from open_webui.utils.usage_ledger import Meter, responses_usage
 
 log = logging.getLogger(__name__)
 SESSION_ID = re.compile(r'[A-Za-z0-9:._-]{1,128}')
@@ -217,11 +218,14 @@ def settle_chat(result):
     return result
 
 
-async def codex_chat_stream(response, model, events=None):
-    """Responses SSE as Chat Completions chunks, closed with why the answer stopped when it did not finish."""
+async def codex_chat_stream(response, model, events=None, on_end=None):
+    """Responses SSE as Chat Completions chunks, closed with why the answer stopped when it did not finish.
+
+    `on_end(usage, finished)` learns what the answer used once the stream ends (the usage ledger)."""
     identifier = 'chatcmpl-account'
     calls = {}
-    partial = refused = False
+    partial = refused = finished = False
+    usage = None
     note = ('interrupted', ENDED)
 
     def chunk(delta, finish_reason=None, usage=None):
@@ -280,6 +284,7 @@ async def codex_chat_stream(response, model, events=None):
                     }
                 elif kind in FINISHED:
                     result = event.get('response') or {}
+                    usage, finished = result.get('usage'), True
                     finish, note = 'tool_calls' if calls else 'stop', None
                     if kind == 'response.incomplete':
                         if (result.get('incomplete_details') or {}).get('reason') == 'content_filter':
@@ -301,12 +306,14 @@ async def codex_chat_stream(response, model, events=None):
         yield 'data: [DONE]\n\n'
     finally:
         await cleanup_response(response)
+        if on_end is not None:
+            on_end(usage, finished)
 
 
-async def chat_stream(response, model, events=None):
+async def chat_stream(response, model, events=None, on_end=None):
     """An OpenAI-compatible stream, with refusals as text and a closing note when the answer stops early."""
     partial = done = False
-    finish = note = None
+    finish = note = usage = None
     try:
         try:
             async for event in events or response_events(response):
@@ -326,6 +333,7 @@ async def chat_stream(response, model, events=None):
                         delta.get(key) for key in ('content', 'reasoning_content', 'reasoning', 'tool_calls')
                     )
                     finish = choice.get('finish_reason') or finish
+                usage = event.get('usage') or usage
                 yield 'data: ' + json.dumps(event) + '\n\n'
         except Exception:
             note = ('interrupted', DROPPED)
@@ -343,6 +351,19 @@ async def chat_stream(response, model, events=None):
         yield 'data: [DONE]\n\n'
     finally:
         await cleanup_response(response)
+        if on_end is not None:
+            on_end(usage, bool(done or finish) and finish != 'error')
+
+
+async def metered_passthrough(response, on_end):
+    """A Responses stream passed through as it came, noting its final usage for the ledger."""
+    usage = None
+    try:
+        async for line in stream_wrapper(response):
+            usage = responses_usage(line) or usage
+            yield line
+    finally:
+        on_end(usage, usage is not None)
 
 
 async def codex_result(response, account, endpoint):
@@ -448,19 +469,36 @@ async def limit_error(redis, accounts, resets_enabled, failures=None):
     return HTTPException(status, message)
 
 
-async def account_completion(request, form_data, user, endpoint='chat/completions'):
+async def account_completion(request, form_data, user, endpoint='chat/completions', metadata=None):
     # Always select and authorize again, including direct /openai routes and API-key requests.
     model = form_data.get('model', '')
     accounts = await select_accounts(model, user)
     if endpoint not in ('chat/completions', 'responses'):
         raise HTTPException(403, 'This account route only supports model inference.')
     redis = getattr(request.app.state, 'redis', None)
+    # Mologate: every attempt leaves a usage ledger row (utils/usage_ledger.py).
+    metadata = metadata or getattr(getattr(request, 'state', None), 'metadata', None)
+    meter = Meter(request, user, metadata, split_model_id(model)[1])
+
+    async def attempt(account):
+        written = meter.rows
+        try:
+            return await account_request(request, account, form_data, endpoint, user, meter)
+        except AccountExhausted:
+            meter.record(account, 'limited')
+            raise
+        except HTTPException:
+            # Unless the attempt already left its row (a refused answer, with what it used).
+            if meter.rows == written:
+                meter.record(account, 'error')
+            raise
+
     exhausted = []
     failures = {}
     # Mologate: an empty account hands the request to the next one that still has quota.
     for account in await order_by_headroom(redis, accounts):
         try:
-            return await account_request(request, account, form_data, endpoint, user)
+            return await attempt(account)
         except AccountExhausted as error:
             exhausted.append(account)
             failures[account.id] = error
@@ -470,13 +508,13 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
         account = await auto_reset(exhausted, user.id, redis)
         if account is not None:
             try:
-                return await account_request(request, account, form_data, endpoint, user)
+                return await attempt(account)
             except AccountExhausted as error:
                 failures[account.id] = error
     raise await limit_error(redis, exhausted, resets_enabled, failures)
 
 
-async def account_request(request, account, form_data, endpoint, user):
+async def account_request(request, account, form_data, endpoint, user, meter=None):
     model = form_data.get('model', '')
     _, upstream_id = split_model_id(model)
     # Each attempt gets its own copy: the Responses conversion consumes the messages.
@@ -513,6 +551,11 @@ async def account_request(request, account, form_data, endpoint, user):
         url = secret['base_url'] + '/' + endpoint
     response = None
     streaming = False
+
+    def ended(usage, finished):
+        if meter is not None:
+            meter.record(account, 'ok' if finished else 'error', usage)
+
     try:
         session = codex_lb.get_session() if account.provider == 'codex' else await get_session()
         response = await session.post(
@@ -530,15 +573,18 @@ async def account_request(request, account, form_data, endpoint, user):
             await count_account_request(
                 getattr(request.app.state, 'redis', None), account.id, account.owner_user_id == user.id
             )
-            refresh_zai_limits_soon(account, getattr(request.app.state, 'redis', None))
+        # Z.ai coding plans and OpenRouter keys report their limits only through their own endpoints.
+        refresh_limits_soon(account, getattr(request.app.state, 'redis', None))
         if account.provider == 'codex' and not wants_stream:
-            return await codex_result(response, account, endpoint)
+            result = await codex_result(response, account, endpoint)
+            ended(result.get('usage'), 'error' not in result)
+            return result
         if wants_stream and (
             account.provider == 'codex' or 'text/event-stream' in response.headers.get('Content-Type', '')
         ):
             if endpoint != 'chat/completions':
                 streaming = True
-                return StreamingResponse(stream_wrapper(response), media_type='text/event-stream')
+                return StreamingResponse(metered_passthrough(response, ended), media_type='text/event-stream')
             # Read up to the first real event: a used-up quota there still goes to the next account.
             events = response_events(response)
             opened = await opening(events)
@@ -546,12 +592,21 @@ async def account_request(request, account, form_data, endpoint, user):
                 raise exhausted
             stream = codex_chat_stream if account.provider == 'codex' else chat_stream
             streaming = True
-            return StreamingResponse(stream(response, model, replay(opened, events)), media_type='text/event-stream')
+            return StreamingResponse(
+                stream(response, model, replay(opened, events), on_end=ended), media_type='text/event-stream'
+            )
         result = await response.json()
         error = provider_error(result)
         if error is not None and not (isinstance(result, dict) and (result.get('choices') or result.get('output'))):
             await reject(account, response.status, error, response.headers)
-        return settle_chat(result) if endpoint == 'chat/completions' else result
+        usage = result.get('usage') if isinstance(result, dict) else None
+        try:
+            result = settle_chat(result) if endpoint == 'chat/completions' else result
+        except HTTPException:
+            ended(usage, False)
+            raise
+        ended(usage, True)
+        return result
     except (HTTPException, AccountExhausted):
         raise
     except Exception:

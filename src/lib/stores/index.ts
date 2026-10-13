@@ -4,6 +4,7 @@ import type { ModelConfig } from '$lib/apis';
 import type { Banner } from '$lib/types';
 import type { Socket } from 'socket.io-client';
 import type { AudioQueue } from '$lib/utils/audio';
+import type { ModelLimits } from '$lib/utils/providerLimits';
 import type { I18nOverrides } from '$lib/utils/translationDictionary';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
@@ -125,6 +126,12 @@ export const chatRequestQueues: Writable<
 > = writable({});
 
 export const sidebarWidth = writable(245);
+
+// Mologate: the selected model's usage limits, read by the limits ring and the low-limit warning.
+export const modelLimits: Writable<{ modelId: string; limits: ModelLimits | null }> = writable({
+	modelId: '',
+	limits: null
+});
 
 export type SettingsModalRequest = {
 	tab: string;

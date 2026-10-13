@@ -16,7 +16,10 @@
 	} from '$lib/utils/contextBreakdown';
 	import { flyAndScale } from '$lib/utils/transitions';
 
+	import { formatPercent, type LimitWindow } from '$lib/utils/providerLimits';
+
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ProviderLimitsList from './ProviderLimitsList.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -27,15 +30,6 @@
 	};
 	// Chat.svelte's usage estimate: the fallback total for older chats and the compaction threshold.
 	export let contextUsage: { tokens?: number; threshold?: number | null } | null = null;
-
-	type LimitWindow = {
-		id: string;
-		used_percent: number;
-		window_minutes?: number | null;
-		resets_at?: number | null;
-		limit?: number;
-		remaining?: number;
-	};
 
 	const RING_RADIUS = 7;
 	const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -92,58 +86,6 @@
 		if (value >= 1_000) return `${trimNumber(value / 1_000)}k`;
 		return String(Math.round(value ?? 0));
 	};
-
-	const formatPercent = (value: number) =>
-		value > 0 && value < 1 ? '<1%' : `${Math.round(value)}%`;
-
-	const formatDuration = (seconds: number) => {
-		const minutes = Math.max(1, Math.round(seconds / 60));
-		const days = Math.floor(minutes / 1440);
-		const hours = Math.floor((minutes % 1440) / 60);
-		const rest = minutes % 60;
-		if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
-		if (hours) return rest ? `${hours}h ${rest}m` : `${hours}h`;
-		return `${rest}m`;
-	};
-
-	const limitLabel = (window: LimitWindow) => {
-		if (window.id === 'requests') return $i18n.t('Requests');
-		if (window.id === 'tokens') return $i18n.t('Tokens');
-
-		const minutes = window.window_minutes;
-		if (minutes === 10080) return $i18n.t('Weekly limit');
-		if (minutes && minutes % 1440 === 0) {
-			return $i18n.t('{{COUNT}}-day limit', { COUNT: minutes / 1440 });
-		}
-		if (minutes && minutes % 60 === 0) {
-			return $i18n.t('{{COUNT}}-hour limit', { COUNT: minutes / 60 });
-		}
-		if (minutes) return $i18n.t('{{COUNT}}-minute limit', { COUNT: minutes });
-		return window.id === 'primary' ? $i18n.t('Short-term limit') : $i18n.t('Long-term limit');
-	};
-
-	const limitDetail = (window: LimitWindow) => {
-		const parts = [
-			window.limit
-				? $i18n.t('{{REMAINING}} of {{LIMIT}} left', {
-						REMAINING: formatTokens(window.remaining ?? 0),
-						LIMIT: formatTokens(window.limit)
-					})
-				: $i18n.t('{{PERCENT}} used', { PERCENT: formatPercent(window.used_percent) })
-		];
-		if (window.resets_at) {
-			const seconds = window.resets_at - Date.now() / 1000;
-			parts.push(
-				seconds > 0
-					? $i18n.t('resets in {{DURATION}}', { DURATION: formatDuration(seconds) })
-					: $i18n.t('reset since')
-			);
-		}
-		return parts.join(' · ');
-	};
-
-	const limitLevel = (usedPercent: number) =>
-		usedPercent >= 90 ? 'critical' : usedPercent >= 75 ? 'warning' : 'normal';
 
 	const loadLimits = async (id: string) => {
 		if (!id) {
@@ -415,31 +357,7 @@
 								{$i18n.t('Loading...')}
 							</div>
 						{:else if limits?.windows?.length}
-							{#each limits.windows as window (window.id)}
-								{@const windowLevel = limitLevel(window.used_percent)}
-								<div class="flex flex-col gap-1">
-									<div class="flex items-baseline justify-between gap-3 text-[12px]">
-										<span>{limitLabel(window)}</span>
-										<span class="font-mono">
-											{formatPercent(window.used_percent)}
-											{#if windowLevel !== 'normal'}
-												<span class="font-sans text-[11px] text-gray-500 dark:text-gray-400"
-													>· {$i18n.t('running low')}</span
-												>
-											{/if}
-										</span>
-									</div>
-									<div class="ring-track-fill h-1.5 w-full overflow-hidden rounded-full">
-										<div
-											class="h-full rounded-full meter-{windowLevel}"
-											style="width: {Math.max(window.used_percent, 2)}%"
-										></div>
-									</div>
-									<div class="text-[11px] text-gray-500 dark:text-gray-400">
-										{limitDetail(window)}
-									</div>
-								</div>
-							{/each}
+							<ProviderLimitsList windows={limits.windows} />
 						{:else}
 							<div class="text-[12px] text-gray-500 dark:text-gray-400">
 								{$i18n.t(
@@ -517,15 +435,5 @@
 	}
 	.ring-critical {
 		stroke: var(--critical);
-	}
-
-	.meter-normal {
-		background: var(--value);
-	}
-	.meter-warning {
-		background: var(--warning);
-	}
-	.meter-critical {
-		background: var(--critical);
 	}
 </style>

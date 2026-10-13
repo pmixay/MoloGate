@@ -142,8 +142,9 @@ branch.
 
 At that baseline there were no account, ledger or credit tables, and no account UI. Phase 1 now
 provides `provider_account`, `provider_login` and account UI, and keys limits by account on the
-chat, Responses and proxy paths; §10 added `limit_reset_event`. The usage ledger,
-`account_window`, `decide()` and credit tables remain work for Phases 2, 3 and 5.
+chat, Responses and proxy paths; §10 added `limit_reset_event`, and Phase 2 started the usage
+ledger (`usage_event`, §8). `account_window`, `decide()` and credit tables remain work for
+Phases 2, 3 and 5.
 
 ---
 
@@ -198,9 +199,12 @@ reconnect credit farming after an account row is deleted.
 `id`, `ts`, `user_id`, `api_key_id` (nullable), `account_id`, `provider`, `model_id`, `source`
 (`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside`), `tier`
 (`reserve` | `pool` | `credit` | `worker` | `owner_outside`), `input_tokens`, `output_tokens`,
-`cached_tokens`, `reasoning_tokens`, `est_units`, `units` (after calibration), `credits_charged`,
-`status` (`ok` | `error` | `limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and
-(`account_id`, `ts`). `outside` rows are the unexplained jumps from §8.
+`cached_tokens`, `reasoning_tokens`, `cost` (USD) and `cost_source` (`provider` | `estimate`),
+`est_units`, `units` (after calibration), `credits_charged`, `status` (`ok` | `error` |
+`limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and (`account_id`, `ts`).
+`outside` rows are the unexplained jumps from §8. Migration `a8d4e2c7f915`. Until the allowance
+engine assigns tiers, a row's tier says only whose account served it: `reserve` for the owner,
+`pool` for anyone else.
 
 **`credit_grant`**
 `id`, `user_id`, `provider`, `external_account_id`, `plan`, `amount`, `granted_at`, `forfeited_at`.
@@ -301,10 +305,28 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
 
 ## 8. Metering and calibration
 
-- **Ledger:** the gate writes a `usage_event` for every provider request: chat, subagent, task,
-  API key, scheduled, workflow. Hook the post-step where the response's `usage` is known, in
-  `routers/openai.py` for `generate_chat_completion`, `responses` and `proxy`, and in the Codex
-  adapter.
+- **Ledger (implemented, `utils/usage_ledger.py`):** the account proxy writes a `usage_event` for
+  every attempt on a provider account, whichever route it came by (chat, Responses, the proxy) and
+  whatever started it (chat, sub-agent, task, API key, automation): `limited` when the account is
+  used up and the request moves on, `error` when it fails, and `ok` with the token counts once the
+  answer, or its stream, ends. Rows are written in the background and never fail or slow a
+  request. Models of connections that stay connections (§9) are not metered.
+- **Cost:** OpenRouter reports each request's cost, and its `/key` endpoint this month's spend.
+  OpenAI, Anthropic and Z.ai keys report neither, so the ledger estimates a request's cost from its
+  token counts (uncached input, cached input, output) and published prices, from the models.dev
+  catalog (`utils/model_prices.py`, fetched at most once a day; `MOLOGATE_PRICE_CATALOG_URL`
+  points elsewhere or, empty, turns estimates off, as does offline mode). A model with no
+  published price has an unknown cost, and the accounts page says how many such requests it
+  could not count. Subscriptions have no per-request cost.
+- **Pace (the low-limit warning):** each account keeps two hours of readings of its 5-hour,
+  weekly and credit windows (the first and the latest of each minute, in Redis with the limit
+  snapshots). Readings come with requests, so a gap of over 10 minutes between two is idle time;
+  the rise over the latest run of use within the last 30 minutes gives a pace. The remaining
+  shares of every account that can serve a model, weighted by `c_a`, divided by their combined
+  pace, give the minutes of work left (`limit_outlook` in `utils/provider_limits.py`, returned by
+  `GET /api/v1/models/model/limits`). A window is low at 20% left or an hour of work, critical at
+  10% or 15 minutes, unless it resets first. The chat shows it above the message box
+  (`LimitsWarning.svelte`) and on the limits ring.
 - **Polling:** codex-lb reads each ChatGPT account's windows from OpenAI every minute and from
   every response; Mologate takes them from its account summary. Store them in `account_window`.
 - **Owner and team split (started, an estimate):** until the ledger exists, Mologate counts the
@@ -382,9 +404,11 @@ and a request naming an old id is sent to the new one (`mologate.model_aliases`)
 when it matters (Team, Paused, Sign-in required), the 5-hour and weekly bars, and a coupon badge
 (count; the tooltip has the last automatic reset). On a shared account each of those windows is
 two bars: the owner's reserve and the team pool, each out of 50 points (decision 2), with the
-owner's use past 50 shown as pool use. Expanded: every limit window, with "You · 8/50" and
-"Team · 15/50" under a shared window, a "Who can use" dropdown (Only me, Team, Paused), and
-Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
+owner's use past 50 shown as pool use. An API key's row shows its credit limit and budget
+instead. Expanded: every limit window, with "You · 8/50" and "Team · 15/50" under a shared
+window, an API key's budget left this month (estimated, §8, except OpenRouter's), each member's
+requests, tokens and cost from the ledger (this week for a subscription, this month for a key), a
+"Who can use" dropdown (Only me, Team, Paused), and Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
 header. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
 loan (decision 3) is not shown yet.
 
@@ -499,10 +523,12 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 2: metering (observe-only)
 
-- [ ] `usage_event` ledger written for every source, including API keys and unsaved chats.
+- [x] `usage_event` ledger written for every source, including API keys and unsaved chats (§8).
 - [ ] Account polling, outside-use detection, calibration jobs.
 - [ ] Accounts page and a "my usage" page (read-only numbers). Started: the accounts page shows
-      each shared account's owner and team use, estimated from request counts (§8).
+      each shared account's owner and team use, estimated from request counts (§8), each
+      member's requests, tokens and cost from the ledger, and an API key's budget left. The "my
+      usage" page is not started.
 - [ ] Done when: after a week, ledger units match the provider's percent changes within 10% per
       account.
 
@@ -519,10 +545,16 @@ acceptance check is two real Codex accounts serving chats.
 - [ ] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
 - [ ] Failover on 429 or limit errors to another account in the same tier. Account-level
       failover already ships with §10; tier-aware selection remains.
-- [ ] Per-user concurrency cap (3 chats generating, from ROADMAP.md) and per-account concurrency
-      cap.
+- [x] Per-user concurrency cap (3 chats generating, from ROADMAP.md): `utils/chat_slots.py`.
+      Past the cap a chat waits in line and shows its place; sub-agents, background results,
+      timers, automations and channel replies take no slot. Admins set it under Settings →
+      General (hard cap 10). It waits only in `enforce`; `observe` logs a chat that would have.
+- [ ] Per-account concurrency cap.
 - [ ] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
-      the share with an estimate of minutes left from the last 30 minutes of use.
+      the share with an estimate of minutes left from the last 30 minutes of use. Started: the
+      limits ring beside the model selector shows the account windows of every account that can
+      serve the model and warns, with minutes left at the last 30 minutes' pace, when they run
+      low (§8). Tier, share and credits need the allowance engine.
 - [ ] Admin and team overrides (`limit_override`), with an audit log.
 - [ ] Done when: in `enforce`, the §7.5 scenarios behave as written on the deployed site.
 
@@ -575,6 +607,8 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   OAuth listener bound to localhost. It keeps its SQLite database and encryption key in the
   `codex_lb_data` volume. It also checks GitHub, npm and two pricing catalogs hourly for version
   and price data, which cannot be turned off.
+- Mologate fetches published model prices from models.dev at most once a day, to estimate what
+  API-key requests cost (§8); `MOLOGATE_PRICE_CATALOG_URL=` turns this off.
 - Caddy handles HTTPS at `ai.arbuz.lol`; the old `5-83-140-221.sslip.io` hostname redirects there.
   The firewall allows only 22, 80 and 443.
 - Backups: none while Mologate is in development. Add them later, kept off the box.
