@@ -201,6 +201,12 @@ async def proxy(request: web.Request) -> web.StreamResponse:
         url += f'?{request.query_string}'
     headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
     headers['Authorization'] = f'Bearer {sandbox.api_key}'
+    # Decompression-bomb guard: Mologate reads API answers (tool results, files) into memory, and
+    # the agent controls what runs in the container, so those answers must come uncompressed.
+    # Apps previewed through /proxy/ go to the browser as they are.
+    passthrough = path.startswith('proxy/')
+    if not passthrough:
+        headers['Accept-Encoding'] = 'identity'
 
     manager.begin(context)
     try:
@@ -212,6 +218,9 @@ async def proxy(request: web.Request) -> web.StreamResponse:
             data=request.content if request.can_read_body else None,
             allow_redirects=False,
         ) as upstream:
+            encoding = upstream.headers.get('Content-Encoding', 'identity').strip().lower()
+            if not passthrough and encoding not in ('', 'identity'):
+                return _json_error(502, 'compressed_response', 'The container answered with a compressed body.')
             response = web.StreamResponse(
                 status=upstream.status,
                 headers={k: v for k, v in upstream.headers.items() if k.lower() not in RESPONSE_STRIPPED},

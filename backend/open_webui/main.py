@@ -150,6 +150,7 @@ from open_webui.models.users import Users
 from open_webui.routers import (
     provider_accounts,  # Mologate: owner-managed provider connections.
     containers,  # Mologate: each chat's own container.
+    uploads,  # Mologate: big uploads in chunks.
     analytics,
     audio,
     auths,
@@ -906,6 +907,8 @@ app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
+# Mologate: chunked uploads up to 500 MB; before the files router, whose /{id} routes would match.
+app.include_router(uploads.router, prefix='/api/v1/files/uploads', tags=['files'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])
 app.include_router(functions.router, prefix='/api/v1/functions', tags=['functions'])
 app.include_router(evaluations.router, prefix='/api/v1/evaluations', tags=['evaluations'])
@@ -2481,7 +2484,9 @@ async def get_app_config(request: Request):
                     },
                 },
                 'file': {
-                    'max_size': config.get('rag.file.max_size'),
+                    # Mologate: uploads go up to 500 MB unless an admin set a lower limit.
+                    'max_size': config.get('rag.file.max_size') or uploads.MAX_UPLOAD // (1024 * 1024),
+                    'chunked_threshold': uploads.CHUNK_SIZE,
                     'max_count': config.get('rag.file.max_count'),
                     'image_compression': {
                         'width': config.get('file.image_compression_width'),

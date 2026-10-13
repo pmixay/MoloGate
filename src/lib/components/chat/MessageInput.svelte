@@ -56,7 +56,7 @@
 		isRasterImageContentType,
 		modelReadsImages
 	} from '$lib/utils';
-	import { uploadFile } from '$lib/apis/files';
+	import { uploadFile, uploadFileChunked } from '$lib/apis/files';
 	import { getCwd, uploadNewFileToTerminal } from '$lib/apis/terminal';
 	import { generateAutoCompletion } from '$lib/apis';
 	import { deleteFileById } from '$lib/apis/files';
@@ -971,7 +971,14 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				// Mologate: big files go up in chunks, with progress (up to 500 MB).
+				const uploadedFile =
+					file.size > ($config?.file?.chunked_threshold ?? 8 * 1024 * 1024)
+						? await uploadFileChunked(localStorage.token, file, metadata, process, (fraction) => {
+								fileItem.progress = fraction;
+								files = files;
+							})
+						: await uploadFile(localStorage.token, file, metadata, process);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -1925,6 +1932,7 @@
 												type={file.type}
 												size={file?.size}
 												loading={file.status === 'uploading'}
+												progress={file.status === 'uploading' ? (file.progress ?? null) : null}
 												dismissible={true}
 												edit={true}
 												small={true}

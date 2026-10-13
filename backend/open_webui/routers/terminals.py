@@ -63,9 +63,10 @@ STREAMING_CONTENT_TYPES = (
 CHAT_PATH_RE = re.compile(r'^c/([A-Za-z0-9-]{1,64})/(.*)$', re.DOTALL)
 ADMIN_API_PATHS = ('api/v1/policies', 'api/v1/status', 'api/v1/terminals')
 # Drop the upstream's server and date: uvicorn adds its own and forwarding both duplicates them.
-STRIPPED_RESPONSE_HEADERS = frozenset(
-    ('transfer-encoding', 'connection', 'content-encoding', 'content-length', 'server', 'date')
-)
+# Mologate: bodies pass through still compressed (auto_decompress=False below), so the browser, not
+# this server, expands them, and a decompression bomb can't fill the server's memory. Their
+# Content-Encoding must go along.
+STRIPPED_RESPONSE_HEADERS = frozenset(('transfer-encoding', 'connection', 'content-length', 'server', 'date'))
 
 
 def _sanitize_proxy_path(path: str) -> str | None:
@@ -226,6 +227,7 @@ async def proxy_terminal(
     session = aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=300, connect=10),
         trust_env=True,
+        auto_decompress=False,
     )
 
     try:

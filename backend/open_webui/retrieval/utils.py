@@ -1368,6 +1368,31 @@ def filter_source_metadata(metadata: dict) -> dict:
     return {key: metadata[key] for key in RAG_SOURCE_METADATA_KEYS if metadata.get(key) is not None}
 
 
+# Mologate: the most of a file's text that goes into a prompt (about 100k tokens). Longer files, and
+# files too big to read at upload, are worked with in the chat's container instead.
+INLINE_TEXT_MAX_CHARS = int(os.environ.get('MOLOGATE_INLINE_TEXT_MAX_CHARS', '400000') or 400000)
+
+
+def inline_file_text(file_object) -> str:
+    """A file's text for the prompt: in full when it fits, else the start and where to find the rest."""
+    meta = file_object.meta or {}
+    name = file_object.filename
+    size_mb = (meta.get('size') or 0) / (1024 * 1024)
+    if meta.get('text_skipped'):
+        return (
+            f'[{name} is {size_mb:.0f} MB, too big to include here. It is in the chat container under '
+            '/home/user/uploads/; read or process it there with the terminal tools.]'
+        )
+    content = (file_object.data or {}).get('content', '') or ''
+    if len(content) <= INLINE_TEXT_MAX_CHARS:
+        return content
+    return (
+        content[:INLINE_TEXT_MAX_CHARS]
+        + f'\n\n[Only the first {INLINE_TEXT_MAX_CHARS:,} of {len(content):,} characters of {name} are shown. '
+        'The whole file is in the chat container under /home/user/uploads/.]'
+    )
+
+
 async def get_sources_from_items(
     request,
     items,
@@ -1529,7 +1554,7 @@ async def get_sources_from_items(
                         or ('file', item.get('id')) in folder_items
                     ):
                         query_result = {
-                            'documents': [[file_object.data.get('content', '')]],
+                            'documents': [[inline_file_text(file_object)]],
                             'metadatas': [
                                 [
                                     {

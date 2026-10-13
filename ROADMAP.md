@@ -175,20 +175,34 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
 
 ### Files
 
-- [ ] Accept files of any type up to 500 MB.
+- [x] Accept files of any type up to 500 MB.
   - Copy attachments into the sandbox automatically.
   - Tell the agent which files were attached, if that isn't already done.
   - Started: an uploaded file reaches the model as its full extracted text, without embeddings or
     a vector database. Existing installs are switched over once.
   - Done: attachments are copied into the chat's container (`/home/user/uploads/`), and the agent
-    is told their paths. Missing: accepting any type up to 500 MB.
-- [ ] Browse the files in the current container and preview most of them online, with syntax
+    is told their paths. Files over 8 MiB upload in chunks, three at a time, retried on failure and
+    gzip-compressed in the browser when they compress well, with a progress ring; chunks are
+    written into place on disk and the finished file is moved into storage without a copy (420 MB
+    in about 7 seconds locally). Files over 20 MB skip text extraction and the agent reads them in
+    the container; prompt text is capped at 400,000 characters. Every upload is checked for
+    decompression bombs first: ZIP entries are inflated and checked against their declared sizes,
+    overlapping entries and nested archives are caught, and gzip, bzip2, xz and tar are expanded
+    in a stream under size, ratio and entry limits (docs/container-nodes.md).
+- [x] Browse the files in the current container and preview most of them online, with syntax
       highlighting.
   - Started: Open WebUI's file browser opens the chat's own container, since the container runs
     Open Terminal. Not yet checked across file types.
-- [ ] **Change summary:**
+  - Done: a **Files** button in the chat header opens the chat container's file browser. Checked
+    with code (syntax highlighting), Markdown, CSV, JSON, notebooks, images, SVG, PDF, Excel,
+    SQLite and HTML; other files offer a download. Big media, archives and Office files stream
+    through the proxy, and PDFs work in browsers without the newest JavaScript APIs.
+- [x] **Change summary:**
   - After each turn, show the list of files the agent edited in that turn.
   - Show the number of lines added and removed (+ / −) for the whole session.
+  - Done: once a response has completely finished, it lists the files added, edited or deleted in
+    the chat's container, with file-type icons and lines added and removed; clicking one opens it
+    in the file browser. A bar above the message box adds them up for the whole chat.
 
 ### Agents
 

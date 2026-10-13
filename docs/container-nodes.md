@@ -39,8 +39,33 @@ Terminal API.
 - **Attachments inside.** Files attached to the chat are copied to `/home/user/uploads/` before the
   turn runs. The agent's system prompt lists their paths and sizes, marks the ones attached to the
   current message, and states the container's limits and whether its network is on.
+- **Big attachments.** Files up to 500 MB (`MOLOGATE_MAX_UPLOAD_MB`, or the admin's lower file
+  size limit) upload in 8 MiB chunks, three at a time, each retried on failure; text-like files are
+  gzip-compressed in the browser first. Chunks are written straight into place on disk, and the
+  finished file is moved into storage without a copy. Files over 20 MB (`MOLOGATE_FILE_TEXT_MAX_MB`)
+  skip text extraction: the agent is told to read them in the container. Text put into the prompt
+  is capped at 400,000 characters (`MOLOGATE_INLINE_TEXT_MAX_CHARS`); the agent reads the rest in
+  `/home/user/uploads/`.
+- **No decompression bombs.** Every upload is checked before anything extracts it
+  (`backend/open_webui/utils/archive_guard.py`): ZIP entries are actually inflated and must match
+  the sizes they declare, overlapping entries are refused, nested archives are followed three
+  levels deep, and gzip, bzip2, xz and tar are expanded in a stream. An archive is refused if it
+  would expand past 4 GiB, past 64 MiB at more than 200 times its size, or into more than 50,000
+  entries (`MOLOGATE_ARCHIVE_MAX_EXPANDED_MB`, `MOLOGATE_ARCHIVE_MAX_RATIO`,
+  `MOLOGATE_ARCHIVE_MAX_ENTRIES`). Compressed chunks are expanded with a hard limit too, and the
+  container proxy refuses compressed responses rather than letting anything expand them.
+- **Its files in the browser.** The **Files** button in the chat header opens the container's file
+  browser: previews with syntax highlighting for code, and for Markdown, CSV, JSON, notebooks,
+  images, PDF, Office, SQLite, audio and video; HTML and served ports open in a frame. Anything else
+  can be downloaded.
+- **What each response changed.** When a response starts, the node records the container's
+  `/home/user` (hashes, plus compressed copies of text files up to 1 MB; dependency, cache and
+  version-control folders skipped). When the response has completely finished, sub-agents and
+  tool calls included, the message lists the files that were added, edited or deleted, with lines
+  added and removed. A bar above the message box adds them up for the whole chat. Clicking a file
+  opens it in the file browser.
 - **A network switch.** The **⋯** (Extra) button next to **+** opens the container's settings:
-  its state (running, paused, stopped), limits and node, and **Network access**. Internet is on by
+  its state (running, paused, stopped), its size behind the **i** button, and **Network access**. Internet is on by
   default. Switching it off disconnects the running container at once; on reconnects it, with the
   bandwidth cap re-applied. It works mid-chat; in a new chat the choice goes with the first
   message. An amber dot on the button shows that the network is off. The agent is told when it is
@@ -186,27 +211,33 @@ empty to manage nodes in the app. `MOLOGATE_CONTAINERS=false` switches chat cont
 Every `/v1` call needs `Authorization: Bearer <NODE_API_KEY>`. A context is `chat:<id>` or
 `automation:<id>`.
 
-| Method and path                                   | Does                                                        |
-| ------------------------------------------------- | ----------------------------------------------------------- |
-| `GET /healthz`                                    | Liveness, no key                                            |
-| `GET /v1/status`                                  | Load, limits, lifecycle and which guards are active         |
-| `GET /v1/openapi.json`                            | Open Terminal's API description, for the agent's tools      |
-| `GET /v1/sandboxes`                               | Every container on the node                                 |
-| `POST /v1/spares`                                 | Start a spare for a chat that doesn't exist yet             |
-| `GET, DELETE /v1/sandboxes/{context}`             | One container's state; delete it with its files             |
-| `POST /v1/sandboxes/{context}/ensure`             | Create (or take a spare) and start; `{"wait": false}` warms |
-| `POST /v1/sandboxes/{context}/network`            | `{"enabled": bool}`, applies at once                        |
-| `POST /v1/sandboxes/{context}/pause, stop, touch` |                                                             |
-| `PUT /v1/sandboxes/{context}/files?path=`         | Write a file under `/home/user`, running or not             |
-| `GET /v1/sandboxes/{context}/export`              | Stop it and stream `/home/user` as a tar                    |
-| `PUT /v1/sandboxes/{context}/import`              | Create it from such a tar                                   |
-| `* /v1/sandboxes/{context}/t/{path}`              | Open Terminal, HTTP and WebSocket, started on demand        |
+| Method and path                                      | Does                                                        |
+| ---------------------------------------------------- | ----------------------------------------------------------- |
+| `GET /healthz`                                       | Liveness, no key                                            |
+| `GET /v1/status`                                     | Load, limits, lifecycle and which guards are active         |
+| `GET /v1/openapi.json`                               | Open Terminal's API description, for the agent's tools      |
+| `GET /v1/sandboxes`                                  | Every container on the node                                 |
+| `POST /v1/spares`                                    | Start a spare for a chat that doesn't exist yet             |
+| `GET, DELETE /v1/sandboxes/{context}`                | One container's state; delete it with its files             |
+| `POST /v1/sandboxes/{context}/ensure`                | Create (or take a spare) and start; `{"wait": false}` warms |
+| `POST /v1/sandboxes/{context}/network`               | `{"enabled": bool}`, applies at once                        |
+| `POST /v1/sandboxes/{context}/pause, stop, touch`    |                                                             |
+| `PUT /v1/sandboxes/{context}/files?path=`            | Write a file under `/home/user`, running or not             |
+| `GET /v1/sandboxes/{context}/export`                 | Stop it and stream `/home/user` as a tar                    |
+| `PUT /v1/sandboxes/{context}/import`                 | Create it from such a tar                                   |
+| `POST /v1/sandboxes/{context}/snapshots/{id}`        | Record `/home/user` before a response                       |
+| `GET /v1/sandboxes/{context}/snapshots/{id}/changes` | Files changed since, with lines added and removed           |
+| `* /v1/sandboxes/{context}/t/{path}`                 | Open Terminal, HTTP and WebSocket, started on demand        |
 
 ## Tests
 
 - `containers/node/tests`: lifecycle decisions, eviction, firewall and `tc` scripts, settings.
 - `backend/open_webui/test/test_containers.py`: node scoring, placement, moving, failover,
   ownership and the agent's container prompt.
+- `backend/open_webui/test/test_archive_guard.py`: ZIP bombs, lying and overlapping ZIP entries,
+  nested archives, gzip bombs, tar entry counts and bounded chunk decompression.
+- `backend/open_webui/test/test_uploads.py`: chunked uploads (raw and gzip chunks, resends, wrong
+  sizes, compressed bombs, ownership, the size limit).
 - Checked by hand against Docker: creation in under a second, limits inside the container, the
   firewall (host, metadata, private ranges and port 25 refused; internet and DNS work), the network
   switch on a running container, pause and resume, stop and resume, spares, a move between two
