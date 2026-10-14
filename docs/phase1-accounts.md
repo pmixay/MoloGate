@@ -28,7 +28,7 @@ Open **Settings → Provider accounts** on https://ai.arbuz.lol. Approved member
 ChatGPT/Codex, Anthropic API, OpenAI API, OpenRouter, or Z.ai accounts. API-key accounts require a
 monthly USD budget; the accounts page shows how much of it is left this month (from OpenRouter,
 or estimated from the usage ledger for other keys), but spending enforcement belongs to Phase 4. Z.ai coding
-plans use their dedicated endpoint. New accounts default to private. Owners and admins can verify,
+plans use their dedicated endpoint. Every account is shared with the team (since 2026-10-14; private accounts were made shared). Owners and admins can verify,
 pause, change sharing/budget, or disconnect an account. A paused account cannot serve anyone.
 
 `/api/v1/provider-accounts` provides list/create, `/{id}` provides PATCH/DELETE, and

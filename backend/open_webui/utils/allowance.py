@@ -3,7 +3,7 @@
 ``decide(request, state)`` says which tier a request belongs to, which account should serve it and
 with which model:
 
-1. **reserve:** the requester's own account, within the owner's half (or all of a private one).
+1. **reserve:** the requester's own account, within the owner's half.
 2. **pool:** within the requester's share of the team pool, in every window.
 3. **credit:** past the share, within the extra that credits and overrides give.
 4. **worker:** past all of that while the pool still has room: cheap worker models only.
@@ -123,7 +123,7 @@ def loan(account: Account, window: Window) -> float:
 
 
 def lock(account: Account, window: Window) -> float:
-    """The reserve still locked for the owner, in percent."""
+    """The reserve still locked for the owner, in percent. A paused account is closed to the pool."""
     if account.owner is None:
         return 0.0
     if account.sharing != 'shared':
@@ -150,17 +150,10 @@ def pool_room(account: Account, windows: dict) -> float:
 
 
 def owner_room(account: Account, windows: dict) -> float:
-    """Percent the owner may still use of their own account in every window, within the reserve
-    (or all of a private account)."""
+    """Percent the owner may still use of their own account in every window, within the reserve."""
     if not windows:
         return 100.0
-    rooms = []
-    for window in windows.values():
-        room = 100.0 - window.used
-        if account.sharing == 'shared':
-            room = min(room, RESERVE - window.owner_used)
-        rooms.append(room)
-    return min(rooms)
+    return min(min(100.0 - window.used, RESERVE - window.owner_used) for window in windows.values())
 
 
 def serves(account: Account, model: str) -> bool:
@@ -219,7 +212,7 @@ def decide(request: Request, state: State) -> Decision:
 
     numbers = pool_numbers(state, request.provider)
 
-    # 1. Reserve: the requester's own account, within their half (or all of a private one).
+    # 1. Reserve: the requester's own account, within their half.
     own = [
         account
         for account in accounts
@@ -381,11 +374,10 @@ def build_state(
                 resets_at=period.resets_at,
             )
             windows.setdefault(account.id, {})[name] = window
-            # The requester's pool use: their use of anyone else's account, and their own shared
+            # The requester's pool use: their use of anyone else's account, and their own
             # account's use past the reserve, outside use included (decision 4).
             if account.owner == user_id:
-                if account.sharing == 'shared':
-                    used[name] = used.get(name, 0.0) + max(0.0, owner_used - RESERVE) * weight
+                used[name] = used.get(name, 0.0) + max(0.0, owner_used - RESERVE) * weight
             else:
                 used[name] = used.get(name, 0.0) + units.get(user_id, 0.0)
     return State(

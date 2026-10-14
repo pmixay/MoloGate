@@ -68,7 +68,7 @@ class ApiAccountForm(BaseModel):
     provider: Literal['anthropic_api', 'openai_api', 'openrouter', 'zai']
     api_key: SecretStr
     plan: Literal['api', 'lite', 'pro', 'max'] = 'api'
-    sharing: Sharing = 'private'
+    sharing: Sharing = 'shared'
     budget: Budget | None = None
     # Mologate: an admin's key that belongs to no member and serves the whole team.
     team: bool = False
@@ -76,7 +76,7 @@ class ApiAccountForm(BaseModel):
 
 class CodexAccountForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    sharing: Sharing = 'private'
+    sharing: Sharing = 'shared'
     # A code on OpenAI's device page, or OpenAI's sign-in link with the callback address pasted back.
     method: Literal['device_code', 'link'] = 'device_code'
     team: bool = False
@@ -309,9 +309,6 @@ async def update_account(account_id: str, form: AccountUpdateForm, request: Requ
         raise HTTPException(400, 'Account settings cannot be empty.')
     if account.plan == 'api' and 'budget' in values and values['budget'] is None:
         raise HTTPException(400, 'API-key accounts need a monthly budget.')
-    # A team account has no owner to keep it private.
-    if account.owner_user_id is None and values.get('sharing') == 'private':
-        raise HTTPException(400, 'A team account is shared with everyone or paused.')
     if 'plan' in values:
         if user.role != 'admin':
             raise HTTPException(403, 'Only an admin can correct a plan.')

@@ -132,21 +132,17 @@ class WorkedExamples(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
-    def test_private_team_paused_and_cooling_accounts(self):
-        private = plus('P', ANN, sharing='private')
+    def test_team_paused_and_cooling_accounts(self):
         team = plus('T', None, weight=2)
         paused = plus('Z', BOB, sharing='paused')
         cooling = plus('C', BOB, status='cooldown')
-        windows = {key: {'weekly': Window()} for key in 'PTZC'}
-        current = state([private, team, paused, cooling], windows)
-        # A private account is not pool; a team account is all pool; a paused one gives nothing;
-        # one cooling down counts but is not chosen.
+        windows = {key: {'weekly': Window()} for key in 'TZC'}
+        current = state([team, paused, cooling], windows)
+        # A team account is all pool; a paused one gives nothing; one cooling down counts but is
+        # not chosen.
         self.assertEqual(allowance.pool_numbers(current, 'codex')['weekly']['capacity'], 200 + 50)
         self.assertEqual(decide(ask(CAT), current).account_id, 'T')
-        # The owner uses all of a private account, not only half.
-        mine = state([private], {'P': {'weekly': Window(used=80, owner_used=80)}})
-        self.assertEqual(decide(ask(ANN), mine).tier, 'reserve')
-        self.assertEqual(decide(ask(CAT), mine).tier, 'empty')
+        # Paused, it serves nobody, its owner included.
         self.assertEqual(decide(ask(BOB), state([paused], {'Z': {'weekly': Window()}})).tier, 'empty')
 
     def test_the_chats_account_is_kept_and_otherwise_the_roomiest(self):
@@ -505,6 +501,27 @@ class GateTests(MeteringCase):
         self.assertEqual(round(cat.windows['weekly']['used'], 3), 60.004)
         self.assertEqual((owner.tier, owner.account_id), ('reserve', a.id))
 
+    async def test_a_new_account_joins_the_pool_at_once(self):
+        await self.create_account(provider='codex', plan='plus', external_account_id='a', models=[{'id': 'gpt-6'}])
+        before = await allowance_gate.decide(CAT, 'codex', 'gpt-6')
+        # Owner idle for a day: 50 points plus a 25-point loan.
+        self.assertEqual(before.windows['weekly']['capacity'], 75)
+        added = await self.create_account(
+            provider='codex', plan='plus', external_account_id='b', owner_user_id=OTHER.id, models=[{'id': 'gpt-6'}]
+        )
+        # Well within the 15 seconds the pool is otherwise kept for.
+        after = await allowance_gate.decide(CAT, 'codex', 'gpt-6')
+        self.assertEqual(after.windows['weekly']['capacity'], 150)
+        self.assertEqual(round(after.windows['weekly']['share']), 50)
+        from open_webui.models.provider_accounts import ProviderAccounts
+
+        await ProviderAccounts.update(added.id, {'sharing': 'paused'})
+        self.assertEqual((await allowance_gate.decide(CAT, 'codex', 'gpt-6')).windows['weekly']['capacity'], 75)
+        await ProviderAccounts.update(added.id, {'sharing': 'shared'})
+        self.assertEqual((await allowance_gate.decide(CAT, 'codex', 'gpt-6')).windows['weekly']['capacity'], 150)
+        await ProviderAccounts.delete(added.id)
+        self.assertEqual((await allowance_gate.decide(CAT, 'codex', 'gpt-6')).windows['weekly']['capacity'], 75)
+
     async def test_every_request_records_its_decision(self):
         key = await self.create_account(sharing='shared', owner_user_id=OTHER.id, external_account_id='k')
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), state=SimpleNamespace())
@@ -553,6 +570,27 @@ class GateTests(MeteringCase):
 
 
 class MigrationTests(unittest.TestCase):
+    def test_private_accounts_become_shared(self):
+        accounts = importlib.import_module('open_webui.migrations.versions.b1a7c9e4d205_add_provider_accounts')
+        migration = importlib.import_module('open_webui.migrations.versions.e1b4c7a9d3f6_all_accounts_shared')
+        self.assertEqual(migration.down_revision, 'd7a3f9c2e5b1')
+        engine = create_engine('sqlite://')
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            accounts.upgrade()
+            for identifier, sharing in (('a', 'private'), ('b', 'shared'), ('c', 'paused')):
+                connection.exec_driver_sql(
+                    'INSERT INTO provider_account (id, owner_user_id, provider, plan, external_account_id, label, '
+                    'secret, sharing, capacity_weight, allow_team_resets, status, models, created_at, updated_at) '
+                    f"VALUES ('{identifier}', 'owner', 'codex', 'plus', '{identifier}', 'Account #{identifier}', 's', "
+                    f"'{sharing}', 1, 0, 'ok', '[]', 0, 0)"
+                )
+            migration.upgrade()
+            rows = dict(connection.exec_driver_sql('SELECT id, sharing FROM provider_account').all())
+            # Paused stays paused: the owner's switch.
+            self.assertEqual(rows, {'a': 'shared', 'b': 'shared', 'c': 'paused'})
+            accounts.downgrade()
+        engine.dispose()
+
     def test_decision_migration_round_trip(self):
         ledger = importlib.import_module('open_webui.migrations.versions.a8d4e2c7f915_add_usage_event')
         metering = importlib.import_module('open_webui.migrations.versions.c4e8a2d6f1b9_add_metering')

@@ -1,7 +1,8 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 import type { LimitWindow } from '$lib/utils/providerLimits';
 
-export type Sharing = 'private' | 'shared' | 'paused';
+// Mologate: every account is shared with the team; its owner can pause it.
+export type Sharing = 'shared' | 'paused';
 export type ProviderAccount = {
 	id: string;
 	// Mologate: null for a team account, which belongs to no member.

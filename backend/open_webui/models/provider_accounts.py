@@ -13,7 +13,8 @@ from open_webui.internal.db import Base, JSONField, get_async_db_context
 from open_webui.models.oauth_sessions import OAuthSessions
 
 Provider = Literal['codex', 'anthropic_api', 'openai_api', 'openrouter', 'zai']
-Sharing = Literal['shared', 'private', 'paused']
+# Mologate: every account serves the whole team; its owner can only pause it.
+Sharing = Literal['shared', 'paused']
 
 
 class ProviderAccount(Base):
@@ -27,7 +28,7 @@ class ProviderAccount(Base):
     external_account_id = Column(Text, nullable=False)
     label = Column(Text, nullable=False)
     secret = Column(Text, nullable=False)
-    sharing = Column(String(16), nullable=False, default='private')
+    sharing = Column(String(16), nullable=False, default='shared')
     capacity_weight = Column(Float, nullable=False, default=1)
     budget = Column(JSONField, nullable=True)
     status = Column(String(32), nullable=False, default='ok')
@@ -111,6 +112,10 @@ def open_secret(value: str) -> dict:
 
 
 class ProviderAccountsTable:
+    # Mologate: counts changes to accounts in this process, so the allowance gate's cached pool
+    # (utils/allowance_gate.py) is rebuilt as soon as an account is added, changed or removed.
+    version = 0
+
     async def get(self, account_id: str):
         async with get_async_db_context() as db:
             return await db.get(ProviderAccount, account_id)
@@ -150,7 +155,8 @@ class ProviderAccountsTable:
             db.add(account)
             await db.commit()
             await db.refresh(account)
-            return account
+        ProviderAccountsTable.version += 1
+        return account
 
     async def update(self, account_id: str, values: dict):
         async with get_async_db_context() as db:
@@ -162,12 +168,14 @@ class ProviderAccountsTable:
             account.updated_at = int(time.time())
             await db.commit()
             await db.refresh(account)
-            return account
+        ProviderAccountsTable.version += 1
+        return account
 
     async def delete(self, account_id: str):
         async with get_async_db_context() as db:
             await db.execute(delete(ProviderAccount).where(ProviderAccount.id == account_id))
             await db.commit()
+        ProviderAccountsTable.version += 1
 
 
 ProviderAccounts = ProviderAccountsTable()

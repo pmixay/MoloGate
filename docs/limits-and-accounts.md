@@ -33,8 +33,8 @@ this branch; the current draft is [PR #3](https://github.com/pmixay/MoloGate/pul
   start. In `observe` the gate computes decisions and records them but never blocks, swaps
   models, delays or caps anyone's work. Like the tool-call review, it stays out of the way: in
   every mode, only what would harm the system or a member is stopped, and only when it is very
-  critical, namely requests without sign-in, using a member's private account or credentials for
-  someone else, and load that would take the server down. Switching to another account when one
+  critical, namely requests without sign-in, using a paused account or a member's credentials
+  for someone else, and load that would take the server down. Switching to another account when one
   is empty or rate-limited is not a block.
 - **Never** log or return secrets. Never put prompts in the usage ledger.
 
@@ -57,7 +57,9 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 4. **Use outside Mologate.** If the owner uses the account directly (the Codex app on their laptop,
    for example), that usage counts against their reserve first, then against the pool as their own
    pool usage.
-5. **Anyone can use big models** from the pool, up to their personal share.
+5. **Anyone can use big models** from the pool, up to their personal share. **Every account is
+   shared** with the whole team (revised 2026-10-14): there is no "Only me". Its owner keeps the
+   reserve (decision 2) and can pause it, which stops it serving anyone, the owner included.
 6. **Worker tier.** Members who have used up what they were given keep access to the pool through
    cheap worker models only (GPT Luna, Claude Haiku 5.5, GLM-5.3 Flash class).
 7. **Credits** are a one-time reward for each account a member adds to the pool. Members who add
@@ -69,12 +71,20 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
    | ChatGPT Plus                                                | 1x                                                 | 10              | 4                 |
    | ChatGPT Pro tiers (for example 5x, 20x)                     | the tier's multiplier                              | 50, 200         | 20, 80            |
    | GLM coding plan (Lite, Pro, Max)                            | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier    |
-   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20                               | 10 × multiplier | 4 × multiplier    |
+   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20, once the key holds money     | 10 × multiplier | 4 × multiplier    |
 
    The admin keeps the multiplier table in settings. Read the plan from the provider when possible
    (ChatGPT plans come from codex-lb); otherwise the member picks it when connecting and an admin
    can correct it (Z.ai coding plans: Lite, Pro, Max). Claude subscriptions are deferred (§12,
    Phase 7), so they have no row here; their credits are decided if that phase starts.
+
+   **API keys earn credits only when they hold money** (2026-10-14): a free key earns none. A key
+   counts as funded once it has paid for a request (the provider reported a charge, as OpenRouter
+   does, or a priced model served it and the ledger's cost estimate is above zero), or the
+   provider shows paid credit (OpenRouter's `/key` says it is not on the free tier). A key that
+   only reaches free models (OpenRouter's `:free` models, Z.ai's free Flash models) or is refused
+   for lack of credit is not funded. A key funded later earns its credits then, still only once
+   (decision 8).
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
@@ -111,8 +121,9 @@ approval or protection from suspension. See [Claude Code legal and compliance](h
 Anthropic **API-key** accounts remain the Phase 1 integration.
 
 **ChatGPT accounts:** OpenAI's Terms of Use say account holders may not share their credentials or
-make their account available to others. The team has accepted this risk. Lower it: keep
-sharing opt-in per account, keep the owner's traffic on their own account, keep requests
+make their account available to others. The team has accepted this risk; since 2026-10-14
+every account is shared (decision 5), which raises it. Lower it: keep the owner's traffic on
+their own account, let owners pause their account at any time, keep requests
 per account at ordinary human volumes (per-account concurrency caps in phase 4), and prefer
 Business seats and API keys where it matters.
 
@@ -182,8 +193,8 @@ of its use is pool use; migration `f7c2a9d4b8e1`), `provider` (`codex` | `anthro
 `zai`), `plan` (`plus`, `pro`, `business`, `api`, ...), `external_account_id` (the provider's own
 ID: codex-lb's account ID for ChatGPT, or a SHA-256 fingerprint of an API key), `label` (a generated
 name such as `Account #1n9Dk5`; members do not choose labels), `secret` (Fernet-encrypted JSON; for
-ChatGPT, the codex-lb account ID and a key scoped to that one account), `sharing` (`shared` | `private` |
-`paused`), `capacity_weight`, `budget` (API keys: amount and currency per month), `status` (`ok` |
+ChatGPT, the codex-lb account ID and a key scoped to that one account), `sharing` (`shared` |
+`paused`; migration `e1b4c7a9d3f6` made every private account shared), `capacity_weight`, `budget` (API keys: amount and currency per month), `status` (`ok` |
 `needs_login` | `error` | `cooldown`), `last_error`. There is no per-account reset switch: the global
 auto-reset setting (§10) alone decides whether coupons are spent (migration `e5a3c1f8d2b7` dropped
 `allow_team_resets`).
@@ -282,8 +293,8 @@ used_u   = units of u's pool use in this window (tiers pool, credit, worker, own
 
 ### 7.3 Tiers, checked in order for the model's provider
 
-1. **Reserve:** the requester owns a shared or private account of this provider with
-   `o_a < R` and `u_a < 100`. Use it, with any model.
+1. **Reserve:** the requester owns an account of this provider with `o_a < R` and `u_a < 100`.
+   Use it, with any model. A member's own account is always used first, up to their half.
 2. **Pool:** `used_u < share_u` in every window, and some account has pool headroom. Any model.
 3. **Credit:** `used_u < share_u + extra_u` in every window. Any model. The part above `share_u` is
    charged in credits, using the weekly window: `credits = over_units / (0.004 * C_weekly)`.
@@ -341,9 +352,9 @@ engine's numbers, for the live gate and the replay alike:
 
 Where this section is silent, the engine does the following:
 
-- A **private** account is all its owner's: tier 1 while `u_a < 100`, not only up to 50, and
-  never part of the pool. A **team** account is all pool (`C` gets `c_a * 100`). A **paused**
-  account gives nothing.
+- A **team** account is all pool (`C` gets `c_a * 100`). A **paused** account gives nothing.
+- A connected, changed or removed account changes the pool at once: the 15-second cache below is
+  rebuilt on the next request.
 - An account **cooling down** still counts towards `C`, but is not chosen.
 - An **API key** with a monthly budget has one window, `budget`: `u_a` is this month's spend in the
   ledger over the budget, and a $20 budget weighs 1 (a dollar is 5 units), so keys of different
@@ -511,7 +522,7 @@ working. Other labs are not filtered. To follow a release, change that lab's rul
 
 **Team accounts:** an admin can connect a key or a ChatGPT account as a team account (the "Team
 account" switch). It belongs to no member: everyone uses it, admins manage it, it is shared or
-paused (never private), and all of its use is pool use. Admin connections to a supported
+paused, and all of its use is pool use. Admin connections to a supported
 provider (OpenAI, Anthropic, OpenRouter, Z.ai) with a plain key become team accounts at startup
 and whenever an admin saves the connections (`utils/connection_accounts.py`), so their models
 come from providers through account selection, failover and per-account limits. Local servers,
@@ -528,7 +539,7 @@ owner's use past 50 shown as pool use. An API key's row shows its credit limit a
 instead. Expanded: every limit window, with "You · 8/50" and "Team · 15/50" under a shared
 window, an API key's budget left this month (estimated, §8, except OpenRouter's), each member's
 requests, tokens and cost from the ledger (this week for a subscription, this month for a key), a
-"Who can use" dropdown (Only me, Team, Paused), and Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
+"Who can use" dropdown (Team, Paused), and Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
 header. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
 loan (decision 3) is not shown yet.
 
@@ -683,7 +694,8 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 5: credits and resets
 
-- [ ] Grants on connect, forfeit on disconnect, spending in tier 3, balance in the UI.
+- [ ] Grants on connect (an API key's once it holds money, decision 7), forfeit on disconnect,
+      spending in tier 3, balance in the UI.
 - [x] Automatic limit reset (§10), with a global off switch for any member.
 - [ ] Done when: an automatic reset is redeemed on a real account once every account is empty,
       and the windows refill.
@@ -766,11 +778,15 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   two entries he wrote into this log on 2026-10-11, moved to [claude-runners.md](claude-runners.md)
   as proposals awaiting review; none of it is a decision.
 - 2026-10-12: observe mode never interrupts work; only very critical harm is stopped in any mode
-  (no sign-in, someone else's private account, load that would take the server down).
+  (no sign-in, a paused account or someone else's credentials, load that would take the server
+  down).
 - 2026-10-12: team accounts: an admin's key or ChatGPT account can belong to no member and serve
   everyone. Admin connections to a supported provider become team accounts; others stay
   connections. Any approved member can connect an account. Admins can correct a Z.ai coding plan.
   Deployment switches set in the environment win at every start.
+- 2026-10-14: every account is shared with the team; "Only me" is removed and existing private
+  accounts become shared. Owners keep their reserve and can pause their account. A member's own
+  account is used first. API keys earn credits only once they hold money; free keys earn none.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

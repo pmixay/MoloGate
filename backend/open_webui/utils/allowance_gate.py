@@ -33,11 +33,12 @@ WORKER_FAMILIES = {
     'zai': 'flash',
     'openrouter': 'luna',
 }
-# The pool's numbers change slowly; requests within this many seconds share them.
+# The pool's numbers change slowly; requests within this many seconds share them. A change to
+# any account (added, changed, removed) rebuilds them at once on this worker.
 CACHE_SECONDS = 15
 DECISION_TIMEOUT_SECONDS = 10
 
-_cache: dict[str, tuple[float, dict]] = {}
+_cache: dict[str, tuple[float, int, dict]] = {}
 _tasks: set = set()
 
 
@@ -83,8 +84,9 @@ async def pool_snapshot(provider: str, now: float | None = None) -> dict:
     """Everything the engine needs about one provider's accounts, shared by requests for a few seconds."""
     now = time.time() if now is None else now
     cached = _cache.get(provider)
-    if cached is not None and time.monotonic() - cached[0] < CACHE_SECONDS:
-        return cached[1]
+    version = ProviderAccounts.version
+    if cached is not None and time.monotonic() - cached[0] < CACHE_SECONDS and cached[1] == version:
+        return cached[2]
     rows = [row for row in await ProviderAccounts.list() if row.provider == provider]
     accounts = [to_account(row) for row in rows]
     latest = {(window.account_id, window.window): window for window in await Metering.windows([a.id for a in accounts])}
@@ -119,7 +121,7 @@ async def pool_snapshot(provider: str, now: float | None = None) -> dict:
         'worker_model': worker_model,
         'worker_models': workers,
     }
-    _cache[provider] = (time.monotonic(), snapshot)
+    _cache[provider] = (time.monotonic(), version, snapshot)
     return snapshot
 
 

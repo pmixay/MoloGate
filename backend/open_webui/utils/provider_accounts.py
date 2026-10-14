@@ -173,8 +173,6 @@ async def account_models(user=None):
             continue
         for model in account.models:
             value = model_id(account.provider, model['id'])
-            # Visibility belongs to the pool, not whichever account is listed last.
-            shared = account.sharing == 'shared' or catalog.get(value, {}).get('provider_account_sharing') == 'shared'
             catalog[value] = {
                 'id': value,
                 'name': model.get('name') or model['id'],
@@ -186,7 +184,8 @@ async def account_models(user=None):
                 'openai': {**(model.get('details') or {}), 'id': model['id']},
                 'connection_type': 'external',
                 'provider_account_provider': account.provider,
-                'provider_account_sharing': 'shared' if shared else 'private',
+                # Mologate: every account is shared with the team; paused ones are not listed.
+                'provider_account_sharing': 'shared',
                 'upstream_model_id': model['id'],
                 # Older generations leave the selectors but still answer (utils/model_generations.py).
                 **({} if is_current_generation(model['id']) else {'info': {'meta': {'hidden': True}}}),

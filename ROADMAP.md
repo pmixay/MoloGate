@@ -470,8 +470,8 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
   - Done: codex-lb runs beside Mologate as a pinned, unmodified image on a private network, with no
     published port and its dashboard unused. Mologate drives only its sign-in, account, limit,
     coupon and model endpoints, and sends ChatGPT requests through its proxy, which presents them
-    as the Codex CLI. Each account gets a codex-lb key scoped to that one account, so a private
-    account never serves anyone else. Sign-in, limits and coupons all show in Settings → Provider
+    as the Codex CLI. Each account gets a codex-lb key scoped to that one account, so Mologate
+    alone decides which account serves a request. Sign-in, limits and coupons all show in Settings → Provider
     accounts. Not yet deployed or tried with a live ChatGPT account. Details in
     [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
 - [ ] **Providers needed now:**

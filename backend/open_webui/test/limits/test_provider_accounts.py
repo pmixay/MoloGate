@@ -82,7 +82,7 @@ def account(**overrides):
         external_account_id='external-id',
         secret=seal_secret({'lb_account_id': 'lb-test', 'lb_api_key': 'sk-clb-test', 'lb_api_key_id': 'key-test'}),
         label='Account #Ab3dE9',
-        sharing='private',
+        sharing='shared',
         capacity_weight=1,
         budget=None,
         status='ok',
@@ -381,15 +381,16 @@ class PermissionTests(unittest.TestCase):
         self.assertTrue(can_manage(team, ADMIN))
         self.assertFalse(can_use(account(owner_user_id=None, sharing='paused'), ADMIN))
 
-    def test_private_paused_pending_and_admin_boundaries(self):
-        private = account()
-        self.assertTrue(can_use(private, OWNER))
-        self.assertFalse(can_use(private, OTHER))
-        self.assertFalse(can_use(private, ADMIN))
-        self.assertTrue(can_manage(private, ADMIN))
-        self.assertFalse(can_manage(private, OTHER))
-        self.assertTrue(can_use(account(sharing='shared'), OTHER))
+    def test_shared_paused_pending_and_admin_boundaries(self):
+        # Every account serves the whole team; only its owner (or an admin) manages it.
+        shared = account()
+        for user in (OWNER, OTHER, ADMIN):
+            self.assertTrue(can_use(shared, user))
+        self.assertTrue(can_manage(shared, ADMIN))
+        self.assertFalse(can_manage(shared, OTHER))
+        # Paused, it serves nobody, its owner included.
         self.assertFalse(can_use(account(sharing='paused'), OWNER))
+        self.assertFalse(can_use(account(sharing='paused'), OTHER))
         self.assertFalse(can_use(account(status='needs_login'), OWNER))
         self.assertFalse(can_use(account(sharing='shared'), SimpleNamespace(id='pending', role='pending')))
 
@@ -600,7 +601,7 @@ class DatabaseCase(unittest.IsolatedAsyncioTestCase):
                     plan='api',
                     external_account_id='fingerprint',
                     secret={'api_key': 'test-key', 'base_url': 'https://api.openai.com/v1'},
-                    sharing='private',
+                    sharing='shared',
                     capacity_weight=1,
                     budget={'amount': 20, 'currency': 'USD'},
                     status='ok',
@@ -619,18 +620,15 @@ class DatabaseTests(DatabaseCase):
         reloaded = await ProviderAccounts.get(original.id)
         self.assertEqual(reloaded.budget, {'amount': 20, 'currency': 'USD'})
         self.assertNotIn('test-key', reloaded.secret)
-        self.assertEqual(await account_models(OTHER), [])
-        self.assertEqual(await account_models(ADMIN), [])
+        # Shared with the whole team from the start.
         own_models = await account_models(OWNER)
         self.assertEqual(own_models[0]['id'], 'account:openai_api:test-model')
-        self.assertEqual(own_models[0]['provider_account_sharing'], 'private')
-        await ProviderAccounts.update(original.id, {'sharing': 'shared'})
+        self.assertEqual(own_models[0]['provider_account_sharing'], 'shared')
         self.assertEqual((await account_models(OTHER))[0]['provider_account_sharing'], 'shared')
+        self.assertEqual((await account_models(ADMIN))[0]['id'], own_models[0]['id'])
         self.assertEqual((await select_account(own_models[0]['id'], OTHER)).id, original.id)
-        await ProviderAccounts.update(original.id, {'sharing': 'private'})
-        self.assertEqual((await account_models(OWNER))[0]['provider_account_sharing'], 'private')
-        self.assertEqual(await account_models(OTHER), [])
         await ProviderAccounts.update(original.id, {'sharing': 'paused'})
+        self.assertEqual(await account_models(OTHER), [])
         self.assertEqual(await account_models(OWNER), [])
         with self.assertRaises(HTTPException):
             await select_account(own_models[0]['id'], OWNER)
@@ -647,9 +645,9 @@ class DatabaseTests(DatabaseCase):
         self.assertEqual(second.label, 'Account #Zz9Yy8')
 
     async def test_catalog_sharing_aggregates_only_healthy_accounts_in_any_order(self):
-        private = account()
+        mine = account()
         shared = account(id='shared', sharing='shared', owner_user_id=OTHER.id)
-        for accounts in ([private, shared], [shared, private]):
+        for accounts in ([mine, shared], [shared, mine]):
             with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=accounts)):
                 for user in (None, OWNER, OTHER, ADMIN):
                     catalog = await account_models(user)
@@ -657,9 +655,9 @@ class DatabaseTests(DatabaseCase):
                     self.assertEqual(catalog[0]['provider_account_sharing'], 'shared')
                 self.assertEqual(await account_models(SimpleNamespace(id='pending', role='pending')), [])
         for unavailable in (account(sharing='paused'), account(sharing='shared', status='needs_login')):
-            with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[private, unavailable])):
-                self.assertEqual((await account_models())[0]['provider_account_sharing'], 'private')
-                self.assertEqual(await account_models(OTHER), [])
+            with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[unavailable])):
+                self.assertEqual(await account_models(), [])
+                self.assertEqual(await account_models(OWNER), [])
 
     async def test_older_generations_leave_the_selectors_but_stay_callable(self):
         zai = account(id='zai', provider='zai', plan='api', models=[{'id': 'glm-5.3-flash'}, {'id': 'glm-4.6'}])
@@ -726,8 +724,8 @@ class DatabaseTests(DatabaseCase):
         ):
             self.assertEqual(await model_utils.get_filtered_models(catalog, OTHER), catalog)
             await model_utils.check_model_access(OTHER, catalog[0])
-            await ProviderAccounts.update(original.id, {'sharing': 'private'})
-            # Even an old public catalog and stale grants cannot keep credentials shared.
+            await ProviderAccounts.update(original.id, {'sharing': 'paused'})
+            # Even an old public catalog and stale grants cannot keep a paused account in use.
             catalog[0]['info']['access_grants'] = [
                 {'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}
             ]
@@ -811,7 +809,7 @@ class CodexLBTests(DatabaseCase):
         codex_lb._accounts_cache = None
         codex_lb._models_cache = None
 
-    async def connected(self, lb_id='lb-one', owner=OWNER.id, sharing='private', **summary):
+    async def connected(self, lb_id='lb-one', owner=OWNER.id, sharing='shared', **summary):
         self.fake.accounts[lb_id] = lb_summary(lb_id, **summary)
         key = await codex_lb.create_key('test', lb_id)
         return await ProviderAccounts.insert(
@@ -1042,10 +1040,10 @@ class CodexLBTests(DatabaseCase):
         # One ChatGPT connection at a time across the server, whichever the method.
         for method in ('link', 'device_code'):
             with self.assertRaises(HTTPException) as busy:
-                await codex_accounts.start_login(OTHER, 'private', method=method)
+                await codex_accounts.start_login(OTHER, 'shared', method=method)
             self.assertEqual(busy.exception.status_code, 409)
             self.assertIn('Another member', busy.exception.detail)
-        self.assertEqual(await codex_accounts.start_login(OWNER, 'private', method='link'), identifier)
+        self.assertEqual(await codex_accounts.start_login(OWNER, 'shared', method='link'), identifier)
         state = parse_qs(urlparse(status['auth_url']).query)['state'][0]
         pasted = f'{CALLBACK}?code=fake-code&state={state}'
         with self.assertRaises(HTTPException) as foreign:
@@ -1083,17 +1081,17 @@ class CodexLBTests(DatabaseCase):
             await codex_accounts.submit_callback(identifier, OWNER, pasted)
         self.assertEqual(finished.exception.status_code, 409)
         # The slot is free again; a pending sign-in can be cancelled by its owner.
-        second = await codex_accounts.start_login(OTHER, 'private', method='link')
+        second = await codex_accounts.start_login(OTHER, 'shared', method='link')
         self.assertTrue(await codex_accounts.cancel_login(second, OTHER))
         cancelled = await codex_accounts.login_status(second, OTHER)
         self.assertEqual((cancelled['status'], cancelled['error']), ('error', 'Sign-in cancelled.'))
         # A sign-in OpenAI turned down ends the attempt.
-        third = await codex_accounts.start_login(OTHER, 'private', method='link')
+        third = await codex_accounts.start_login(OTHER, 'shared', method='link')
         rejected = await codex_accounts.submit_callback(third, OTHER, f'{CALLBACK}?code=wrong&state=state-flow-3')
         self.assertEqual(rejected['status'], 'error')
 
     async def test_device_login_maps_the_new_account_and_refuses_another_owner(self):
-        identifier = await codex_accounts.start_login(OWNER, 'private')
+        identifier = await codex_accounts.start_login(OWNER, 'shared')
         status = await codex_accounts.login_status(identifier, OWNER)
         self.assertEqual(
             (status['status'], status['method'], status['user_code'], status['verification_url'], status['auth_url']),
@@ -1108,7 +1106,7 @@ class CodexLBTests(DatabaseCase):
         status = await codex_accounts.login_status(identifier, OWNER)
         self.assertEqual((status['status'], status['user_code']), ('completed', None))
         saved = await ProviderAccounts.get(status['account_id'])
-        self.assertEqual((saved.owner_user_id, saved.sharing, saved.label), (OWNER.id, 'private', reserved))
+        self.assertEqual((saved.owner_user_id, saved.sharing, saved.label), (OWNER.id, 'shared', reserved))
         self.assertIsNotNone(await get_provider_limits(None, saved.id))
         # Another member signing in to the same account cannot take it over.
         other = await codex_accounts.start_login(OTHER, 'shared')
@@ -1121,14 +1119,14 @@ class CodexLBTests(DatabaseCase):
             saved.id, {'status': 'needs_login', 'last_error': 'Reconnect this ChatGPT account.'}
         )
         keys = dict(self.fake.keys)
-        again = await codex_accounts.start_login(OWNER, 'private')
+        again = await codex_accounts.start_login(OWNER, 'shared')
         self.fake.sign_in('flow-3', 'lb-device')
         reconnected = await codex_accounts.login_status(again, OWNER)
         self.assertEqual((reconnected['status'], reconnected['account_id']), ('completed', saved.id))
         self.assertEqual((await ProviderAccounts.get(saved.id)).status, 'ok')
         self.assertEqual(self.fake.keys, keys)
         # A sign-in that failed at OpenAI ends the attempt.
-        failed = await codex_accounts.start_login(OWNER, 'private')
+        failed = await codex_accounts.start_login(OWNER, 'shared')
         self.fake.flows['flow-4']['status'] = 'error'
         self.assertEqual((await codex_accounts.login_status(failed, OWNER))['status'], 'error')
         # codex-lb skips the flow once accounts exist unless the method is forced.
@@ -1254,12 +1252,12 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(
             (insert.await_args.kwargs['owner_user_id'], insert.await_args.kwargs['sharing']), (None, 'shared')
         )
-        # A team account has no owner to keep it private.
+        # No account is private any more, a team account least of all.
         with (
             patch.object(ProviderAccounts, 'get', AsyncMock(return_value=team)),
             patch.object(ProviderAccounts, 'update', AsyncMock(return_value=team)) as update,
         ):
-            self.assertEqual(self.client.patch('/accounts/id', json={'sharing': 'private'}).status_code, 400)
+            self.assertEqual(self.client.patch('/accounts/id', json={'sharing': 'private'}).status_code, 422)
             self.assertEqual(self.client.patch('/accounts/id', json={'sharing': 'paused'}).status_code, 200)
         update.assert_awaited_once_with('id', {'sharing': 'paused'})
 
@@ -1319,7 +1317,7 @@ class RouterTests(unittest.TestCase):
         ):
             for method, path, body in [
                 ('POST', '/accounts', form | {'label': 'Mine'}),
-                ('POST', '/accounts/codex', {'label': 'Mine', 'sharing': 'private'}),
+                ('POST', '/accounts/codex', {'label': 'Mine', 'sharing': 'shared'}),
                 ('PATCH', '/accounts/id', {'label': 'Mine'}),
                 ('PATCH', '/accounts/id', {'allow_team_resets': False}),
             ]:

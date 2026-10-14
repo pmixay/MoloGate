@@ -53,8 +53,8 @@
 		'rounded-full border border-gray-200 px-3 py-1 font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800';
 	const dangerButtonClass =
 		'rounded-full border border-red-200 px-3 py-1 font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40';
+	// Mologate: every account serves the whole team; its owner can pause it.
 	const sharingOptions: { value: Sharing; label: string }[] = [
-		{ value: 'private', label: 'Only me' },
 		{ value: 'shared', label: 'Team' },
 		{ value: 'paused', label: 'Paused' }
 	];
@@ -70,7 +70,6 @@
 	let apiKey = '';
 	let budget = 20;
 	let plan = 'api';
-	let shareWithTeam = false;
 	// Mologate: an admin's account that belongs to no member and serves the whole team.
 	let teamAccount = false;
 	let login: DeviceLogin | null = null;
@@ -99,8 +98,6 @@
 		plans[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
 	const ownerName = (account: ProviderAccount) =>
 		account.owner_user_id === $user?.id ? 'You' : account.owner_name;
-	// A team account has no owner: no reserve, every use is the team's.
-	const teamOptions = sharingOptions.filter((option) => option.value !== 'private');
 	const resetText = (resetsAt?: number) => {
 		if (!resetsAt) return '';
 		const seconds = resetsAt - Date.now() / 1000;
@@ -150,15 +147,9 @@
 				: account.status === 'needs_login'
 					? { text: 'Sign-in required', dot: 'bg-amber-500' }
 					: { text: account.status, dot: 'bg-red-500' };
-	// Mologate: only what is worth reading at a glance; a working, private account needs no note.
+	// Mologate: only what is worth reading at a glance; a working account needs no note.
 	const rowNote = (account: ProviderAccount) =>
-		account.sharing === 'paused'
-			? 'Paused'
-			: account.status !== 'ok'
-				? statusOf(account).text
-				: account.sharing === 'shared' && account.owner_user_id
-					? 'Team'
-					: '';
+		account.sharing === 'paused' ? 'Paused' : account.status !== 'ok' ? statusOf(account).text : '';
 	const couponTitle = (account: ProviderAccount) => {
 		const count = account.limits?.reset_credits ?? 0;
 		const last = account.last_auto_reset_at
@@ -248,7 +239,7 @@
 	const connect = async () => {
 		busy = true;
 		error = '';
-		const sharing: Sharing = shareWithTeam ? 'shared' : 'private';
+		const sharing: Sharing = 'shared';
 		try {
 			if (provider === 'codex') {
 				login = await request<DeviceLogin>('/codex', 'POST', {
@@ -488,12 +479,6 @@
 							>
 								<Switch bind:state={teamAccount} ariaLabel="Team account" />
 								Team account
-							</label>
-						{/if}
-						{#if !teamAccount}
-							<label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-								<Switch bind:state={shareWithTeam} ariaLabel="Share with the team" />
-								Share with the team
 							</label>
 						{/if}
 					</div>
@@ -770,7 +755,7 @@
 													on:change={(event) =>
 														change(account, { sharing: event.currentTarget.value })}
 												>
-													{#each account.owner_user_id ? sharingOptions : teamOptions as option}
+													{#each sharingOptions as option}
 														<option value={option.value}>{option.label}</option>
 													{/each}
 												</select>
