@@ -41,6 +41,8 @@
 	import Error from './Error.svelte';
 	import Citations from './Citations.svelte';
 	import CodeExecutions from './CodeExecutions.svelte';
+	import ChangesSummary from './ChangesSummary.svelte';
+	import RefusalBadge from './RefusalBadge.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 	import FollowUps from './ResponseMessage/FollowUps.svelte';
@@ -647,6 +649,10 @@
 							{#if message.code_executions}
 								<CodeExecutions codeExecutions={message.code_executions} />
 							{/if}
+
+							{#if message.done && message.changes?.total}
+								<ChangesSummary changes={message.changes} />
+							{/if}
 						</div>
 					</div>
 				</div>
@@ -1164,6 +1170,11 @@
 											</Tooltip>
 										{/if}
 									{/if}
+								{/if}
+
+								{#if message.refusal}
+									<!-- Mologate: the model declined; after the fork (share) button. -->
+									<RefusalBadge refusal={message.refusal} />
 								{/if}
 							{/if}
 						{/if}

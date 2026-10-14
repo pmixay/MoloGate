@@ -1,0 +1,11 @@
+{$NODE_DOMAIN} {
+	# Only the Mologate site may call the node; everyone else gets the connection closed.
+	@outsider not remote_ip {$SITE_IPS}
+	abort @outsider
+
+	reverse_proxy container-node:8090 {
+		# Stream command output and workspace transfers as they come.
+		flush_interval -1
+	}
+	header -Server
+}

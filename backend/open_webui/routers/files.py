@@ -42,6 +42,7 @@ from open_webui.models.users import Users
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
 from open_webui.routers.audio import transcribe
 from open_webui.routers.retrieval import ProcessFileForm, process_file
+from open_webui.routers.uploads import TEXT_MAX, guard_file, max_upload_size
 from open_webui.storage.provider import Storage
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import strict_match_mime_type
@@ -391,13 +392,21 @@ async def upload_file_handler(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=ERROR_MESSAGES.DEFAULT(e.strerror or 'Error uploading file'),
                 )
-        max_size = await Config.get('rag.file.max_size')
-        if max_size and len(contents) > int(max_size) * 1024 * 1024:
+        # Mologate: 500 MB unless an admin set less; bigger files use chunked uploads (routers/uploads.py).
+        max_bytes = await max_upload_size()
+        if len(contents) > max_bytes:
             await asyncio.to_thread(Storage.delete_file, file_path)
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{max_size} MB'),
+                detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{max_bytes // (1024 * 1024)} MB'),
             )
+        # Mologate: refuse decompression bombs before anything extracts them.
+        try:
+            archive = await guard_file(await asyncio.to_thread(Storage.get_file, file_path), name)
+        except HTTPException:
+            await asyncio.to_thread(Storage.delete_file, file_path)
+            raise
+        text_skipped = process and len(contents) > TEXT_MAX
 
         # SHA-256 of raw uploaded bytes for incremental sync diffing.
         # If the client pre-computed and sent file_hash, use that.
@@ -413,7 +422,7 @@ async def upload_file_handler(
                     'filename': name,
                     'path': file_path,
                     'data': {
-                        **({'status': 'pending'} if process else {}),
+                        **({'status': 'completed' if text_skipped else 'pending'} if process else {}),
                     },
                     'meta': {
                         'name': name,
@@ -421,6 +430,8 @@ async def upload_file_handler(
                         'size': len(contents),
                         'file_hash': file_hash,
                         'data': file_metadata,
+                        **({'archive': archive} if archive else {}),
+                        **({'text_skipped': True} if text_skipped else {}),
                     },
                 }
             ),
@@ -432,7 +443,7 @@ async def upload_file_handler(
             if channel:
                 await Channels.add_file_to_channel_by_id(channel.id, file_item.id, user.id, db=db)
 
-        if process:
+        if process and not text_skipped:
             if background_tasks and process_in_background:
                 background_tasks.add_task(
                     process_uploaded_file,
@@ -455,6 +466,8 @@ async def upload_file_handler(
                     db=db,
                 )
                 return {'status': True, **file_item.model_dump()}
+        elif process:
+            return {'status': True, **file_item.model_dump()}
         else:
             if file_item:
                 return file_item

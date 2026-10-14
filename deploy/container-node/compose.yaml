@@ -1,0 +1,56 @@
+# Mologate container node on its own machine (docs/container-nodes.md). Caddy serves the node over
+# HTTPS at NODE_DOMAIN and only to the Mologate site's addresses; the node itself publishes nothing.
+name: mologate-node
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  container-node:
+    image: ${CONTAINER_NODE_IMAGE:-ghcr.io/pmixay/mologate-node:latest}
+    restart: unless-stopped
+    mem_limit: 128m
+    logging: *logging
+    environment:
+      NODE_API_KEY: ${NODE_API_KEY:?Set NODE_API_KEY in .env}
+      NODE_ID: ${NODE_ID:?Set NODE_ID in .env}
+      NODE_NAME: ${NODE_NAME:-}
+      NODE_SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/pmixay/mologate-sandbox:latest}
+      NODE_HELPER_IMAGE: ${CONTAINER_NODE_IMAGE:-ghcr.io/pmixay/mologate-node:latest}
+      # Unset: sized from this machine's memory. Every NODE_* setting is listed in the docs.
+      NODE_MAX_ACTIVE: ${NODE_MAX_ACTIVE:-}
+      NODE_CONTAINER_MEMORY: ${CONTAINER_MEMORY:-1g}
+      NODE_CONTAINER_CPUS: ${CONTAINER_CPUS:-1}
+    volumes:
+      # Sandbox sockets live here: the same path inside and outside.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/mologate-node:/var/lib/mologate-node
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    logging: *logging
+    depends_on:
+      container-node:
+        condition: service_healthy
+    ports: ["80:80", "443:443"]
+    environment:
+      NODE_DOMAIN: ${NODE_DOMAIN:?Set NODE_DOMAIN in .env}
+      SITE_IPS: ${SITE_IPS:?Set SITE_IPS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -8,7 +8,9 @@
 		chatId,
 		config,
 		mobile,
+		selectedTerminalId,
 		settings,
+		showControls,
 		showSidebar,
 		temporaryChatEnabled,
 		user
@@ -32,6 +34,8 @@
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
+	import Folder from '../icons/Folder.svelte';
+	import { CONTAINER_TERMINAL_ID } from '$lib/apis/containers';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
 
 	const i18n: any = getContext('i18n');
@@ -171,6 +175,23 @@
 
 				<div class="flex flex-none items-center gap-1 self-center">
 					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
+
+					<!-- Mologate: the chat container's files, in the side panel's Files tab. -->
+					{#if chat?.id && !$temporaryChatEnabled && $selectedTerminalId === CONTAINER_TERMINAL_ID}
+						<Tooltip content={$showControls ? $i18n.t('Hide files') : $i18n.t('Files')}>
+							<button
+								id="container-files-button"
+								class="flex size-9 cursor-pointer items-center justify-center rounded-lg transition outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-accent {$showControls
+									? 'bg-gray-100 text-gray-900 dark:bg-gray-850 dark:text-gray-100'
+									: 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-gray-100'}"
+								on:click={() => showControls.set(!$showControls)}
+								aria-label={$i18n.t('Files')}
+								aria-pressed={$showControls}
+							>
+								<Folder className="size-[18px]" strokeWidth="1.5" />
+							</button>
+						</Tooltip>
+					{/if}
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}

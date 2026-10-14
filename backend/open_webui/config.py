@@ -51,14 +51,17 @@ async def seed_registered_defaults():
 ENV_OVERRIDES = {
     'mologate.limits_mode': 'MOLOGATE_LIMITS_MODE',
     'mologate.auto_reset': 'MOLOGATE_AUTO_RESET',
+    'containers.enable': 'MOLOGATE_CONTAINERS',
+    'containers.nodes': 'MOLOGATE_CONTAINER_NODES',
 }
 
 
 async def apply_env_overrides():
+    # An empty variable counts as unset, so compose files can pass one through without wiping the app's value.
     updates = {
         key: DEFAULT_CONFIG[key]
         for key, name in ENV_OVERRIDES.items()
-        if name in os.environ and await Config.get(key, None) != DEFAULT_CONFIG[key]
+        if os.environ.get(name, '').strip() and await Config.get(key, None) != DEFAULT_CONFIG[key]
     }
     if 'mologate.auto_reset' in updates:
         updates['mologate.auto_reset_changed'] = {'by': 'Server settings', 'at': int(datetime.now().timestamp())}
@@ -518,6 +521,19 @@ CODE_INTERPRETER_PYODIDE_PROMPT = """
 - The file system persists across code executions within the same session.
 - Use `import os; os.listdir('/mnt/uploads')` to discover available files."""
 
+
+####################################
+# Mologate: container nodes
+####################################
+
+# [{"id": "vps", "name": "VPS", "url": "http://container-node:8090", "key": "..."}, ...]
+try:
+    MOLOGATE_CONTAINER_NODES = JSONCodec.loads(os.getenv('MOLOGATE_CONTAINER_NODES', '') or '[]')
+    if not isinstance(MOLOGATE_CONTAINER_NODES, list):
+        raise ValueError('expected a list')
+except (JSONCodec.JSONDecodeError, ValueError) as e:
+    log.error('MOLOGATE_CONTAINER_NODES is not a JSON list of nodes (%s); no container nodes are configured.', e)
+    MOLOGATE_CONTAINER_NODES = []
 
 ####################################
 # Vector Database
@@ -3135,6 +3151,9 @@ DEFAULT_CONFIG = {
     'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
     # Mologate: chats one member can have generating at once (hard cap 10; utils/chat_slots.py).
     'mologate.max_concurrent_chats': int(os.getenv('MOLOGATE_MAX_CONCURRENT_CHATS', '3')),
+    # Mologate: each chat's own container, on these container nodes (docs/container-nodes.md).
+    'containers.enable': os.getenv('MOLOGATE_CONTAINERS', 'True').lower() == 'true',
+    'containers.nodes': MOLOGATE_CONTAINER_NODES,
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,

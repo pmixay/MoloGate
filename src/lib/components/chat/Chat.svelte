@@ -42,12 +42,14 @@
 		selectedFolder,
 		showEmbeds,
 		selectedTerminalId,
+		newChatContainerNetwork,
 		showFileNavPath,
 		showFileNavDir,
 		chatRequestQueues,
 		desktopEvent
 	} from '$lib/stores';
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
+	import { CONTAINER_TERMINAL_ID } from '$lib/apis/containers';
 
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
@@ -67,6 +69,7 @@
 		isRasterImageContentType,
 		modelReadsImages
 	} from '$lib/utils';
+	import { chatRepository } from '$lib/utils/changes';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import { applyResponseStreamEvent, getOutputText } from './Messages/structuredOutput';
@@ -1026,6 +1029,9 @@
 					if (isTerminalAvailable(tid)) {
 						selectedTerminalId.set(tid);
 					}
+				} else if (!$selectedTerminalId && isTerminalAvailable(CONTAINER_TERMINAL_ID)) {
+					// Mologate: every chat works in its own container unless the model names another terminal.
+					selectedTerminalId.set(CONTAINER_TERMINAL_ID);
 				}
 			}
 		} finally {
@@ -1231,6 +1237,9 @@
 					}, 100);
 				} else if (type === 'chat:message:error') {
 					message.error = data.error;
+					if (data.refusal !== undefined) {
+						message.refusal = data.refusal;
+					}
 					if (data.done === true && !message.done) {
 						message.done = true;
 						dismissContextCompactionToast();
@@ -1913,6 +1922,8 @@
 	const initNewChat = async () => {
 		console.log('initNewChat');
 		resetWebSearchConfirmation();
+		// Mologate: a new chat's container starts with the network on until the user switches it.
+		newChatContainerNetwork.set(null);
 		webSearchDeclined = false;
 
 		// Mark the outgoing chat as read before resetting; in-place created chats
@@ -2140,6 +2151,8 @@
 
 	const loadChat = async () => {
 		noteChatDebug('loadChat start');
+		// Mologate: a switch set in an unsent new chat doesn't carry over to another chat.
+		newChatContainerNetwork.set(null);
 		// chatIdProp is empty for chats started from the home page (URL set via replaceState)
 		chatId.set(chatIdProp || $chatId);
 		noteChatDebug('loadChat set active chat id');
@@ -2669,7 +2682,9 @@
 			selected_model_id,
 			error,
 			usage,
-			context_breakdown
+			context_breakdown,
+			changes,
+			refusal
 		} = data;
 
 		// Store raw OR-aligned output items from backend
@@ -2728,6 +2743,16 @@
 
 		if (usage) {
 			message.usage = usage;
+		}
+
+		// Mologate: the files this response changed in the chat's container.
+		if (changes) {
+			message.changes = changes;
+		}
+
+		// Mologate: whether the model declined (sent with the finished response, null when it didn't).
+		if (refusal !== undefined) {
+			message.refusal = refusal;
 		}
 
 		// Mologate: what the turn's prompt held, for the context indicator.
@@ -3448,6 +3473,12 @@
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
 				skill_ids: skillIds.length > 0 ? skillIds : undefined,
 				terminal_id: terminalEnabled && $selectedTerminalId ? $selectedTerminalId : undefined,
+				// Mologate: the ⋯ menu's internet switch, set before this request creates the chat.
+				...(!_chatId &&
+				$selectedTerminalId === CONTAINER_TERMINAL_ID &&
+				$newChatContainerNetwork !== null
+					? { network_access: $newChatContainerNetwork }
+					: {}),
 				tool_servers: [
 					...($toolServers ?? []).filter(
 						(server, idx) => toolServerIds.includes(idx) || toolServerIds.includes(server?.id)
@@ -3545,6 +3576,8 @@
 						};
 					});
 					await chatId.set(res.chat_id);
+					// Mologate: the new chat's container now holds the ⋯ menu's internet switch.
+					newChatContainerNetwork.set(null);
 					if (!$temporaryChatEnabled && !embedded) {
 						window.history.replaceState(window.history.state, '', `/c/${res.chat_id}`);
 						await refreshChatList(localStorage.token);
@@ -4314,6 +4347,7 @@
 									<MessageInput
 										bind:this={messageInput}
 										{history}
+										repository={chatRepository(chat?.meta)}
 										{taskIds}
 										bind:selectedModels
 										bind:params
@@ -4404,6 +4438,7 @@
 									<MessageInput
 										bind:this={messageInput}
 										{history}
+										repository={chatRepository(chat?.meta)}
 										{taskIds}
 										bind:selectedModels
 										bind:params

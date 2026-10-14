@@ -11,6 +11,7 @@ from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.oauth_sessions import OAuthSessions
+from open_webui.utils import containers
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import bearer_auth_header, get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
@@ -339,6 +340,8 @@ async def set_terminal_servers_config(
     connections = [
         connection.model_dump(exclude={'policy', 'lifecycle'}) for connection in form_data.TERMINAL_SERVER_CONNECTIONS
     ]
+    # Mologate: the built-in chat-container connection keeps its fields; admins only rename or switch it off.
+    connections = containers.normalize_connections(connections, await containers.containers_enabled())
     await Config.upsert({'terminal_server.connections': connections})
 
     await set_terminal_servers(request)

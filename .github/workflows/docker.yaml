@@ -11,10 +11,12 @@ on:
       - limits-and-accounts
     tags:
       - v*
-    # Mologate: deployment and documentation changes do not alter the image.
+    # Mologate: deployment and documentation changes do not alter the image, nor do the
+    # container images, which container-images.yaml builds.
     paths-ignore:
       - 'docs/**'
       - 'deploy/**'
+      - 'containers/**'
 
 concurrency:
   group: docker-${{ github.ref }}

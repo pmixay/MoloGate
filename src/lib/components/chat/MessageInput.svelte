@@ -19,6 +19,7 @@
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
+	import { isSavedChatId } from '$lib/utils/chatId';
 
 	const dispatch = createEventDispatcher();
 
@@ -55,7 +56,7 @@
 		isRasterImageContentType,
 		modelReadsImages
 	} from '$lib/utils';
-	import { uploadFile } from '$lib/apis/files';
+	import { uploadFile, uploadFileChunked } from '$lib/apis/files';
 	import { getCwd, uploadNewFileToTerminal } from '$lib/apis/terminal';
 	import { generateAutoCompletion } from '$lib/apis';
 	import { deleteFileById } from '$lib/apis/files';
@@ -89,6 +90,10 @@
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
+	import ExtraMenu from './MessageInput/ExtraMenu.svelte';
+	import ChatChangesBar from './MessageInput/ChatChangesBar.svelte';
+	import type { RepositoryLink } from '$lib/utils/changes';
+	import { CONTAINER_TERMINAL_ID, warmUpContainer } from '$lib/apis/containers';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
 
@@ -144,6 +149,8 @@
 	);
 
 	export let history;
+	// Mologate: the chat's linked repository, if any (lib/utils/changes.ts).
+	export let repository: RepositoryLink | null = null;
 	export let taskIds = null;
 	export let askUser: AskUserPrompt = {
 		show: false,
@@ -755,12 +762,30 @@
 	);
 	$: hasDirectToolServerAccess =
 		$_user?.role === 'admin' || ($_user?.permissions?.features?.direct_tool_servers ?? true);
+	// Mologate: every chat gets its own container, so the picker only shows when there is a
+	// choice besides it.
 	$: showTerminalSelector =
 		terminalCapableModels.length > 0 &&
-		(($terminalServers ?? []).some((t) => t.id) ||
+		(($terminalServers ?? []).some((t) => t.id && t.id !== CONTAINER_TERMINAL_ID) ||
 			(hasDirectToolServerAccess &&
 				(($terminalServers ?? []).some((t) => !t.id) ||
 					($settings?.terminalServers ?? []).some((s) => s.url))));
+
+	// Mologate: the "⋯" menu next to "+" holds the chat container's settings.
+	$: showExtraMenu = !!$config?.features?.enable_containers;
+
+	// Mologate: wake the chat's container (or ready one for a new chat) as soon as the user types,
+	// so the first command doesn't wait for it. The server throttles this too.
+	let lastWarmUp = 0;
+	$: if (
+		prompt &&
+		showExtraMenu &&
+		$selectedTerminalId === CONTAINER_TERMINAL_ID &&
+		Date.now() - lastWarmUp > 20000
+	) {
+		lastWarmUp = Date.now();
+		warmUpContainer(localStorage.token, isSavedChatId(chatId) ? chatId : null);
+	}
 
 	let toggleFilters = [];
 	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
@@ -949,7 +974,14 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				// Mologate: big files go up in chunks, with progress (up to 500 MB).
+				const uploadedFile =
+					file.size > ($config?.file?.chunked_threshold ?? 8 * 1024 * 1024)
+						? await uploadFileChunked(localStorage.token, file, metadata, process, (fraction) => {
+								fileItem.progress = fraction;
+								files = files;
+							})
+						: await uploadFile(localStorage.token, file, metadata, process);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -1678,6 +1710,11 @@
 							</div>
 						{/if}
 
+						<!-- Mologate: in a chat linked to a repository, what isn't committed yet. -->
+						{#if showExtraMenu}
+							<ChatChangesBar {history} {repository} />
+						{/if}
+
 						<!-- Task list display -->
 						{#if isActive && chatTasks.length > 0}
 							<div class="mx-1">
@@ -1898,6 +1935,7 @@
 												type={file.type}
 												size={file?.size}
 												loading={file.status === 'uploading'}
+												progress={file.status === 'uploading' ? (file.progress ?? null) : null}
 												dismissible={true}
 												edit={true}
 												small={true}
@@ -2179,6 +2217,10 @@
 											<PlusAlt className="size-[18px]" />
 										</button>
 									</InputMenu>
+
+									{#if showExtraMenu}
+										<ExtraMenu {chatId} />
+									{/if}
 
 									{#if hasToolbarExtras}
 										<div class="flex self-center w-px h-4 bg-gray-200 dark:bg-gray-800 shrink-0" />

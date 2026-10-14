@@ -81,6 +81,7 @@ from open_webui.socket.main import (
     get_event_emitter,
 )
 from open_webui.tasks import clear_response_stream, save_response_stream
+from open_webui.utils import change_sources, containers, refusals
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
@@ -2768,6 +2769,23 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     files = form_data.pop('files', None)
     form_data.pop('folder_id', None)
     metadata['terminal_id'] = terminal_id
+
+    # Mologate: ready this chat's own container before any terminal call (placed on the least busy
+    # node, woken, or moved off a busy one), with the network the user chose and new attachments
+    # copied in. The agent is told about it with the terminal tools below.
+    if (
+        terminal_id == containers.CONNECTION_ID
+        and (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('terminal', True)
+        and await containers.containers_enabled()
+    ):
+        try:
+            metadata['container_prompt'] = await containers.turn_context(request, user, metadata)
+        except (containers.NodeUnavailable, containers.NodeError) as e:
+            log.warning('Chat container unavailable: %s', e)
+            metadata['container_error'] = str(e)
+            form_data['messages'] = add_or_update_system_message(
+                containers.unavailable_prompt(e), form_data['messages'], append=True
+            )
     skill_authoring_allowed = bool(terminal_id) and has_prior_real_chat_content(form_data.get('messages', []))
     skill_create_denial_reason = 'empty_chat' if terminal_id else 'disabled'
     apply_skills_create_prompt(
@@ -3050,7 +3068,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         terminal_connection_ids = {
             connection.get('id') for connection in await Config.get('terminal_server.connections', []) or []
         }
-        if terminal_id and terminal_capability and terminal_id in terminal_connection_ids:
+        if (
+            terminal_id
+            and terminal_capability
+            and terminal_id in terminal_connection_ids
+            and not metadata.get('container_error')
+        ):
             try:
                 terminal_result = await get_terminal_tools(
                     request,
@@ -3073,7 +3096,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     )
             except Exception as e:
                 log.exception(e)
-                raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
+                if terminal_id != containers.CONNECTION_ID:
+                    raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
+                # Mologate: a chat whose container is down still gets an answer, without terminal tools.
+                form_data['messages'] = add_or_update_system_message(
+                    containers.unavailable_prompt(e), form_data['messages'], append=True
+                )
 
         if direct_tool_servers:
             for tool_server in direct_tool_servers:
@@ -4283,6 +4311,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                     error = str(error)
 
                 log.error('Provider returned error (non-streaming): %s', error)
+                refusal = refusals.detect_error(response_data.get('error'))
 
                 if save_to_chat:
                     await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -4291,13 +4320,14 @@ async def non_streaming_chat_response_handler(response, ctx):
                         {
                             'error': {'content': error},
                             'done': True,
+                            'refusal': refusal,
                         },
                     )
                 if isinstance(error, str) or isinstance(error, dict):
                     await event_emitter(
                         {
                             'type': 'chat:message:error',
-                            'data': {'error': {'content': error}, 'done': True},
+                            'data': {'error': {'content': error}, 'done': True, 'refusal': refusal},
                         }
                     )
 
@@ -4313,6 +4343,10 @@ async def non_streaming_chat_response_handler(response, ctx):
 
             choices = response_data.get('choices', [])
             response_output = response_data.get('output')
+            # Mologate: a refusal in its own field becomes the answer, and is noted with the finish.
+            refusal_signals = {refusals.signal_from_error(response_data.get('error'))}
+            if choices and isinstance(choices[0], dict):
+                refusal_signals.add(refusals.chat_choice_signal(choices[0], 'message', chunk=response_data))
             content = choices[0].get('message', {}).get('content') if choices else ''
 
             if (continuing and 'error' not in response_data) or (
@@ -4394,6 +4428,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                         response_output = previous + response_output
                         content = get_output_text(response_output)
 
+                    refusal = refusals.detect(response_output, refusal_signals)
                     await event_emitter(
                         {
                             'type': 'chat:completion',
@@ -4402,6 +4437,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'output': response_output,
                                 'title': title,
+                                'refusal': refusal,
                             },
                         }
                     )
@@ -4418,6 +4454,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'role': 'assistant',
                                 'output': response_output,
                                 **({'usage': usage} if usage else {}),
+                                'refusal': refusal,
                             },
                         )
 
@@ -4944,6 +4981,10 @@ async def streaming_chat_response_handler(response, ctx):
                 else:
                     reasoning_tags = DEFAULT_REASONING_TAGS
 
+            # Mologate: what the provider said about declining ('refusal' or 'filter'), for the record
+            # made once the response has finished (utils/refusals.py).
+            refusal_signals = set()
+
             try:
                 for event in events:
                     await event_emitter(
@@ -5178,6 +5219,9 @@ async def streaming_chat_response_handler(response, ctx):
                                     )
                                 # Check for Responses API events (type field starts with "response.")
                                 elif data.get('type', '').startswith('response.'):
+                                    # Mologate: a refusal streams as the answer's text, and is noted.
+                                    if signal := refusals.responses_event_signal(data):
+                                        refusal_signals.add(signal)
                                     response_data_type = data.get('type', '')
                                     response_data_is_delta = response_data_type.endswith('.delta')
                                     output, response_metadata = handle_responses_streaming_event(data, output)
@@ -5273,6 +5317,8 @@ async def streaming_chat_response_handler(response, ctx):
                                     if not choices:
                                         error = data.get('error', {})
                                         if error:
+                                            if signal := refusals.signal_from_error(error):
+                                                refusal_signals.add(signal)
                                             log.error('Provider returned error (streaming): %s', error)
                                             if save_to_chat:
                                                 try:
@@ -5297,6 +5343,11 @@ async def streaming_chat_response_handler(response, ctx):
 
                                     delta = choices[0].get('delta', {})
                                     delta_type = 'content'
+
+                                    # Mologate: a refusal arrives in its own field; show it as the answer
+                                    # and note it, with finishes that mean the provider stopped the answer.
+                                    if signal := refusals.chat_choice_signal(choices[0], chunk=data):
+                                        refusal_signals.add(signal)
 
                                     # Handle delta annotations
                                     annotations = delta.get('annotations')
@@ -6599,11 +6650,17 @@ async def streaming_chat_response_handler(response, ctx):
 
                 current_output = full_output()
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
+                # Mologate: the files this response changed, with +/- lines and diffs (utils/change_sources.py).
+                changes = await change_sources.collect(metadata)
+                # Mologate: whether the model declined, from the provider's word or the answer's.
+                refusal = refusals.detect(current_output, refusal_signals)
                 data = {
                     'done': True,
                     'output': current_output,
                     'title': title,
                     **({'usage': usage} if usage else {}),
+                    **({'changes': changes} if changes else {}),
+                    'refusal': refusal,
                 }
 
                 if save_to_chat:
@@ -6616,6 +6673,8 @@ async def streaming_chat_response_handler(response, ctx):
                             'done': True,
                             'output': current_output,
                             **({'usage': usage} if usage else {}),
+                            **({'changes': changes} if changes else {}),
+                            'refusal': refusal,
                         },
                     )
 

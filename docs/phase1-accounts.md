@@ -85,7 +85,8 @@ A used-up quota or credit (HTTP 429 or 402, codes such as `usage_limit_reached`,
 before any output) hands the request to the next account; when none is left the member sees the
 usage-limit message with the wait (`retry-after` counts too), or that the API key is out of credit.
 A refusal (Responses refusal parts, `message.refusal`, `finish_reason: content_filter`, a
-moderation 403) is shown as the model declining and never fails over. A stream that stops early
+moderation 403) is shown as the model declining and never fails over; the chat flags it with a
+warning under the answer (docs/refusals.md). A stream that stops early
 keeps its text and ends with a `length` or `content_filter` finish and an error chunk saying why:
 cut off at the output token limit, filtered, interrupted, or the provider's error.
 

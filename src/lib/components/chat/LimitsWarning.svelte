@@ -65,7 +65,8 @@
 		{#each shown as item (item.id)}
 			<div
 				role={item.level === 'low' ? 'status' : 'alert'}
-				class="flex items-start gap-2 rounded-xl border px-3 py-2 text-left text-xs {item.level === 'low'
+				class="flex items-start gap-2 rounded-xl border px-3 py-2 text-left text-xs {item.level ===
+				'low'
 					? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-400/10 dark:text-amber-200'
 					: 'border-red-200 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'}"
 			>

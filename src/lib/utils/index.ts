@@ -19,7 +19,9 @@ dayjs.extend(localizedFormat);
 
 import { TTS_RESPONSE_SPLIT } from '$lib/types';
 
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+// Mologate: the legacy build polyfills APIs pdf.js 5 needs (Map.getOrInsertComputed) for browsers
+// that lack them; without it PDFs fail to render there.
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
 import { marked } from 'marked';
 import markedExtension from '$lib/utils/marked/extension';
@@ -1906,7 +1908,7 @@ function ensureReadableStreamAsyncIterator() {
 async function ensurePDFjsLoaded() {
 	ensureReadableStreamAsyncIterator();
 	if (!window.pdfjsLib) {
-		const pdfjs = await import('pdfjs-dist');
+		const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 		pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 		if (!window.pdfjsLib) {
 			throw new Error('pdfjsLib is required for PDF extraction');

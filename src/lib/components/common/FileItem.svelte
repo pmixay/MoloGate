@@ -8,6 +8,7 @@
 	import FileItemModal from './FileItemModal.svelte';
 	import GarbageBin from '../icons/GarbageBin.svelte';
 	import Spinner from './Spinner.svelte';
+	import ProgressRing from './ProgressRing.svelte';
 	import Tooltip from './Tooltip.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -22,6 +23,8 @@
 	export let dismissible = false;
 	export let modal = false;
 	export let loading = false;
+	// Mologate: upload progress, 0 to 1, shown while loading (chunked uploads).
+	export let progress: number | null = null;
 
 	export let item = null;
 	export let edit = false;
@@ -101,6 +104,8 @@
 						d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z"
 					/>
 				</svg>
+			{:else if progress !== null}
+				<ProgressRing {progress} size={22} />
 			{:else}
 				<Spinner />
 			{/if}
@@ -132,6 +137,8 @@
 						<DocumentPage className="size-3.5" />
 					{/if}
 				</Tooltip>
+			{:else if progress !== null}
+				<ProgressRing {progress} size={14} />
 			{:else}
 				<Spinner className="size-3.5" />
 			{/if}
@@ -174,7 +181,11 @@
 			<div class="flex min-w-0 flex-1 items-center overflow-hidden">
 				<div class="flex min-w-0 flex-1 items-center justify-between dark:text-gray-100">
 					<div class="min-w-0 flex-1 truncate pr-1 font-normal">{decodeString(name)}</div>
-					{#if size}
+					{#if loading && progress !== null}
+						<div class="max-w-[45%] shrink-0 truncate text-[0.6875rem] tabular-nums text-gray-500">
+							{Math.round(progress * 100)}% · {formatFileSize(size)}
+						</div>
+					{:else if size}
 						<div class="max-w-[35%] shrink-0 truncate text-[0.6875rem] capitalize text-gray-500">
 							{formatFileSize(size)}
 						</div>

@@ -102,6 +102,7 @@ from open_webui.tools.builtin import (
     view_skill,
     write_note,
 )
+from open_webui.utils import containers
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.headers import (
@@ -116,7 +117,9 @@ from open_webui.utils.plugin import get_tool_contents_cache, get_tools_cache, lo
 from open_webui.utils.subagent_profiles import get_profiles as get_subagent_profiles
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
+    container_route,
     get_terminal_server_url,
+    is_container_connection,
     terminal_context_available,
     terminal_context_config,
     terminal_context_id,
@@ -1407,8 +1410,13 @@ async def get_terminal_tools(
         raise RuntimeError(f'Access denied to terminal {terminal_id}')
 
     # Find the cached spec data for this terminal
-    terminal_servers = await get_terminal_servers(request)
-    server_data = next((server for server in terminal_servers if server.get('id') == terminal_id), None)
+    container = is_container_connection(connection)
+    if container:
+        # Mologate: chat containers share one API description, read from any node.
+        server_data = await containers.cached_tool_server_data()
+    else:
+        terminal_servers = await get_terminal_servers(request)
+        server_data = next((server for server in terminal_servers if server.get('id') == terminal_id), None)
     if server_data is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable")
 
@@ -1448,13 +1456,26 @@ async def get_terminal_tools(
     if context_id:
         headers[TERMINAL_CONTEXT_HEADER] = context_id
 
+    base_url = server_data['url']
+    if container:
+        # Mologate: this chat's container, on whichever node holds it.
+        route = await container_route(context_id, user.id)
+        if route is None:
+            raise RuntimeError('This chat has no container')
+        base_url, node_headers = route
+        headers.update(node_headers)
+
     # Fetch live with the user's credentials so prompt changes apply without a restart
     terminal_cwd, system_prompt = await asyncio.gather(
-        get_terminal_cwd(server_data['url'], headers, cookies),
-        get_terminal_system_prompt(server_data['url'], headers, cookies),
+        get_terminal_cwd(base_url, headers, cookies),
+        get_terminal_system_prompt(base_url, headers, cookies),
     )
     if not system_prompt:
         system_prompt = server_data.get('system_prompt')
+    if container and metadata.get('container_prompt'):
+        system_prompt = (
+            f'{system_prompt}\n\n{metadata["container_prompt"]}' if system_prompt else metadata['container_prompt']
+        )
 
     tools_dict = {}
     for spec in specs:
@@ -1472,7 +1493,7 @@ async def get_terminal_tools(
                 if fn_name == 'display_file':
                     params.pop('page', None)
                 return await execute_tool_server(
-                    url=srv_data['url'],
+                    url=base_url,
                     headers=hdrs,
                     cookies=cks,
                     name=fn_name,

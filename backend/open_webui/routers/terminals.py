@@ -8,6 +8,7 @@ Routes:
 import asyncio
 import logging
 import posixpath
+import re
 from urllib.parse import unquote
 
 import aiohttp
@@ -24,7 +25,9 @@ from open_webui.utils.headers import bearer_auth_header, normalize_bearer_token
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
+    container_route,
     get_terminal_server_url,
+    is_container_connection,
     is_terminal_orchestrator,
     terminal_chat_uploads,
     terminal_context_available,
@@ -40,12 +43,30 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-STREAMING_CONTENT_TYPES = ('application/octet-stream', 'image/', 'application/pdf')
+# Mologate: video, audio, archives, Office and SQLite files stream too, so big previews and
+# downloads from a chat container don't sit in memory.
+STREAMING_CONTENT_TYPES = (
+    'application/octet-stream',
+    'image/',
+    'application/pdf',
+    'video/',
+    'audio/',
+    'application/zip',
+    'application/x-tar',
+    'application/gzip',
+    'application/vnd.',
+    'application/x-sqlite3',
+    'application/vnd.sqlite3',
+)
+# Mologate: the browser addresses a chat container as /{server_id}/c/{chat_id}/..., so file previews
+# in iframes and every file call reach the right chat without an X-Session-Id header.
+CHAT_PATH_RE = re.compile(r'^c/([A-Za-z0-9-]{1,64})/(.*)$', re.DOTALL)
 ADMIN_API_PATHS = ('api/v1/policies', 'api/v1/status', 'api/v1/terminals')
 # Drop the upstream's server and date: uvicorn adds its own and forwarding both duplicates them.
-STRIPPED_RESPONSE_HEADERS = frozenset(
-    ('transfer-encoding', 'connection', 'content-encoding', 'content-length', 'server', 'date')
-)
+# Mologate: bodies pass through still compressed (auto_decompress=False below), so the browser, not
+# this server, expands them, and a decompression bomb can't fill the server's memory. Their
+# Content-Encoding must go along.
+STRIPPED_RESPONSE_HEADERS = frozenset(('transfer-encoding', 'connection', 'content-length', 'server', 'date'))
 
 
 def _sanitize_proxy_path(path: str) -> str | None:
@@ -127,7 +148,22 @@ async def proxy_terminal(
     if not await has_connection_access(user, connection, user_group_ids):
         return JSONResponse({'error': 'Access denied'}, status_code=403)
 
-    base_url = get_terminal_server_url(connection)
+    container = is_container_connection(connection)
+    container_headers = {}
+    path_chat_id = None
+    if container and (match := CHAT_PATH_RE.match(path)):
+        path_chat_id, path = match.group(1), match.group(2)
+    if container:
+        # Mologate: the chat's own container, on whichever node holds it.
+        session_id = path_chat_id or request.headers.get('x-session-id')
+        route = await container_route(
+            terminal_context_id(connection, {'chat_id': session_id}, 'chat') if session_id else None, user.id
+        )
+        if route is None:
+            return JSONResponse({'error': 'This chat has no container yet'}, status_code=409)
+        base_url, container_headers = route
+    else:
+        base_url = get_terminal_server_url(connection)
     if not base_url:
         return JSONResponse({'error': 'Terminal server URL not configured'}, status_code=503)
 
@@ -140,7 +176,7 @@ async def proxy_terminal(
     # Check the path aiohttp will send, relative to the configured server root.
     base_path = URL(str(connection.get('url') or '')).path.rstrip('/')
     target_path = URL(target_url).path
-    if any(
+    if not container and any(
         target_path == f'{base_path}/{prefix}' or target_path.startswith(f'{base_path}/{prefix}/')
         for prefix in ADMIN_API_PATHS
     ):
@@ -151,7 +187,7 @@ async def proxy_terminal(
 
     headers = {'X-User-Id': user.id}
     # Forward per-session cwd tracking header
-    session_id = request.headers.get('x-session-id')
+    session_id = path_chat_id or request.headers.get('x-session-id')
     if session_id:
         headers['X-Session-Id'] = session_id
         if not terminal_context_available(connection, 'chat'):
@@ -182,6 +218,7 @@ async def proxy_terminal(
         if oauth_token:
             headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
     # auth_type == "none": no Authorization header
+    headers.update(container_headers)
 
     content_type = request.headers.get('content-type')
     if content_type:
@@ -190,6 +227,7 @@ async def proxy_terminal(
     session = aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=300, connect=10),
         trust_env=True,
+        auto_decompress=False,
     )
 
     try:
@@ -319,6 +357,13 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
     return user, connection
 
 
+@router.websocket('/{server_id}/c/{chat_id}/api/terminals/{session_id}')
+async def ws_chat_terminal(ws: WebSocket, server_id: str, chat_id: str, session_id: str):
+    """Mologate: a chat container's terminal, addressed with the chat in the path; the chat itself
+    still comes from the authenticated first message."""
+    await ws_terminal(ws, server_id, session_id)
+
+
 @router.websocket('/{server_id}/api/terminals/{session_id}')
 async def ws_terminal(
     ws: WebSocket,
@@ -338,7 +383,15 @@ async def ws_terminal(
         return
     user, connection, chat_id, token = result
 
-    base_url = get_terminal_server_url(connection)
+    container_headers = {}
+    if is_container_connection(connection):
+        route = await container_route(terminal_context_id(connection, {'chat_id': chat_id}, 'chat'), user.id)
+        if route is None:
+            await ws.close(code=4003, reason='This chat has no container yet')
+            return
+        base_url, container_headers = route
+    else:
+        base_url = get_terminal_server_url(connection)
     if not base_url:
         await ws.close(code=4003, reason='Terminal server URL not configured')
         return
@@ -356,6 +409,7 @@ async def ws_terminal(
         return
     if context_id:
         upstream_headers[TERMINAL_CONTEXT_HEADER] = context_id
+    upstream_headers.update(container_headers)
 
     import urllib.parse
 

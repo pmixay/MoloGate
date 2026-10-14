@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
-	import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+	// Mologate: the legacy build polyfills APIs pdf.js 5 needs (Map.getOrInsertComputed) for browsers
+	// that lack them; without it PDFs fail to render there.
+	import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 	import Spinner from './Spinner.svelte';
 	import PDFViewer from './PDFViewer.svelte';
 
@@ -63,7 +65,7 @@
 		thumbnails = [];
 
 		try {
-			const pdfjs = await import('pdfjs-dist');
+			const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 			pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 			pdfDoc?.destroy();

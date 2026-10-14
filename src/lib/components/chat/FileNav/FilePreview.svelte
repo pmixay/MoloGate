@@ -48,6 +48,8 @@
 	export let readOnly = false;
 
 	export let onSave: ((content: string) => Promise<void>) | null = null;
+	// Mologate: files without a preview offer a download instead.
+	export let onDownload: (() => void) | null = null;
 	export let searchTarget: {
 		line: number;
 		column: number;
@@ -505,8 +507,17 @@
 				class="text-xs font-mono text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-all leading-relaxed p-3">{fileContent}</pre>
 		{/if}
 	{:else}
-		<div class="text-xs text-gray-400 text-center pt-8">
-			{$i18n.t('Could not read file.')}
+		<div class="flex flex-col items-center gap-2 pt-10 text-center text-xs text-gray-400">
+			<div>{$i18n.t('No preview for this file.')}</div>
+			{#if onDownload && selectedFile}
+				<button
+					type="button"
+					class="rounded-full border border-gray-200 px-3 py-1 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+					on:click={onDownload}
+				>
+					{$i18n.t('Download')}
+				</button>
+			{/if}
 		</div>
 	{/if}
 

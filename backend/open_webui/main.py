@@ -149,6 +149,8 @@ from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.users import Users
 from open_webui.routers import (
     provider_accounts,  # Mologate: owner-managed provider connections.
+    containers,  # Mologate: each chat's own container.
+    uploads,  # Mologate: big uploads in chunks.
     analytics,
     audio,
     auths,
@@ -210,7 +212,7 @@ from open_webui.tasks import (
     stop_item_tasks,
     stop_task,
 )  # Import from tasks.py
-from open_webui.utils import chat_slots, logger
+from open_webui.utils import chat_slots, logger, refusals
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.actions import chat_action as chat_action_handler
@@ -278,6 +280,7 @@ from open_webui.utils.tool_approval import (
     resolve_tool_call_output,
 )
 from open_webui.utils.tools import set_terminal_servers, set_tool_servers
+from open_webui.utils.containers import parse_nodes as chat_containers_parse
 
 if SAFE_MODE:
     print('SAFE MODE ENABLED')
@@ -422,6 +425,13 @@ async def lifespan(app: FastAPI):
 
     app.state.scheduler_worker_loop = asyncio.create_task(scheduler_worker_loop(app))
 
+    # Mologate: the built-in chat-container connection follows the node settings, and containers of
+    # deleted chats are cleaned up.
+    from open_webui.utils import containers as chat_containers
+
+    await chat_containers.sync_connection()
+    app.state.container_cleanup_loop = asyncio.create_task(chat_containers.cleanup_loop())
+
     if await Config.get('models.base_models_cache'):
         try:
             await get_all_models(
@@ -514,6 +524,7 @@ async def lifespan(app: FastAPI):
     app.state.periodic_usage_pool_cleanup.cancel()
     app.state.periodic_session_pool_cleanup.cancel()
     app.state.scheduler_worker_loop.cancel()
+    app.state.container_cleanup_loop.cancel()
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_COMPLETED, source='system')
 
@@ -896,6 +907,8 @@ app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
+# Mologate: chunked uploads up to 500 MB; before the files router, whose /{id} routes would match.
+app.include_router(uploads.router, prefix='/api/v1/files/uploads', tags=['files'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])
 app.include_router(functions.router, prefix='/api/v1/functions', tags=['functions'])
 app.include_router(evaluations.router, prefix='/api/v1/evaluations', tags=['evaluations'])
@@ -903,6 +916,7 @@ if ENABLE_ADMIN_ANALYTICS:
     app.include_router(analytics.router, prefix='/api/v1/analytics', tags=['analytics'])
 app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
+app.include_router(containers.router, prefix='/api/v1/containers', tags=['containers'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
 
@@ -1306,6 +1320,8 @@ async def chat_completion(
             'tool_ids': form_data.get('tool_ids', None),
             'tool_servers': tool_servers,
             'files': form_data.get('files', None),
+            # Mologate: the chat container's internet switch, as the ⋯ menu shows it.
+            'network_access': form_data.pop('network_access', None),
             'features': form_data.get('features', {}),
             'variables': form_data.get('variables', {}),
             'chat_variables': chat_variables,
@@ -1731,6 +1747,8 @@ async def chat_completion(
             error_detail = e.detail if isinstance(e, HTTPException) else str(e)
             log.error('Error processing chat payload: %s', error_detail)
             if metadata.get('chat_id') and metadata.get('message_id'):
+                # Mologate: a request the provider refused outright is flagged as a refusal too.
+                refusal = refusals.detect_error(error_detail)
                 # Update the chat message with the error
                 try:
                     if is_saved_chat_id(metadata.get('chat_id')):
@@ -1741,6 +1759,7 @@ async def chat_completion(
                                 'parentId': metadata.get('user_message_id', None),
                                 'error': {'content': error_detail},
                                 'done': True,
+                                'refusal': refusal,
                             },
                         )
 
@@ -1749,7 +1768,7 @@ async def chat_completion(
                         await event_emitter(
                             {
                                 'type': 'chat:message:error',
-                                'data': {'error': {'content': error_detail}, 'done': True},
+                                'data': {'error': {'content': error_detail}, 'done': True, 'refusal': refusal},
                             }
                         )
 
@@ -2307,6 +2326,8 @@ async def get_app_config(request: Request):
         'oauth.enable',
         # Mologate: hide account management when the feature is explicitly disabled.
         'mologate.limits_mode',
+        'containers.enable',
+        'containers.nodes',
         'oauth.auto_redirect',
         'ldap.enable',
         'ui.enable_signup',
@@ -2402,6 +2423,9 @@ async def get_app_config(request: Request):
                     'enable_easter_eggs': ENABLE_EASTER_EGGS,
                     'enable_direct_connections': config.get('direct.enable'),
                     'enable_provider_accounts': config.get('mologate.limits_mode', 'observe') != 'off',
+                    # Mologate: each chat has its own container (the ⋯ menu next to "+").
+                    'enable_containers': bool(config.get('containers.enable'))
+                    and any(node['enabled'] for node in chat_containers_parse(config.get('containers.nodes'))),
                     'enable_direct_integrations': config.get('direct.integrations.enable', False),
                     'enable_plugins': ENABLE_PLUGINS,
                     'enable_folders': config.get('folders.enable'),
@@ -2463,7 +2487,9 @@ async def get_app_config(request: Request):
                     },
                 },
                 'file': {
-                    'max_size': config.get('rag.file.max_size'),
+                    # Mologate: uploads go up to 500 MB unless an admin set a lower limit.
+                    'max_size': config.get('rag.file.max_size') or uploads.MAX_UPLOAD // (1024 * 1024),
+                    'chunked_threshold': uploads.CHUNK_SIZE,
                     'max_count': config.get('rag.file.max_count'),
                     'image_compression': {
                         'width': config.get('file.image_compression_width'),

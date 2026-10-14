@@ -2160,6 +2160,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         chunks = await read_stream(proxy.codex_chat_stream(response, 'test'))
         self.assertEqual([chunk['choices'][0]['delta'].get('content') for chunk in chunks], [words, None])
         self.assertEqual(chunks[-1]['choices'][0]['finish_reason'], 'stop')
+        # Marked, so the chat still flags it as a refusal.
+        self.assertEqual([chunk.get('mologate') for chunk in chunks], [{'refusal': True}, None])
         # A refusal only in the final output, without streaming.
         output = [{'type': 'message', 'content': [{'type': 'refusal', 'refusal': words}]}]
         session = SimpleNamespace(
@@ -2171,6 +2173,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with stack:
             answer = await proxy.account_completion(request, self.chat_form('codex'), OWNER)
         self.assertEqual(answer['choices'][0]['message']['content'], words)
+        self.assertEqual(answer['mologate'], {'refusal': True})
         # The provider's content filter.
         response = Response(
             events=[
@@ -2197,12 +2200,14 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with stack:
             answer = await proxy.account_completion(request, self.chat_form('openai_api'), OWNER)
         self.assertEqual(answer['choices'][0]['message']['content'], words)
+        self.assertEqual(answer['mologate'], {'refusal': True})
         stream = Response(events=[chat_chunk(refusal=words), chat_chunk('content_filter'), '[DONE]'])
         stack, _ = self.key_patches([self.key_account('key-filtered', 'openai_api')], [stream])
         with stack:
             reply = await proxy.account_completion(request, self.chat_form('openai_api', stream=True), OWNER)
             chunks = await read_stream(reply.body_iterator)
         self.assertEqual(chunks[0]['choices'][0]['delta'], {'content': words})
+        self.assertEqual(chunks[0]['mologate'], {'refusal': True})
         self.assertEqual(chunks[1]['choices'][0]['finish_reason'], 'content_filter')
         self.assertEqual(chunks[2]['error']['message'], "The provider's content filter stopped this answer.")
         # A filtered reply with nothing in it is an error, not an empty answer.

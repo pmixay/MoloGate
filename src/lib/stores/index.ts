@@ -153,6 +153,9 @@ export type FileNavOpenRequest = string | { path: string; page?: number | null }
 export const showFileNavPath: Writable<FileNavOpenRequest | null> = writable(null);
 export const showFileNavDir: Writable<string | null> = writable(null);
 export const selectedTerminalId: Writable<string | null> = writable(null);
+// Mologate: the ⋯ menu's internet switch for a chat that isn't saved yet; null keeps the default
+// (on). Sent with the chat's first message, then the chat's container keeps it.
+export const newChatContainerNetwork: Writable<boolean | null> = writable(null);
 export const connectedUserTerminals = writable(
 	new Map<symbol, { terminalId: string; chatId: string }>()
 );
