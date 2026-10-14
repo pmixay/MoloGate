@@ -136,8 +136,9 @@ async def pool_snapshot(provider: str, now: float | None = None) -> dict:
 async def extras(user_id: str) -> tuple[float, float]:
     """The member's credit balance (phase 5) and their active overrides in pool points (phase 4)."""
     from open_webui.models.limit_overrides import LimitOverrides
+    from open_webui.utils import credits
 
-    return 0.0, await LimitOverrides.active_points(user_id)
+    return await credits.balance(user_id), await LimitOverrides.active_points(user_id)
 
 
 async def member_state(user_id: str, provider: str) -> tuple[dict, allowance.State]:

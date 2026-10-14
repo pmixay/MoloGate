@@ -181,6 +181,14 @@ class StateTests(unittest.TestCase):
         self.assertTrue(cat.windows['A']['weekly'].owner_idle)
         self.assertEqual(cat.windows['A']['weekly'].owner_used, 5)
 
+    def test_one_requests_units_before_calibration(self):
+        account = plus('A', ANN, weight=2)
+        # 30 points of a weight-2 account, 10 units of them outside: 50 units shared by tokens.
+        period = Period(used=30, tokens={CAT: {'gpt-6': {'input_tokens': 300_000}}}, outside={ANN: 10})
+        units = allowance.request_units(account, period, {'input_tokens': 100_000})
+        self.assertAlmostEqual(units, 12.5)
+        self.assertEqual(allowance.request_units(account, Period(), {'input_tokens': 1}), 0)
+
     def test_an_api_keys_budget_is_a_window_in_dollars(self):
         key = Account('K', 'openai_api', ANN, budget=40.0, windows=('budget',))
         periods = {'K': {'budget': Period(cost={CAT: 2.0, ANN: 12.0})}}
@@ -597,7 +605,7 @@ def settings(**values):
     return AsyncMock(side_effect=lambda key, default=None: stored.get(key, default))
 
 
-class EnforceTests(MeteringCase):
+class EnforceCase(MeteringCase):
     """Phase 4: in enforce, requests are served as the engine decides.
 
     Two $20 OpenAI keys, A (the owner's) and B (another member's), each a weight-1 window; three
@@ -663,6 +671,8 @@ class EnforceTests(MeteringCase):
         models = [call.kwargs['json']['model'] for call in session.post.call_args_list]
         return answer, keys, models
 
+
+class EnforceTests(EnforceCase):
     async def test_the_owner_is_served_by_their_own_account(self):
         answer, keys, _ = await self.ask(OWNER, [Response(chat_reply('Hi'))])
         self.assertEqual(keys, ['key-a'])

@@ -21,7 +21,7 @@ from open_webui.models.provider_accounts import (
     seal_secret,
 )
 from open_webui.models.users import Users
-from open_webui.utils import allowance_gate, codex_accounts, metering
+from open_webui.utils import allowance_gate, codex_accounts, credits, metering
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.provider_accounts import (
     TEAM,
@@ -106,6 +106,12 @@ class OverrideForm(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class MultipliersForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # {provider: {plan: multiplier}}
+    multipliers: dict[str, dict[str, float]]
+
+
 class AutoResetForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
     enabled: bool
@@ -183,6 +189,33 @@ async def allowance_report(days: int = 7, user=Depends(get_admin_user)):
         'decided': await allowance_gate.summary(days),
         'replay': await allowance_gate.replay(days),
     }
+
+
+@router.get('/credits')
+async def my_credits(user=Depends(get_verified_user)):
+    """Mologate: the member's credit balance, what earned it and how it was spent (phase 5)."""
+    from open_webui.models.credits import Credits
+
+    return {
+        'balance': await Credits.balance(user.id),
+        'grants': await Credits.grants(user.id),
+        'entries': await Credits.entries(user.id),
+        'multipliers': await credits.multipliers(),
+        'per_dollar': credits.CREDITS_PER_DOLLAR,
+    }
+
+
+@router.put('/credits/multipliers')
+async def set_multipliers(form: MultipliersForm, user=Depends(get_admin_user)):
+    """Mologate: the plan multipliers credits are granted by (10 credits per 1x)."""
+    table = {
+        provider: {plan: value for plan, value in plans.items() if 0 <= value <= 1000}
+        for provider, plans in form.multipliers.items()
+        if provider in ('codex', 'zai')
+    }
+    await Config.upsert({'mologate.credit_multipliers': table})
+    log.info('Credit multipliers changed by %s.', user.id)
+    return await credits.multipliers()
 
 
 @router.get('/overrides')
@@ -333,6 +366,8 @@ async def create_api_account(request: Request, form: ApiAccountForm, user=Depend
     except IntegrityError:
         raise HTTPException(409, 'This provider key is already connected.') from None
     await refresh_account_limits(account, getattr(request.app.state, 'redis', None))
+    # Mologate: a Z.ai coding plan earns its credits now; an API key earns them as it is spent.
+    await credits.ensure_grant(account)
     return account
 
 
@@ -402,5 +437,7 @@ async def delete_account(account_id: str, user=Depends(get_verified_user)):
     account = await owned_account(account_id, user)
     if account.provider == 'codex':
         await codex_accounts.disconnect(account)
+    # Mologate: the account's unspent credits go with it (phase 5).
+    await credits.forfeit(account)
     await ProviderAccounts.delete(account.id)
     return True
