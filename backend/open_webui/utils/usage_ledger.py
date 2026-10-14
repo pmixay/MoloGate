@@ -128,9 +128,30 @@ async def _write(values: dict, served_by, model_id: str, numbers: dict, decision
             values['decision'] = await decision_of(decision)
         if served_by is not None:
             values['cost'], values['cost_source'] = await request_cost(served_by, model_id, numbers)
-        await UsageEvents.insert(**values)
+        row_id = await UsageEvents.insert(**values)
     except Exception as e:
         log.warning('Could not write a usage ledger row: %s', e)
+        return
+    if served_by is not None:
+        await _settle_credits(row_id, values, served_by, model_id, numbers)
+
+
+async def _settle_credits(row_id: str, values: dict, served_by, model_id: str, numbers: dict) -> None:
+    """Mologate: credits (phase 5). The key's owner earns from what the request cost; a request
+    served in tier 3 is charged to its member."""
+    from open_webui.utils import credits
+
+    try:
+        await credits.earn(served_by, values.get('cost'), row_id)
+        if values.get('tier') == 'credit':
+            charge = await credits.request_credits(
+                served_by, values.get('decision'), model_id, numbers, values.get('cost')
+            )
+            if charge > 0:
+                charged = await credits.Credits.spend(values['user_id'], charge, row_id)
+                await UsageEvents.set_credits_charged(row_id, charged)
+    except Exception as e:
+        log.warning('Could not settle credits for a ledger row: %s', e)
 
 
 async def flush() -> None:

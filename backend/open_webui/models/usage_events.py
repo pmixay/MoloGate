@@ -3,7 +3,8 @@
 Rows hold token counts and, when known, the cost in USD: what the provider reported (OpenRouter),
 or an estimate from published prices (utils/model_prices.py). Prompts and replies are never stored.
 Metering (utils/metering.py) adds ``outside`` rows: rises in an account's window that Mologate's own
-requests do not explain, attributed to the owner. The credit columns are filled in phase 5.
+requests do not explain, attributed to the owner. ``credits_charged`` is what a tier-3 request cost
+its member in credits (phase 5, utils/credits.py).
 """
 
 import time
@@ -66,6 +67,14 @@ class UsageEventsTable:
             db.add(row)
             await db.commit()
         return row.id
+
+    async def set_credits_charged(self, event_id: str, credits: float) -> None:
+        async with get_async_db_context() as db:
+            row = await db.get(UsageEvent, event_id)
+            if row is not None:
+                row.credits_charged = credits
+                row.updated_at = int(time.time())
+                await db.commit()
 
     async def by_member(self, account_id: str, since: int) -> list[dict]:
         """Each member's requests, tokens and cost on an account since a time."""

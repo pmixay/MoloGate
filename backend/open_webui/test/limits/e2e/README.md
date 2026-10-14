@@ -16,6 +16,8 @@ E2E_DIR=/tmp/mologate-e2e DATA_DIR=/tmp/mologate-e2e/data WEBUI_SECRET_KEY=e2e-s
   PYTHONPATH=../../../.. python drive.py enforce
 ./server.sh start observe                       # same data, observe mode
 python drive.py observe
+./server.sh start enforce fresh                 # credits (phase 5), from a fresh team
+python drive.py credits
 ./server.sh stop
 ```
 
@@ -25,4 +27,6 @@ header); failover within the pool tier, and from a limited own account to the po
 per-account cap with three requests at once; the pool spent until the refusal says when it frees
 up and offers Claude Haiku on Anthropic; and the owner still on their locked reserve.
 `drive.py observe` checks that the same member is served as asked, with the decision only
-recorded.
+recorded. `drive.py credits` checks that Dan's Z.ai Max plan earns 200 credits, that money spent
+through a key earns its owner 0.5 a dollar, that past his share Dan keeps GPT-6 on credits and is
+charged for it, and that disconnecting the plan forfeits the rest.

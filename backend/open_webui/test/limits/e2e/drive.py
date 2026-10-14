@@ -313,8 +313,99 @@ def observe_run():
     )
 
 
+def my_credits(token):
+    return requests.get(
+        MOLOGATE + '/api/v1/provider-accounts/credits', headers={'Authorization': 'Bearer ' + token}
+    ).json()
+
+
+def credits_run():
+    """Phase 5: credits earned through a key, granted for a subscription, spent past the share and
+    forfeited on disconnect. Both owners stay idle, so the pool is 150 units and each share 37.5."""
+    state = setup()
+    users, accounts = state['users'], state['accounts']
+    owner_of = {'key-a': 'ann', 'key-b': 'bob'}
+    for user in users.values():
+        requests.get(MOLOGATE + '/api/models', headers={'Authorization': 'Bearer ' + user['token']})
+    control(**{key: {'mode': 'ok', 'cost': 4.0, 'delay': 0} for key in ('key-a', 'key-b', 'key-c')})
+    calls_since()
+
+    view = my_credits(users['dan']['token'])
+    check(
+        'C1 a Z.ai Max plan earns 200 credits when connected',
+        view['balance'] == 200
+        and [(g['provider'], g['plan'], g['amount']) for g in view['grants']] == [('zai', 'max', 200)],
+        json.dumps(view)[:300],
+    )
+
+    # Cat spends $4 through a member's key: its owner earns 2 credits.
+    status, _, _ = chat(users['cat']['token'])
+    key = calls_since()['calls'][-1]['key']
+    time.sleep(1)
+    earned = my_credits(users[owner_of[key]]['token'])
+    check(
+        'C2 a key earns its owner 0.5 credits per dollar spent through it',
+        status == 200 and earned['balance'] == 2 and earned['grants'][0]['plan'] == 'api',
+        f'key={key} balance={earned["balance"]}',
+    )
+    check('C2 the member who spent earns nothing', my_credits(users['cat']['token'])['balance'] == 0)
+
+    # Dan: $8 (40 units) puts him past his 37.5; his 200 credits then keep GPT-6 for him.
+    control(**{key: {'mode': 'ok', 'cost': 8.0, 'delay': 0} for key in ('key-a', 'key-b')})
+    chat(users['dan']['token'])
+    calls_since()
+    time.sleep(CACHE_WAIT)
+    start = int(time.time())
+    status, body, _ = chat(users['dan']['token'])
+    calls = calls_since()['calls']
+    time.sleep(1)
+    with sqlite3.connect(DB) as db:
+        row = db.execute(
+            'SELECT tier, model_id, credits_charged FROM usage_event WHERE user_id = ? AND ts >= ? AND status = ? '
+            'ORDER BY created_at DESC',
+            (users['dan']['id'], start, 'ok'),
+        ).fetchone()
+    balance = my_credits(users['dan']['token'])['balance']
+    check(
+        'C3 past the share, credits pay for the big model (tier credit)',
+        status == 200 and calls[-1]['model'] == 'gpt-6' and row and row[0] == 'credit',
+        f'calls={[c["model"] for c in calls]} row={row}',
+    )
+    check(
+        'C3 charged 40 units / (0.4% of 150) = 66.67 credits',
+        row and abs(row[2] - 40 / 0.6) < 0.01 and abs(balance - (200 - 40 / 0.6)) < 0.01,
+        f'charged={row and row[2]} balance={balance}',
+    )
+    allowance = standing(users['dan']['token']).get('allowance') or {}
+    check(
+        'C3 the context indicator shows the balance',
+        abs(allowance.get('credits', 0) - balance) < 0.01,
+        str(allowance.get('credits')),
+    )
+
+    # Disconnecting the plan forfeits what is left of its credits; past the share is worker again.
+    deleted = requests.delete(
+        MOLOGATE + f'/api/v1/provider-accounts/{accounts["Z"]}',
+        headers={'Authorization': 'Bearer ' + users['dan']['token']},
+    )
+    view = my_credits(users['dan']['token'])
+    check(
+        'C4 disconnecting forfeits the unspent credits',
+        deleted.status_code == 200 and view['balance'] == 0 and view['grants'][0]['forfeited_at'],
+        f'status={deleted.status_code} balance={view["balance"]}',
+    )
+    time.sleep(CACHE_WAIT)
+    status, _, _ = chat(users['dan']['token'])
+    calls = calls_since()['calls']
+    check(
+        'C4 without credits, past the share is the worker model',
+        status == 200 and calls[-1]['model'] == 'gpt-luna-6',
+        str(calls),
+    )
+
+
 if __name__ == '__main__':
-    {'enforce': enforce_run, 'observe': observe_run}[sys.argv[1]]()
+    {'enforce': enforce_run, 'observe': observe_run, 'credits': credits_run}[sys.argv[1]]()
     failed = [name for name, ok in results if not ok]
     print(f'\n{len(results) - len(failed)} passed, {len(failed)} failed')
     sys.exit(1 if failed else 0)

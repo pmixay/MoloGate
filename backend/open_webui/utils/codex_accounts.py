@@ -107,7 +107,13 @@ async def sync_account(account, summary: dict | None, models: list | None = None
         values['models'] = models
     if not values:
         return account
-    return await ProviderAccounts.update(account.id, values) or account
+    updated = await ProviderAccounts.update(account.id, values) or account
+    if 'plan' in values:
+        # Mologate: a plan read only now still earns its connect credits (phase 5), once.
+        from open_webui.utils import credits
+
+        await credits.ensure_grant(updated)
+    return updated
 
 
 async def account_secret(account) -> dict:
@@ -409,8 +415,12 @@ async def _finalize(attempt, redis=None):
         values = {'status': 'ok', 'last_error': None}
         if summary.get('planType'):
             values['plan'] = summary['planType']
-        await ProviderAccounts.update(existing.id, values)
+        updated = await ProviderAccounts.update(existing.id, values)
         await record_summary(redis, existing.id, summary)
+        # Mologate: a plan read only now still earns the account its connect credits, once (phase 5).
+        from open_webui.utils import credits
+
+        await credits.ensure_grant(updated or existing)
         await _finish(attempt.id, 'completed', account_id=existing.id)
         log.info('ChatGPT account %s reconnected.', existing.id)
         return
@@ -443,6 +453,10 @@ async def _finalize(attempt, redis=None):
         return
     await _best_effort(codex_lb.set_alias(lb_id, account.label))
     await record_summary(redis, account.id, summary)
+    # Mologate: credits for adding the account to the pool, once ever per ChatGPT account (phase 5).
+    from open_webui.utils import credits
+
+    await credits.ensure_grant(account)
     await _finish(attempt.id, 'completed', account_id=account.id)
     log.info('ChatGPT account %s connected by user %s.', account.id, attempt.owner_user_id)
 

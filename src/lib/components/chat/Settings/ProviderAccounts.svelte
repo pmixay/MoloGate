@@ -18,6 +18,7 @@
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import ProviderOverrides from './ProviderOverrides.svelte';
+	import ProviderCredits from './ProviderCredits.svelte';
 	// Mologate: the same wording as the chat's limits panel ("Weekly limit", "Monthly budget").
 	import {
 		amountText,
@@ -900,6 +901,9 @@
 				</ul>
 			</section>
 		{/if}
+
+		<!-- Mologate: the member's credits; admins also edit the plan multipliers (phase 5). -->
+		<ProviderCredits {buttonClass} {providers} {planName} />
 
 		<!-- Mologate: admin and team overrides of the fair-use share, with their history. -->
 		{#if $user?.role === 'admin'}

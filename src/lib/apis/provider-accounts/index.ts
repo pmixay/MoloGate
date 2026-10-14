@@ -136,3 +136,19 @@ export type LimitOverride = {
 	revoked_by_name: string | null;
 	created_at: number;
 };
+
+// Mologate: a member's credits (phase 5): 10 x the plan multiplier for each subscription they
+// added, 0.5 per dollar spent through their API keys, spent past their share of the pool.
+export type MyCredits = {
+	balance: number;
+	grants: {
+		provider: string;
+		plan: string;
+		amount: number;
+		granted_at: number;
+		forfeited_at: number | null;
+	}[];
+	entries: { delta: number; reason: 'grant' | 'spend' | 'forfeit' | 'admin'; ts: number }[];
+	multipliers: Record<string, Record<string, number>>;
+	per_dollar: number;
+};

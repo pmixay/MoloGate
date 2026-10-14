@@ -5,6 +5,7 @@ import json
 import sys
 
 from open_webui.models.provider_accounts import ProviderAccounts
+from open_webui.utils import credits
 
 BASE = 'http://127.0.0.1:8199/v1'
 
@@ -38,6 +39,21 @@ async def main(owners):
             models=models(*ids),
         )
         created[name] = account.id
+    # Dan's Z.ai coding plan (Max, 20x), granted its credits the way connecting it does.
+    coding = await ProviderAccounts.insert(
+        owner_user_id=owners['dan'],
+        provider='zai',
+        plan='max',
+        external_account_id='fingerprint-key-z',
+        secret={'api_key': 'key-z', 'base_url': BASE},
+        sharing='shared',
+        capacity_weight=1,
+        budget=None,
+        status='ok',
+        models=[{'id': 'glm-5.3-flash', 'name': 'GLM-5.3 Flash'}],
+    )
+    await credits.ensure_grant(coding)
+    created['Z'] = coding.id
     print(json.dumps(created))
 
 

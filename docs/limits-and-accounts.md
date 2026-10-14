@@ -239,13 +239,15 @@ from §8: no tokens, their `units` and `window` set, `tier` `owner_outside`, and
 `user_id` (empty for a team account). Until the allowance engine assigns tiers, a request row's
 tier says only whose account served it: `reserve` for the owner, `pool` for anyone else.
 
-**`credit_grant`**
+**`credit_grant`** (migration `b6d1e8f3a2c7`)
 `id`, `user_id`, `provider`, `external_account_id`, `plan`, `amount`, `granted_at`, `forfeited_at`.
-Unique: (`provider`, `external_account_id`), which is what stops credit farming.
+Unique: (`provider`, `external_account_id`), which is what stops credit farming. A subscription's
+`amount` is set once; an API key's grows with the money spent through it.
 
-**`credit_entry`** (append-only balance changes)
+**`credit_entry`** (append-only balance changes; migration `b6d1e8f3a2c7`)
 `id`, `user_id`, `delta`, `reason` (`grant` | `spend` | `forfeit` | `admin`), `usage_event_id`,
-`ts`.
+`grant_id` (the grant a grant or forfeit entry belongs to), `ts`. A member's balance is the sum of
+their entries.
 
 **`limit_override`** (migration `a3f6c9d2b8e4`)
 `id`, `user_id` (empty for a team override: every member gets it), `granted_by`, `extra_points`,
@@ -367,7 +369,7 @@ Where this section is silent, the engine does the following:
   Haiku for Anthropic, Flash for Z.ai, Luna for OpenRouter (the newest of the family, as the
   default system model is found). The `mologate.worker_models` setting, `{provider: family}`,
   changes them. A worker model asked for within the share is plain pool use.
-- Credits are zero until Phase 5. Overrides in force add their points to `extra_u` (§7.7).
+- Credits (§7.8) and overrides in force (§7.7) add their points to `extra_u`.
 
 `utils/allowance_gate.py` runs it on every request a provider account serves, beside the
 request: it never slows or fails one. The pool's numbers are shared for 15 seconds. The decision
@@ -459,6 +461,40 @@ With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_
   on the API path into a 400, so a limit error now keeps its 429 (or 402).
 - **Not shown yet:** the panel lists an API key's budget only on the accounts page; for a key the
   "Fair use" share is what the panel shows.
+
+### 7.8 Credits (Phase 5)
+
+`utils/credits.py` and `models/credits.py`.
+
+- **Subscriptions** earn their owner `10 × multiplier` credits when connected, once ever per
+  provider account (decision 8): a ChatGPT account when codex-lb reports its plan, at connect or
+  later, a Z.ai coding plan when it is added or an admin corrects its plan. The multipliers are a
+  table admins edit in Settings → Provider accounts → Credits (`mologate.credit_multipliers`,
+  `PUT /api/v1/provider-accounts/credits/multipliers`). Defaults: ChatGPT Plus, Business, Team,
+  Enterprise and Edu 1, Pro Lite 5, Pro 20; Z.ai Coding Lite 1, Pro 5, Max 20. A plan without a
+  multiplier earns nothing until an admin adds one; a changed table applies to accounts granted
+  after the change.
+- **API keys** earn their owner 0.5 credits for each dollar anyone spends through them, when the
+  ledger writes the request's cost. Free models (cost 0) earn nothing; team accounts earn nobody
+  anything. Requests through a key at the same time all count.
+- **Spending:** a request served in tier 3 (`enforce` only) is charged
+  `credits_for(units, C)` in the weekly window, or the budget window of an API key: the whole
+  request, since a tier-3 request is past the share. Units come from the calibration, or before
+  it from the request's part of the account's rise. The charge is written on the ledger row
+  (`credits_charged`) and never takes a balance below zero; one member's charges are made one at
+  a time.
+- **Disconnecting** forfeits what the member got from that account and has not spent, as far as
+  the balance still holds it. Reconnecting never grants again.
+- **What the member sees:** the balance and what earned or used it under "Credits" in Settings →
+  Provider accounts (`GET /api/v1/provider-accounts/credits`), and the balance in the context
+  indicator's panel. The live gate passes the balance to `build_state(credits=...)`.
+- **Tested:** `test/limits/test_credits.py` (grants once per provider account, multipliers, an
+  admin's table, team accounts, earning through a key, free models, requests at once, spending in
+  tier 3 and its charge, spending at once, forfeits on disconnect, the migration), and in the
+  running app (`test/limits/e2e`, `drive.py credits`): a Z.ai Max plan earns 200, $4 through a
+  key earns its owner 2, a member past the share keeps GPT-6 on credits and is charged 66.67 for
+  40 units of a 150-unit pool, disconnecting forfeits the rest, and then past the share is the
+  worker model again.
 
 ---
 
@@ -615,7 +651,7 @@ requests, tokens and cost from the ledger (this week for a subscription, this mo
 header. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
 loan (decision 3) is not shown yet.
 
-**Disconnecting:** unspent credits from that account's grant are forfeited (`credit_entry.forfeit`).
+**Disconnecting:** unspent credits from that account's grant are forfeited (a `forfeit` entry, §7.8).
 Reconnecting the same account doesn't grant again.
 
 ---
@@ -773,8 +809,9 @@ deployed site.
 
 ### Phase 5: credits and resets
 
-- [ ] Grants on connect (a subscription's), and for API keys as money is spent through them
-      (decision 7); forfeit on disconnect, spending in tier 3, balance in the UI.
+- [x] Grants on connect (a subscription's), and for API keys as money is spent through them
+      (decision 7); forfeit on disconnect, spending in tier 3, balance in the UI. Done
+      (2026-10-14, §7.8): tested in the running app as well as by the suite.
 - [x] Automatic limit reset (§10), with a global off switch for any member.
 - [ ] Done when: an automatic reset is redeemed on a real account once every account is empty,
       and the windows refill.
@@ -872,6 +909,12 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   the pool); a coupon reset is tried at tier 5 only for accounts the provider reported used up;
   a team override is a `limit_override` without a member and applies to everyone; a request
   waits up to 2 minutes for a busy account; a gate that cannot decide lets the request through.
+- 2026-10-14: Phase 5 choices where the spec was silent: default multipliers as in §7.8 (Z.ai
+  from its published plan sizes, Pro 5× Lite and Max 4× Pro); a ChatGPT plan read only after
+  connecting still earns its grant, once; a tier-3 request is charged for all its units in the
+  weekly window (or a key's budget); a forfeit takes what the account gave the member and is
+  still in their balance; an API key's grant stays with the key, and its earnings go to whoever
+  owns the key now.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

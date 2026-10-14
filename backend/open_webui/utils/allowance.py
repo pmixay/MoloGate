@@ -390,6 +390,17 @@ def member_units(account: Account, name: str, period: Period, calibration: dict 
     return {user_id: observed * value / total for user_id, value in weighted.items()}
 
 
+def request_units(account: Account, period: Period | None, tokens: dict) -> float:
+    """One request's units in an account window before calibration: its part of the account's
+    rise (less outside use), by weighted tokens, the request itself counted in."""
+    if period is None or period.used is None:
+        return 0.0
+    own = _weighted({'request': tokens})
+    total = sum(_weighted(by_model) for by_model in period.tokens.values()) + own
+    observed = max(0.0, period.used * (account.weight or 1.0) - sum(period.outside.values()))
+    return observed * own / total if total else 0.0
+
+
 def build_state(
     user_id: str,
     provider: str,

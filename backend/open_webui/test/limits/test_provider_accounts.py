@@ -38,6 +38,7 @@ from open_webui.models.provider_accounts import (
 )
 from open_webui.models.usage_events import UsageEvent
 from open_webui.models.limit_overrides import LimitOverride
+from open_webui.models.credits import CreditEntry, CreditGrant
 from open_webui.routers import openai, provider_accounts as routes
 from open_webui.utils import codex_accounts, codex_lb, provider_account_proxy as proxy, usage_ledger
 from open_webui.utils.codex_lb import CodexLBError
@@ -77,6 +78,8 @@ TABLES = (
     LimitResetEvent.__table__,
     UsageEvent.__table__,
     LimitOverride.__table__,
+    CreditGrant.__table__,
+    CreditEntry.__table__,
 )
 
 
