@@ -19,6 +19,7 @@ from open_webui.models.access_grants import AccessGrants, has_public_write_acces
 from open_webui.models.channels import Channels
 from open_webui.models.config import Config
 from open_webui.models.folders import Folders
+from open_webui.utils import task_limits
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.automations import (
@@ -28,6 +29,7 @@ from open_webui.utils.automations import (
     rrule_interval_seconds,
     validate_rrule,
 )
+from open_webui.utils.timers import count_active_schedules
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -66,8 +68,36 @@ def check_automation_access(automation, user):
         )
 
 
-async def check_automation_limits(request, user, rrule_str: str, db, is_create: bool = False):
-    """Enforce global automation limits. Admins bypass all checks."""
+async def check_automation_limits(
+    request, user, rrule_str: str, db, is_create: bool = False, activating: Optional[bool] = None
+):
+    """Enforce global automation limits. Admins bypass all checks.
+
+    Mologate: except the task limits, which apply to everyone: active automations count against
+    ``schedules_per_user`` together with scheduled tasks (checked when one is created or turned on;
+    ``activating`` defaults to ``is_create``), and runs can't repeat faster than
+    ``schedule_interval_seconds``.
+    """
+    if activating if activating is not None else is_create:
+        limit = await task_limits.get('schedules_per_user')
+        active = await count_active_schedules(user.id)
+        if active >= limit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f'You already have the most automations and scheduled tasks allowed at once ({limit}). '
+                    'Turn one off first.'
+                ),
+            )
+    floor = await task_limits.get('schedule_interval_seconds')
+    runs = await next_n_runs_ns(rrule_str, n=10)
+    gaps = [(later - earlier) // 1_000_000_000 for earlier, later in zip(runs, runs[1:])]
+    if gaps and min(gaps) < floor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.AUTOMATION_TOO_FREQUENT(floor),
+        )
+
     if user.role == 'admin':
         return
 
@@ -223,7 +253,9 @@ async def create_new_automation(
             detail=str(e),
         )
 
-    await check_automation_limits(request, user, form_data.data.rrule, db, is_create=True)
+    await check_automation_limits(
+        request, user, form_data.data.rrule, db, is_create=True, activating=form_data.is_active is not False
+    )
 
     tz = user.timezone
     automation = await Automations.insert(user.id, form_data, await next_run_ns(form_data.data.rrule, tz=tz), db=db)
@@ -283,7 +315,14 @@ async def update_automation_by_id(
             detail=str(e),
         )
 
-    await check_automation_limits(request, user, form_data.data.rrule, db, is_create=False)
+    await check_automation_limits(
+        request,
+        user,
+        form_data.data.rrule,
+        db,
+        is_create=False,
+        activating=bool(form_data.is_active) and not automation.is_active,
+    )
 
     tz = user.timezone
     updated = await Automations.update_by_id(id, form_data, await next_run_ns(form_data.data.rrule, tz=tz), db=db)
@@ -313,6 +352,8 @@ async def toggle_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     check_automation_access(automation, user)
+    if not automation.is_active:
+        await check_automation_limits(request, user, automation.data['rrule'], db, activating=True)
     toggled = await Automations.toggle(id, await next_run_ns(automation.data['rrule'], tz=user.timezone), db=db)
     response = await enrich_automation(toggled, db, tz=user.timezone)
     await publish_event(

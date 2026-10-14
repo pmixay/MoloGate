@@ -87,7 +87,6 @@ from open_webui.tools.builtin import (
     search_notes,
     search_web,
     send_message,
-    timer,
     toggle_automation,
     update_automation,
     update_calendar_event,
@@ -669,7 +668,9 @@ async def get_builtin_tools(
         and getattr(request.state, 'direct', False) is not True
     ):
         if getattr(request.state, 'internal', False) is not True:
-            builtin_functions.extend([delegate_task, timer, list_agents, send_message])
+            from open_webui.tools.builtin import schedule_task
+
+            builtin_functions.extend([delegate_task, schedule_task, list_agents, send_message])
         else:
             # Mologate: sub-agents message the main agent and each other (utils/agent_messages.py).
             builtin_functions.extend([list_agents, send_message])

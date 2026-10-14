@@ -1720,16 +1720,64 @@ async def timer(
     :param cancel_on: Optional events that cancel the timer before it fires
     :return: JSON status with the scheduled time, or an error string
     """
+    # Mologate: legacy, no longer offered; schedule_task replaced it.
+    return await schedule_task(
+        prompt,
+        at=at,
+        cancel_on=cancel_on,
+        __request__=__request__,
+        __user__=__user__,
+        __metadata__=__metadata__,
+        __chat_id__=__chat_id__,
+        __message_id__=__message_id__,
+    )
+
+
+async def schedule_task(
+    prompt: str,
+    at: str = '',
+    every: str = '',
+    max_runs: int | None = None,
+    until: str = '',
+    name: str = '',
+    cancel_on: list[Literal['chat.read', 'chat.user_message']] | None = None,
+    __request__: Request = None,
+    __user__: dict = None,
+    __metadata__: dict = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Run a prompt in this chat later, once or repeating. Each run is a new turn in this chat that starts
+    with the prompt, so write it as an instruction to yourself. Runs never overlap: a run waits while the
+    chat is busy, and one that would run into the next is skipped.
+
+    :param prompt: What to do on each run, as an instruction to yourself
+    :param at: When to run (first): a relative time like 10m, 2h, 1d, or a timezone-aware RFC 3339 timestamp.
+        A repeating task starts one interval from now by default
+    :param every: How often to repeat, like 2h, 1d or 7d; empty for a one-off. The shortest allowed repeat
+        is set by the admin (an hour by default)
+    :param max_runs: Stop after this many runs (repeating tasks only)
+    :param until: Stop repeating after this time, relative or RFC 3339 (at most 90 days ahead by default)
+    :param name: A short name for the task
+    :param cancel_on: Events that cancel the task: chat.read (the user opens this chat) or chat.user_message
+        (the user writes in it)
+    :return: JSON with the task id (for task_status and cancel_task) and the next run, or an error
+    """
     if __request__ is None:
         return 'Error: request context not available.'
     if getattr(__request__.state, 'internal', False) is True:
-        return 'Error: timers cannot be set from internal chats.'
+        return 'Error: tasks cannot be scheduled from internal chats.'
 
-    from open_webui.utils.timers import create_timer
+    from open_webui.utils.timers import create_schedule
 
-    return await create_timer(
+    return await create_schedule(
         prompt=prompt,
         at=at,
+        every=every,
+        max_runs=max_runs,
+        until=until,
+        name=name,
         cancel_on=cancel_on,
         request=__request__,
         user_data=__user__ or {},
@@ -3708,11 +3756,13 @@ async def create_automation(
     - Every day at 9am: "DTSTART:20250101T090000\\nRRULE:FREQ=DAILY"
     - Every Monday at 8am: "DTSTART:20250106T080000\\nRRULE:FREQ=WEEKLY;BYDAY=MO"
     - Every hour: "RRULE:FREQ=HOURLY;INTERVAL=1"
-    - Every 30 minutes: "RRULE:FREQ=MINUTELY;INTERVAL=30"
+    - Every 6 hours: "RRULE:FREQ=HOURLY;INTERVAL=6"
     - Once at a specific time: "DTSTART:20250415T140000\\nRRULE:FREQ=DAILY;COUNT=1"
     - First day of every month: "DTSTART:20250101T090000\\nRRULE:FREQ=MONTHLY;BYMONTHDAY=1"
 
     The DTSTART time should reflect the desired execution time. Use COUNT=1 for one-time automations.
+    The shortest allowed repeat is set by the admin (an hour by default), and active automations count
+    toward the same per-user limit as scheduled tasks.
 
     :param name: A short descriptive name for the automation
     :param prompt: The prompt/instructions to execute on each run
