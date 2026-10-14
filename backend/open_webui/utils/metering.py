@@ -50,7 +50,8 @@ _last: dict[tuple[str, str], dict] = {}
 _locks: dict[tuple[str, str], asyncio.Lock] = {}
 _tasks: set = set()
 _calibrations: dict[tuple[str, str], dict] = {}
-_calibrations_read = 0.0
+# When calibrations were last read (time.monotonic()); None until the first read.
+_calibrations_read: float | None = None
 
 
 async def enabled() -> bool:
@@ -158,7 +159,7 @@ async def flush() -> None:
 async def calibrations(refresh: bool = False) -> dict[tuple[str, str], dict]:
     """Each provider window's latest fit, {(provider, window): values}."""
     global _calibrations_read
-    if refresh or time.monotonic() - _calibrations_read > CALIBRATION_CACHE_SECONDS:
+    if refresh or _calibrations_read is None or time.monotonic() - _calibrations_read > CALIBRATION_CACHE_SECONDS:
         try:
             rows = await Metering.calibrations()
         except Exception as e:

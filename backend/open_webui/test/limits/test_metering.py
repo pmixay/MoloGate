@@ -215,7 +215,7 @@ class MeteringCase(DatabaseCase):
         metering._last.clear()
         metering._locks.clear()
         metering._calibrations.clear()
-        metering._calibrations_read = 0.0
+        metering._calibrations_read = None
 
     async def asyncTearDown(self):
         await metering.flush()
