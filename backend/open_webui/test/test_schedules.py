@@ -722,6 +722,22 @@ class AutomationLimitsTest(unittest.IsolatedAsyncioTestCase):
         await automation_routes.check_automation_limits(None, self.admin, 'RRULE:FREQ=HOURLY', None, is_create=True)
         automation_routes.count_active_schedules.assert_awaited_once_with('admin')
 
+    async def test_the_agent_cannot_turn_one_back_on_past_the_shared_count(self):
+        from open_webui.models.users import Users
+        from open_webui.tools.builtin import toggle_automation
+
+        automation_routes.count_active_schedules.return_value = LIMITS['schedules_per_user']
+        toggle = AsyncMock()
+        with (
+            patch.object(Automations, 'get_by_id', AsyncMock(return_value=automation(is_active=False))),
+            patch.object(Automations, 'toggle', toggle),
+            patch.object(Users, 'get_user_by_id', AsyncMock(return_value=SimpleNamespace(id='u1', role='user'))),
+        ):
+            result = json.loads(await toggle_automation('auto', __request__=object(), __user__={'id': 'u1'}))
+
+        self.assertIn('Turn one off first', result['error'])
+        toggle.assert_not_awaited()
+
 
 def automation(**changes):
     values = {

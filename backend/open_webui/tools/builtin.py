@@ -4056,6 +4056,14 @@ async def toggle_automation(
             return JSONCodec.dumps({'error': 'Access denied'})
 
         rrule = automation.data.get('rrule', '')
+        if not automation.is_active:
+            # Mologate: turning one back on counts against the shared schedule limits, as in the router.
+            from open_webui.routers.automations import check_automation_limits
+
+            try:
+                await check_automation_limits(__request__, user, rrule, None, activating=True)
+            except HTTPException as e:
+                return JSONCodec.dumps({'error': e.detail})
         toggled = await Automations.toggle(
             automation_id,
             await next_run_ns(rrule, tz=user.timezone if user else None),
