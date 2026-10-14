@@ -1,3 +1,6 @@
+# Mologate: off. This is Open WebUI's release of the `open-webui` package to PyPI. Mologate ships as
+# Docker images (docker.yaml) and has no PyPI project, so every push to main failed here with
+# `invalid-publisher`. Renamed to .disabled, like the other upstream workflows the fork does not run.
 name: Release to PyPI
 
 on:
