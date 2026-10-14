@@ -85,8 +85,8 @@ async def check_automation_limits(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    f'{active} automations and scheduled tasks are already active for you, the most allowed is '
-                    f'{limit}. Turn one off first.'
+                    f'You already have the most automations and scheduled tasks allowed at once ({limit}). '
+                    'Turn one off first.'
                 ),
             )
     floor = await task_limits.get('schedule_interval_seconds')

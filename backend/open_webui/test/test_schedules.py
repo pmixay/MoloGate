@@ -636,7 +636,10 @@ class CreateScheduleTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_shared_per_member_cap(self):
         timers.count_active_schedules.return_value = LIMITS['schedules_per_user']
         result = await self.create(every='1h')
-        self.assertTrue(result.startswith('Error: 10 scheduled tasks and automations are already active'))
+        self.assertEqual(
+            result.split(' Cancel')[0],
+            'Error: you already have the most scheduled tasks and automations allowed at once (10).',
+        )
         self.insert.assert_not_awaited()
 
 

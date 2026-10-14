@@ -358,8 +358,8 @@ async def create_schedule(
     active = await count_active_schedules(user_id)
     if active >= limits['schedules_per_user']:
         return (
-            f'Error: {active} scheduled tasks and automations are already active for you, the most allowed is '
-            f'{limits["schedules_per_user"]}. Cancel one (cancel_task) or turn off an automation first.'
+            f'Error: you already have the most scheduled tasks and automations allowed at once '
+            f'({limits["schedules_per_user"]}). Cancel one (cancel_task) or turn off an automation first.'
         )
 
     title = (name or '').strip()[:200] or prompt.splitlines()[0][:60]
