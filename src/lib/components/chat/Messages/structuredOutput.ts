@@ -419,10 +419,12 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			return;
 		}
 
+		// Mologate: while ask_user waits for the answer, the card above the message box asks it, so
+		// the call only shows once it has a result (in a temporary chat it runs, not "pending").
 		if (
 			item.type === 'function_call' &&
 			item.name === 'ask_user' &&
-			(item.status === 'pending' || item.status === 'in_progress')
+			!toolOutputByCallId[item.call_id ?? item.id ?? '']
 		) {
 			return;
 		}

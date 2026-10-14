@@ -4,6 +4,8 @@
 	import type { i18n as i18nType } from 'i18next';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
+	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
+	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
 
 	const i18n: Writable<i18nType> = getContext('i18n');
 	const dispatch = createEventDispatcher();
@@ -264,41 +266,45 @@
 			{/if}
 
 			<div class="flex items-center justify-between gap-2">
-				<div class="flex items-center gap-1.5">
-					<button
-						type="button"
-						class="rounded-full py-1 pr-2.5 text-xs text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-						on:click={cancel}
-					>
-						{$i18n.t('Cancel')}
-					</button>
-					<button
-						type="button"
-						class="rounded-full px-2.5 py-1 text-xs text-gray-500 transition-colors hover:text-gray-800 disabled:opacity-30 dark:text-gray-400 dark:hover:text-gray-100"
-						disabled={questionIndex === 0}
-						on:click={() => (questionIndex -= 1)}
-					>
-						{$i18n.t('Previous')}
-					</button>
+				<button
+					type="button"
+					class="rounded-full py-1 pr-2.5 text-xs text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+					on:click={cancel}
+				>
+					{$i18n.t('Cancel')}
+				</button>
+				<div class="flex items-center gap-0.5">
+					{#if questionIndex === questions.length - 1 || complete}
+						<button
+							type="button"
+							class="mr-1.5 rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
+							disabled={!complete}
+							on:click={() => submit()}
+						>
+							{$i18n.t('Submit answers')}
+						</button>
+					{/if}
+					{#if questions.length > 1}
+						<button
+							type="button"
+							class="flex size-7 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+							aria-label={$i18n.t('Previous')}
+							disabled={questionIndex === 0}
+							on:click={() => (questionIndex -= 1)}
+						>
+							<ChevronLeft className="size-4" strokeWidth="2" />
+						</button>
+						<button
+							type="button"
+							class="flex size-7 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-30 dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+							aria-label={$i18n.t('Next')}
+							disabled={questionIndex === questions.length - 1}
+							on:click={() => (questionIndex += 1)}
+						>
+							<ChevronRight className="size-4" strokeWidth="2" />
+						</button>
+					{/if}
 				</div>
-				{#if questionIndex < questions.length - 1}
-					<button
-						type="button"
-						class="rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 active:scale-[0.98] dark:bg-white dark:text-black"
-						on:click={() => (questionIndex += 1)}
-					>
-						{$i18n.t('Next')}
-					</button>
-				{:else}
-					<button
-						type="button"
-						class="rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-black"
-						disabled={!complete}
-						on:click={() => submit()}
-					>
-						{$i18n.t('Submit answers')}
-					</button>
-				{/if}
 			</div>
 		</div>
 	</section>

@@ -261,13 +261,27 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
     starts a new turn for it. The main agent can restart a finished sub-agent with a message, up to
     10 times, and the answer comes back as a reply. Sub-agents can message running sub-agents, but
     not restart finished ones. Messages show in both conversations as "Message from…" rows.
-- [ ] **Ask tool with a timer:**
-  - When the agent asks the user a question and gets no answer for more than a minute, the recommended
-    option is chosen automatically.
-  - A crossed-out-timer button turns the timer off, for when the user is still thinking.
-  - **Open WebUI today:** `ask_user` asks one to three questions with two or three options each,
-    and the first option is labelled Recommended. When its timeout (one to four minutes, two by
-    default) runs out, the question is cancelled instead of answered.
+- [x] **Ask tool:** the agent asks the user up to five questions in one call, each with up to five
+      options, and waits for the answers. There is no timer: the agent waits for the user's decision.
+  - **Open WebUI before:** `ask_user` asked one to three questions with two or three options each,
+    and the first option was labelled Recommended. When its timeout (one to four minutes, two by
+    default) ran out, the question was cancelled instead of answered.
+  - Done: `ask_user` takes one to five questions with two to five options each, and the model sees
+    those limits in the tool's schema. The first option is still labelled Recommended, and each
+    question also takes a typed answer unless the agent turns that off. The card above the message
+    box stays until the user answers or cancels, however long that takes, and comes back after a
+    reload; the timeout is gone from the tool, the card and the answer endpoint. With several
+    questions, numbered steps show which are answered, and any one can be reopened to change its
+    answer. The tool is on by default for every model (a model's Builtin Tools → Ask User switch
+    turns it off). It isn't offered in automations, channels or sub-agent runs, where nobody is
+    there to answer. In a temporary chat, which can't be resumed later, the question is asked
+    through the open tab and stops waiting if the tab closes.
+- [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
+  - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
+    panel above the message box lists it with "X out of N tasks completed", but only while a reply is
+    generating.
+  - Show the task in progress in the panel's header, with the number of tasks left.
+  - Keep the panel, collapsed to that line, while tasks remain after the reply ends.
 
 ### Tasks
 
@@ -287,12 +301,6 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
     chat. With the automations permission (off for members by default), `create_automation` runs a
     prompt once or on a recurring schedule; its limits (`AUTOMATION_MAX_COUNT`,
     `AUTOMATION_MIN_INTERVAL`) are unset by default. None of the proposed limits apply yet.
-- [ ] **Task checklist:** the agent's checklist shows the task in progress and how many are left.
-  - **Open WebUI today:** the `create_tasks` and `update_task` tools keep a checklist for the chat. A
-    panel above the message box lists it with "X out of N tasks completed", but only while a reply is
-    generating.
-  - Show the task in progress in the panel's header, with the number of tasks left.
-  - Keep the panel, collapsed to that line, while tasks remain after the reply ends.
 
 ### Browser
 
