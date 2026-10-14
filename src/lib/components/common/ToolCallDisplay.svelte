@@ -18,8 +18,9 @@
 	import XMark from '../icons/XMark.svelte';
 	import Image from './Image.svelte';
 	import FullHeightIframe from './FullHeightIframe.svelte';
-	import { settings } from '$lib/stores';
+	import { settings, showTasks } from '$lib/stores';
 	import { getChatSubagents } from '$lib/apis/chats';
+	import { chatTasks, findTask } from '$lib/components/chat/Tasks/tasksStore';
 	import PermissionPromptButtons from '$lib/components/chat/Messages/PermissionPromptButtons.svelte';
 
 	export let id: string = '';
@@ -193,6 +194,17 @@
 		}
 	};
 
+	// Mologate: a call that started a task links to it in the Tasks panel, while the panel lists it.
+	const TASK_TOOLS = ['delegate_task', 'monitor', 'schedule_task'];
+	$: startedTaskId = TASK_TOOLS.includes(attributes?.tool_name ?? '')
+		? (isDelegate && subagentChatId) ||
+			(typeof parsedResult?.task_id === 'string' ? parsedResult.task_id : '')
+		: '';
+	$: startedTask =
+		startedTaskId && chatId && $chatTasks.chatId === chatId
+			? findTask($chatTasks.tasks, startedTaskId)
+			: null;
+
 	const toggleOpen = () => {
 		open = !open;
 	};
@@ -294,6 +306,18 @@
 					>
 						{$i18n.t('Open conversation')}
 					</a>
+				{/if}
+
+				{#if startedTask}
+					<button
+						type="button"
+						class="shrink-0 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline"
+						on:click|stopPropagation={() =>
+							startedTask && showTasks.set({ taskId: startedTask.id })}
+						on:keydown|stopPropagation
+					>
+						{$i18n.t('Show in Tasks')}
+					</button>
 				{/if}
 
 				<!-- Chevron -->
