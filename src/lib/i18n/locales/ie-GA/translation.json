@@ -3293,6 +3293,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "Ba chóir go mbeadh an scór ina luach idir 0.0 (0%) agus 1.0 (100%).",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "Tharla earráid agus do staitisticí á sioncrónú. Déan iarracht arís.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "Léitear na socruithe seo ó athróga comhshaoil agus ní féidir iad a chur in eagar anseo agus {{ENV_VAR}} díchumasaithe.",
 	"thinking, output_config": "",

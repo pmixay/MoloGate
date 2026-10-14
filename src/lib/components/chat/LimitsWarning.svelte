@@ -45,8 +45,23 @@
 	$: outlook = $modelLimits.modelId === modelId ? ($modelLimits.limits?.outlook ?? []) : [];
 	// Mologate: the member's own share of the team pool warns too, from 80% of it (phase 4).
 	$: allowance = $modelLimits.modelId === modelId ? ($modelLimits.limits?.allowance ?? null) : null;
+	// When no shared account has room for the member, that is the warning, whatever their share says.
+	$: poolEmpty =
+		allowance && allowance.mode !== 'off' && allowance.tier === 'empty'
+			? [
+					{
+						id: 'pool-empty',
+						level: 'critical' as Outlook['level'],
+						resets_at: null,
+						text: t(
+							'The team pool has no room for this model right now. A model from another provider may still have some.'
+						)
+					}
+				]
+			: [];
 	$: shown = [
-		...shareWarnings(allowance).map((item) => ({
+		...poolEmpty,
+		...(poolEmpty.length ? [] : shareWarnings(allowance)).map((item) => ({
 			id: item.id,
 			level: (item.level === 'empty' ? 'critical' : 'low') as Outlook['level'],
 			resets_at: item.resets_at,

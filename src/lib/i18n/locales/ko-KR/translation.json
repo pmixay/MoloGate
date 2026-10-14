@@ -3274,6 +3274,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "점수는 0.0(0%)에서 1.0(100%) 사이의 값이어야 합니다.",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "통계 동기화 중 오류가 발생했습니다. 다시 시도해 주세요.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "이 설정은 환경 변수에서 불러오며, {{ENV_VAR}} 설정이 비활성화되어 있으면 여기서 수정할 수 없습니다.",
 	"thinking, output_config": "",

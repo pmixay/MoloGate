@@ -3293,6 +3293,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "Резултатът трябва да бъде стойност между 0,0 (0%) и 1,0 (100%).",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "Възникна грешка при синхронизирането на статистиката ви. Опитайте отново.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "Тези настройки се четат от променливите на средата и не могат да се редактират тук, докато {{ENV_VAR}} е изключена.",
 	"thinking, output_config": "thinking, output_config",

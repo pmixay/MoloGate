@@ -3337,6 +3337,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "Skóre by mělo být hodnota mezi 0,0 (0 %) a 1,0 (100 %).",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "Při synchronizaci statistik došlo k chybě. Zkuste to znovu.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "Tato nastavení se načítají z proměnných prostředí a nelze je zde upravovat, dokud je nastavení {{ENV_VAR}} vypnuté.",
 	"thinking, output_config": "thinking, output_config",

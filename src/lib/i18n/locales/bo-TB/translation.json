@@ -3271,6 +3271,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "སྐར་མ་དེ་ 0.0 (0%) ནས་ 1.0 (100%) བར་གྱི་རིན་ཐང་ཞིག་ཡིན་དགོས།",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "ཁྱེད་ཀྱི་བསྡོམས་རྩིས་མཉམ་སྡེབ་སྐབས་ནོར་འཁྲུལ་བྱུང་། བསྐྱར་དུ་ཚོད་ལྟ་བྱེད་རོགས།",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "སྒྲིག་འགོད་འདི་དག་ཁོར་ཡུག་འགྱུར་ཚད་ནས་ཀློག་གི་ཡོད། {{ENV_VAR}} བཀག་ཡོད་སྐབས་འདིར་ཞུ་དག་བྱེད་མི་ཐུབ།",
 	"thinking, output_config": "thinking, output_config",

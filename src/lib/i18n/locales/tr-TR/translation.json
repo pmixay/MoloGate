@@ -3293,6 +3293,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "Puan 0.0 (%0) ile 1.0 (%100) arasında bir değer olmalıdır.",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "İstatistikleriniz eşitlenirken bir hata oluştu. Lütfen tekrar deneyin.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "Bu ayarlar ortam değişkenlerinden okunur ve {{ENV_VAR}} devre dışıyken burada düzenlenemez.",
 	"thinking, output_config": "düşünme, çıktı_yapılandırması",

@@ -3271,6 +3271,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "スコアは0.0(0%)から1.0(100%)の間の値にしてください。",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "統計の同期中にエラーが発生しました。もう一度お試しください。",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "これらの設定は環境変数から読み込まれており、{{ENV_VAR}} が無効な間はここで編集できません。",
 	"thinking, output_config": "thinking, output_config",

@@ -3293,6 +3293,7 @@
 	"The score should be a value between 0.0 (0%) and 1.0 (100%).": "Die Punktzahl sollte ein Wert zwischen 0.0 (0 %) und 1.0 (100 %) sein.",
 	"The selected model can't read images.": "",
 	"The selected model can't read images. Remove them or pick a model that can.": "",
+	"The team pool has no room for this model right now. A model from another provider may still have some.": "",
 	"There was an error syncing your stats. Please try again.": "Beim Synchronisieren Ihrer Statistiken ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.",
 	"These settings are read from environment variables and cannot be edited here while {{ENV_VAR}} is disabled.": "Diese Einstellungen werden aus Umgebungsvariablen gelesen und können hier nicht bearbeitet werden, solange {{ENV_VAR}} deaktiviert ist.",
 	"thinking, output_config": "thinking, output_config",
