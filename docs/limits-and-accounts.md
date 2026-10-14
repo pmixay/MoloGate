@@ -389,6 +389,12 @@ list leaves out what chat cannot use (embeddings, speech, images, moderation, re
 generations (OpenAI's GPT-3.5, GPT-4 and completion-only models, its dated copies of listed
 models, and models OpenRouter is retiring).
 
+**Current generation only:** for the labs in `utils/model_generations.py`, the model list shows
+only the current generation: the GLM-5.3 family for Z.ai, and GPT-6 for OpenAI, where the Sol tier
+counts from GPT-6.1. Older models are flagged hidden, like an admin hiding a model (Admin → Models
+shows them): they leave the selectors but stay callable, so chats and presets built on one keep
+working. Other labs are not filtered. To follow a release, change that lab's rule.
+
 **Team accounts:** an admin can connect a key or a ChatGPT account as a team account (the "Team
 account" switch). It belongs to no member: everyone uses it, admins manage it, it is shared or
 paused (never private), and all of its use is pool use. Admin connections to a supported

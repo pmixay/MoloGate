@@ -1,6 +1,5 @@
 // Mologate: the usage limits provider accounts report (utils/provider_limits.py on the server),
-// labelled and formatted the same way on the account cards, in the chat's limits panel and on the
-// limits ring next to the model selector.
+// labelled and formatted the same way on the account cards and in the context indicator's panel.
 
 export type LimitWindow = {
 	id: string;
@@ -157,15 +156,6 @@ export const outlookName = (item: Outlook, t: Translate = plainText) =>
 		{ id: item.id, used_percent: item.used_percent, window_minutes: item.window_minutes },
 		t
 	);
-
-// The few characters beside the limits ring while a window runs low.
-export const shortWarning = (item: Outlook, t: Translate = plainText) => {
-	if (item.level === 'empty') return t('Used up');
-	if (item.minutes_left !== null && !item.lasts_until_reset) {
-		return t('~{{DURATION}} left', { DURATION: formatDuration(item.minutes_left * 60) });
-	}
-	return t('{{PERCENT}} left', { PERCENT: formatPercent(100 - item.used_percent) });
-};
 
 // "5-hour limit: 17% left, about 44m of work at the recent pace. It resets in 1h 58m."
 export const warningText = (item: Outlook, t: Translate = plainText, now = Date.now()) => {

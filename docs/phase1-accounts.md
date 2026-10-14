@@ -74,7 +74,9 @@ while presets built on an account model keep their own access settings.
 
 Account models carry the details their provider lists for them (effort levels, input types,
 context window) under `openai`, like models from a configured connection, so the effort selector,
-the image check and the context indicator treat them the same way. Only a 401 from the provider
+the image check and the context indicator treat them the same way. Z.ai lists no effort levels
+for its GLM models, so `utils/reasoning_effort.py` supplies the ones Z.ai documents (GLM-5.3: low,
+high, max, default max); an admin's override still wins. Only a 401 from the provider
 marks an account "Sign-in required"; a 403 refuses that one request and leaves the account in use.
 
 Provider errors reach the member in the provider's own words (`utils/provider_errors.py`): one

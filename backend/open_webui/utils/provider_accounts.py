@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from open_webui.models.config import Config
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
 from open_webui.utils.anthropic import ANTHROPIC_VERSION
+from open_webui.utils.model_generations import is_current_generation
 
 API_BASES = {
     'openai_api': 'https://api.openai.com/v1',
@@ -187,6 +188,8 @@ async def account_models(user=None):
                 'provider_account_provider': account.provider,
                 'provider_account_sharing': 'shared' if shared else 'private',
                 'upstream_model_id': model['id'],
+                # Older generations leave the selectors but still answer (utils/model_generations.py).
+                **({} if is_current_generation(model['id']) else {'info': {'meta': {'hidden': True}}}),
             }
     return list(catalog.values())
 

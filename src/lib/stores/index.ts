@@ -127,7 +127,7 @@ export const chatRequestQueues: Writable<
 
 export const sidebarWidth = writable(245);
 
-// Mologate: the selected model's usage limits, read by the limits ring and the low-limit warning.
+// Mologate: the selected model's usage limits, loaded by the context indicator, read by it and the low-limit warning.
 export const modelLimits: Writable<{ modelId: string; limits: ModelLimits | null }> = writable({
 	modelId: '',
 	limits: null
