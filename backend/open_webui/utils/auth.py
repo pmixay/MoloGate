@@ -507,14 +507,21 @@ async def get_current_user(
 
 
 async def get_current_user_by_api_key(request, api_key: str):
+    # Mologate: personal keys (models/api_keys.py) are found by their hash, the default key as stored;
+    # a revoked or expired key is refused, and the key's id and limits go with the request.
+    from open_webui.models.api_keys import PersonalKeys, usable
+
+    key_row = await PersonalKeys.find(api_key)
     # Each function call manages its own short-lived session internally
-    user = await Users.get_user_by_api_key(api_key)
+    user = await Users.get_user_by_id(key_row.user_id) if key_row is not None else None
 
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=ERROR_MESSAGES.INVALID_TOKEN,
         )
+    if reason := usable(key_row):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=reason)
 
     config_values = await Config.get_many(
         'auth.enable_api_keys',
@@ -548,6 +555,21 @@ async def get_current_user_by_api_key(request, api_key: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
             )
+
+    # Mologate: a member's key reaches only the gated endpoints, so every model call it makes goes
+    # through the allowance engine (docs/limits-and-accounts.md §11). Admins keep the whole API.
+    from open_webui.utils import api_key_limits
+
+    if user.role != 'admin' and not api_key_limits.endpoint_allowed(request.scope['path']):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='API keys reach only chat completions, the model list and your limits.',
+        )
+    limits = (key_row.data or {}).get('limits') if isinstance(key_row.data, dict) else None
+    request.state.api_key_id = key_row.id
+    request.state.api_key_limits = limits or {}
+    await api_key_limits.check_rate(request, key_row.id, limits or {})
+    await PersonalKeys.touch(key_row)
 
     # Add user info to current span
     if ENABLE_OTEL:

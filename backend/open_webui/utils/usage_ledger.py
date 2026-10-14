@@ -86,6 +86,8 @@ class Meter:
         self.chat_id = metadata.get('chat_id') or None
         self.request_id = metadata.get('message_id') or None
         self.rows = 0
+        # Mologate: the personal API key the request came with (phase 6, utils/auth.py).
+        self.api_key_id = getattr(getattr(request, 'state', None), 'api_key_id', None)
         # Mologate: the allowance engine's decision, computed beside the request (phase 3), or
         # before it and acted on (phase 4, enforce: then `tier` is the decision's tier).
         self.decision = None
@@ -99,6 +101,7 @@ class Meter:
             # provider's readings by time.
             ts=int(time.time()),
             user_id=self.user_id,
+            api_key_id=self.api_key_id,
             account_id=account.id,
             provider=account.provider,
             model_id=self.model_id,
@@ -133,20 +136,22 @@ async def _write(values: dict, served_by, model_id: str, numbers: dict, decision
         log.warning('Could not write a usage ledger row: %s', e)
         return
     if served_by is not None:
-        await _settle_credits(row_id, values, served_by, model_id, numbers)
+        await _settle(row_id, values, served_by, model_id, numbers)
 
 
-async def _settle_credits(row_id: str, values: dict, served_by, model_id: str, numbers: dict) -> None:
-    """Mologate: credits (phase 5). The key's owner earns from what the request cost; a request
+async def _settle(row_id: str, values: dict, served_by, model_id: str, numbers: dict) -> None:
+    """Mologate: what a served request used of the pool (``est_units``, phase 6: a key's daily
+    points) and its credits (phase 5): the key's owner earns from what it cost, and a request
     served in tier 3 is charged to its member."""
     from open_webui.utils import credits
 
     try:
+        name, units = await credits.window_units(served_by, model_id, numbers, values.get('cost'))
+        if units:
+            await UsageEvents.set_est_units(row_id, units)
         await credits.earn(served_by, values.get('cost'), row_id)
         if values.get('tier') == 'credit':
-            charge = await credits.request_credits(
-                served_by, values.get('decision'), model_id, numbers, values.get('cost')
-            )
+            charge = credits.request_credits(values.get('decision'), name, units)
             if charge > 0:
                 charged = await credits.Credits.spend(values['user_id'], charge, row_id)
                 await UsageEvents.set_credits_charged(row_id, charged)

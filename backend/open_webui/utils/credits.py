@@ -97,27 +97,31 @@ async def balance(user_id: str) -> float:
     return await Credits.balance(user_id)
 
 
-async def request_credits(account, decision: dict | None, model_id: str, numbers: dict, cost) -> float:
-    """What a request served in tier 3 costs in credits: its units in the weekly window (an API
-    key's budget, which is its only window), over 0.4% of that window's pool capacity."""
+async def window_units(account, model_id: str, numbers: dict, cost) -> tuple[str | None, float]:
+    """A served request's units in its account's weekly window, or an API key's budget window (its
+    only one): the window credits are measured in."""
     from open_webui.utils import allowance_gate, metering
 
-    if not isinstance(decision, dict) or decision.get('tier') != 'credit':
-        return 0.0
     engine_account = allowance_gate.to_account(account)
     name = 'weekly' if 'weekly' in engine_account.windows else 'budget' if 'budget' in engine_account.windows else None
-    capacity = ((decision.get('windows') or {}).get(name) or {}).get('capacity') if name else None
-    if not capacity:
-        return 0.0
+    if name is None:
+        return None, 0.0
     tokens = {key: numbers.get(key) or 0 for key in TOKEN_KEYS}
     if name == 'budget':
-        units = (cost or 0.0) * 100 / allowance.BUDGET_UNIT_DOLLARS
-    else:
-        calibration = (await metering.calibrations()).get((account.provider, name))
-        units = fitting.units(calibration, model_id, tokens)
-        if units is None:
-            # Before calibration: the request's part of the account's rise, by weighted tokens.
-            snapshot = await allowance_gate.pool_snapshot(account.provider)
-            period = (snapshot['periods'].get(account.id) or {}).get(name)
-            units = allowance.request_units(engine_account, period, tokens)
-    return round(allowance.credits_for(units, capacity), 6)
+        return name, (cost or 0.0) * 100 / allowance.BUDGET_UNIT_DOLLARS
+    calibration = (await metering.calibrations()).get((account.provider, name))
+    units = fitting.units(calibration, model_id, tokens)
+    if units is None:
+        # Before calibration: the request's part of the account's rise, by weighted tokens.
+        snapshot = await allowance_gate.pool_snapshot(account.provider)
+        period = (snapshot['periods'].get(account.id) or {}).get(name)
+        units = allowance.request_units(engine_account, period, tokens)
+    return name, units
+
+
+def request_credits(decision: dict | None, name: str | None, units: float) -> float:
+    """What a request served in tier 3 costs in credits: its units, over 0.4% of that window's pool."""
+    if not isinstance(decision, dict) or decision.get('tier') != 'credit' or not name:
+        return 0.0
+    capacity = ((decision.get('windows') or {}).get(name) or {}).get('capacity')
+    return round(allowance.credits_for(units, capacity), 6) if capacity else 0.0

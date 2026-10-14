@@ -29,6 +29,9 @@
 	import Connections from './Settings/Connections.svelte';
 	// Mologate: personal provider accounts are separate from browser-only connections.
 	import ProviderAccounts from './Settings/ProviderAccounts.svelte';
+	// Mologate: personal API keys (docs/limits-and-accounts.md §11).
+	import ApiKeys from './Settings/ApiKeys.svelte';
+	import { canUseApiKeys } from '$lib/utils/settings-access';
 	import Integrations from './Settings/Integrations.svelte';
 	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
@@ -145,6 +148,7 @@
 		shortcuts: $i18n.t('Basics'),
 		connections: $i18n.t('Services'),
 		provider_accounts: $i18n.t('Services'),
+		api_keys: $i18n.t('Services'),
 		tools: $i18n.t('Services'),
 		personalization: $i18n.t('Preferences'),
 		data_controls: $i18n.t('Data'),
@@ -216,6 +220,12 @@
 			id: 'provider_accounts',
 			titleKey: 'Provider accounts',
 			title: 'Provider accounts',
+			searchPrefixes: []
+		},
+		{
+			id: 'api_keys',
+			titleKey: 'API keys',
+			title: 'API keys',
 			searchPrefixes: []
 		},
 		{
@@ -375,6 +385,7 @@
 					$config?.features?.enable_provider_accounts &&
 					['user', 'admin'].includes($user?.role ?? '')
 				);
+			if (tab.id === 'api_keys') return canUseApiKeys({ user: $user, config: $config });
 			if (tab.id === 'connections') {
 				return $config?.features?.enable_direct_connections;
 			}
@@ -627,6 +638,16 @@
 						>
 							<Link className="size-3.5" strokeWidth="2" /><span>Provider accounts</span>
 						</button>
+					{:else if tabId === 'api_keys'}
+						<button
+							role="tab"
+							aria-controls="tab-api_keys"
+							aria-selected={selectedTab === 'api_keys'}
+							class={tabButtonClass(selectedTab === 'api_keys')}
+							on:click={() => selectTab('api_keys')}
+						>
+							<Link className="size-3.5" strokeWidth="2" /><span>API keys</span>
+						</button>
 					{:else if tabId === 'connections'}
 						{#if $user?.role === 'admin' || ($user?.role === 'user' && $config?.features?.enable_direct_connections)}
 							<button
@@ -804,6 +825,8 @@
 				<Shortcuts {saveSettings} />
 			{:else if selectedTab === 'provider_accounts'}
 				<ProviderAccounts />
+			{:else if selectedTab === 'api_keys'}
+				<ApiKeys />
 			{:else if selectedTab === 'connections'}
 				<Connections
 					saveSettings={async (updated: Record<string, any>) => {

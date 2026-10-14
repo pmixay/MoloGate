@@ -1965,7 +1965,8 @@ USER_PERMISSIONS_FEATURES_NOTES = os.getenv('USER_PERMISSIONS_FEATURES_NOTES', '
 
 USER_PERMISSIONS_FEATURES_CHANNELS = os.getenv('USER_PERMISSIONS_FEATURES_CHANNELS', 'True').lower() == 'true'
 
-USER_PERMISSIONS_FEATURES_API_KEYS = os.getenv('USER_PERMISSIONS_FEATURES_API_KEYS', 'False').lower() == 'true'
+# Mologate: members make their own API keys (docs/limits-and-accounts.md §11).
+USER_PERMISSIONS_FEATURES_API_KEYS = os.getenv('USER_PERMISSIONS_FEATURES_API_KEYS', 'True').lower() == 'true'
 
 USER_PERMISSIONS_FEATURES_MEMORIES = os.getenv('USER_PERMISSIONS_FEATURES_MEMORIES', 'True').lower() == 'true'
 
@@ -2516,7 +2517,8 @@ Responses from models: {{responses}}"""
 # Auth
 ####################################
 
-ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'False').lower() == 'true'
+# Mologate: API keys are on; each request one makes goes through the allowance engine.
+ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'True').lower() == 'true'
 
 ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = (
     os.getenv(

@@ -319,96 +319,46 @@
 
 		{#if canUseApiKeys({ user: $user, config: $config })}
 			<UserSettingSection title={$i18n.t('settings.personal.account.sections.apiKeys.title')}>
-				<UserSettingRow description={$i18n.t('settings.personal.account.secrets.description')}>
-					<span slot="label">{$i18n.t('settings.personal.account.secrets.label')}</span>
-					<button
-						class={actionButtonClass}
-						type="button"
-						on:click={() => {
-							showAPIKeys = !showAPIKeys;
-						}}>{showAPIKeys ? $i18n.t('Hide') : $i18n.t('Show')}</button
-					>
-				</UserSettingRow>
+				<!-- Mologate: API keys are managed under Settings → API keys: several named keys, each
+				     with its own limits (ApiKeys.svelte); the key Open WebUI made here is listed there.
+				     What is left here is the admin's session token. -->
+				<p class="text-xs text-gray-500">
+					{$i18n.t('Your API keys are under Settings → API keys.')}
+				</p>
+				{#if $user?.role === 'admin'}
+					<UserSettingRow description={$i18n.t('settings.personal.account.secrets.description')}>
+						<span slot="label">{$i18n.t('settings.personal.account.secrets.label')}</span>
+						<button
+							class={actionButtonClass}
+							type="button"
+							on:click={() => {
+								showAPIKeys = !showAPIKeys;
+							}}>{showAPIKeys ? $i18n.t('Hide') : $i18n.t('Show')}</button
+						>
+					</UserSettingRow>
 
-				{#if showAPIKeys}
-					<div class="flex flex-col gap-2.5">
-						{#if $user?.role === 'admin'}
-							<UserSettingField
-								label={$i18n.t('settings.personal.account.jwtToken.label')}
-								description={$i18n.t('settings.personal.account.jwtToken.description')}
-							>
-								<div class="flex">
-									<SensitiveInput variant="settings" value={localStorage.token} readOnly={true} />
-
-									<button
-										class="ml-1.5 rounded-sm px-1.5 py-1 text-gray-500 transition hover:text-gray-700 dark:hover:text-gray-300"
-										aria-label={$i18n.t('Copy Token')}
-										on:click={() => {
-											copyToClipboard(localStorage.token);
-											JWTTokenCopied = true;
-											setTimeout(() => {
-												JWTTokenCopied = false;
-											}, 2000);
-										}}
-									>
-										{#if JWTTokenCopied}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 20 20"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										{:else}
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												viewBox="0 0 16 16"
-												fill="currentColor"
-												class="w-4 h-4"
-											>
-												<path
-													fill-rule="evenodd"
-													d="M11.986 3H12a2 2 0 0 1 2 2v6a2 2 0 0 1-1.5 1.937V7A2.5 2.5 0 0 0 10 4.5H4.063A2 2 0 0 1 6 3h.014A2.25 2.25 0 0 1 8.25 1h1.5a2.25 2.25 0 0 1 2.236 2ZM10.5 4v-.75a.75.75 0 0 0-.75-.75h-1.5a.75.75 0 0 0-.75.75V4h3Z"
-													clip-rule="evenodd"
-												/>
-												<path
-													fill-rule="evenodd"
-													d="M3 6a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H3Zm1.75 2.5a.75.75 0 0 0 0 1.5h3.5a.75.75 0 0 0 0-1.5h-3.5ZM4 11.75a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z"
-													clip-rule="evenodd"
-												/>
-											</svg>
-										{/if}
-									</button>
-								</div>
-							</UserSettingField>
-						{/if}
-
-						{#if canUseApiKeys({ user: $user, config: $config })}
-							<UserSettingField
-								label={$i18n.t('settings.personal.account.apiKey.label')}
-								description={$i18n.t('settings.personal.account.apiKey.description')}
-							>
-								<div class="flex">
-									{#if APIKey}
-										<SensitiveInput variant="settings" value={APIKey} readOnly={true} />
+					{#if showAPIKeys}
+						<div class="flex flex-col gap-2.5">
+							{#if $user?.role === 'admin'}
+								<UserSettingField
+									label={$i18n.t('settings.personal.account.jwtToken.label')}
+									description={$i18n.t('settings.personal.account.jwtToken.description')}
+								>
+									<div class="flex">
+										<SensitiveInput variant="settings" value={localStorage.token} readOnly={true} />
 
 										<button
 											class="ml-1.5 rounded-sm px-1.5 py-1 text-gray-500 transition hover:text-gray-700 dark:hover:text-gray-300"
-											aria-label={$i18n.t('Copy API Key')}
+											aria-label={$i18n.t('Copy Token')}
 											on:click={() => {
-												copyToClipboard(APIKey);
-												APIKeyCopied = true;
+												copyToClipboard(localStorage.token);
+												JWTTokenCopied = true;
 												setTimeout(() => {
-													APIKeyCopied = false;
+													JWTTokenCopied = false;
 												}, 2000);
 											}}
 										>
-											{#if APIKeyCopied}
+											{#if JWTTokenCopied}
 												<svg
 													xmlns="http://www.w3.org/2000/svg"
 													viewBox="0 0 20 20"
@@ -441,63 +391,11 @@
 												</svg>
 											{/if}
 										</button>
-
-										<Dropdown bind:show={showAPIKeyMenu} align="end" sideOffset={4}>
-											<Tooltip content={$i18n.t('More')}>
-												<button
-													type="button"
-													class="rounded-sm px-1.5 py-1 text-gray-500 transition hover:text-gray-700 dark:hover:text-gray-300"
-													aria-label={$i18n.t('More')}
-												>
-													<EllipsisHorizontal strokeWidth="2" className="size-4" />
-												</button>
-											</Tooltip>
-
-											<div slot="content">
-												<DropdownMenu className="min-w-[10.625rem]">
-													<button
-														type="button"
-														on:click={() => {
-															showAPIKeyMenu = false;
-															createAPIKeyHandler();
-														}}
-													>
-														<Refresh strokeWidth="2" className="size-3.5 scale-90" />
-														<div class="flex items-center">{$i18n.t('Create new key')}</div>
-													</button>
-
-													<hr class="border-gray-50 dark:border-gray-850/30" />
-
-													<button
-														type="button"
-														on:click={() => {
-															showAPIKeyMenu = false;
-															showDeleteAPIKeyConfirm = true;
-														}}
-													>
-														<XMark strokeWidth="2" className="size-3.5" />
-														<div class="flex items-center">{$i18n.t('Delete')}</div>
-													</button>
-												</DropdownMenu>
-											</div>
-										</Dropdown>
-									{:else}
-										<button
-											class="inline-flex items-center gap-1.5 {actionButtonClass}"
-											type="button"
-											on:click={() => {
-												createAPIKeyHandler();
-											}}
-										>
-											<Plus strokeWidth="2" className="size-3.5" />
-
-											{$i18n.t('settings.personal.account.createNewSecretKey.label')}</button
-										>
-									{/if}
-								</div>
-							</UserSettingField>
-						{/if}
-					</div>
+									</div>
+								</UserSettingField>
+							{/if}
+						</div>
+					{/if}
 				{/if}
 			</UserSettingSection>
 		{/if}

@@ -76,6 +76,51 @@ class UsageEventsTable:
                 row.updated_at = int(time.time())
                 await db.commit()
 
+    async def set_est_units(self, event_id: str, units: float) -> None:
+        async with get_async_db_context() as db:
+            row = await db.get(UsageEvent, event_id)
+            if row is not None:
+                row.est_units = units
+                await db.commit()
+
+    async def key_units(self, api_key_id: str, provider: str, since: int) -> float:
+        """Units a personal key's requests used of a provider's pool since a time (est_units)."""
+        query = select(func.sum(UsageEvent.est_units)).where(
+            UsageEvent.api_key_id == api_key_id,
+            UsageEvent.provider == provider,
+            UsageEvent.ts >= since,
+            UsageEvent.status == 'ok',
+        )
+        async with get_async_db_context() as db:
+            return float((await db.execute(query)).scalar() or 0.0)
+
+    async def key_usage(self, api_key_ids: list[str], since: int) -> dict:
+        """Each key's requests, tokens and cost since a time."""
+        if not api_key_ids:
+            return {}
+        query = (
+            select(
+                UsageEvent.api_key_id,
+                func.count(UsageEvent.id),
+                func.sum(UsageEvent.input_tokens),
+                func.sum(UsageEvent.output_tokens),
+                func.sum(UsageEvent.cost),
+            )
+            .where(UsageEvent.api_key_id.in_(api_key_ids), UsageEvent.ts >= since, UsageEvent.status == 'ok')
+            .group_by(UsageEvent.api_key_id)
+        )
+        async with get_async_db_context() as db:
+            rows = (await db.execute(query)).all()
+        return {
+            key_id: {
+                'requests': requests,
+                'input_tokens': int(input_tokens or 0),
+                'output_tokens': int(output_tokens or 0),
+                'cost': round(cost, 4) if cost is not None else None,
+            }
+            for key_id, requests, input_tokens, output_tokens, cost in rows
+        }
+
     async def by_member(self, account_id: str, since: int) -> list[dict]:
         """Each member's requests, tokens and cost on an account since a time."""
         query = (

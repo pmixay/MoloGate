@@ -87,9 +87,11 @@ The full design and phased plan for accounts, limits, credits and personal API k
     above the message box starts at 80% of the share. Admins grant overrides with a reason,
     kept as an audit log. Credits (phase 5): adding a subscription earns 10 per 1x of its plan,
     once per account, and an API key earns its owner 0.5 per dollar spent through it; past the
-    share, credits keep big models available, and disconnecting forfeits what is left. Missing:
-    a week of real use to check the fit and replay the rules before switching the site to
-    `enforce`.
+    share, credits keep big models available, and disconnecting forfeits what is left. Personal
+    API keys (phase 6): members make several named keys in Settings → API keys, each optionally
+    held to fewer requests, models, efforts or pool points, and use Mologate from any
+    OpenAI-compatible client; that use counts in their share. Missing: a week of real use to
+    check the fit and replay the rules before switching the site to `enforce`.
 - [x] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed

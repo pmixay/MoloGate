@@ -260,7 +260,11 @@ empty), `credit_id` (provider's), `idempotency_key`, `outcome` (`pending` | `res
 `nothingToReset` | `noCredit` | `alreadyRedeemed` | `error`), `created_at`, `updated_at`.
 
 Personal API keys stay in the existing `api_key` table. Allow several named keys per user, with
-`data = {name, limits: {rpm, concurrency, models, efforts, daily_points}, revoked_at}`.
+`data = {name, hint, limits: {rpm, concurrency, models, efforts, daily_points}, revoked_at}`. A
+personal key is stored as `sha256:<hash>`; the key Open WebUI made per member before (id
+`key_<user id>`) keeps its stored form and works as before (§11). `usage_event.est_units` holds each
+served request's units in its account's weekly window, or a key's budget window, for a key's
+daily points (migration `d2f8b5c1e9a4` turns keys on for existing installs; no schema change).
 
 ---
 
@@ -706,6 +710,44 @@ codex-lb for ChatGPT accounts. There is no reset button: members never redeem a 
   and skip the gate.
 - A "my keys" page shows each key's use from the ledger.
 
+**Implementation (Phase 6, 2026-10-14):**
+
+- `models/api_keys.py`, `utils/api_key_limits.py`, `routers/api_keys.py`
+  (`GET`, `POST /api/v1/api-keys`, `PATCH`, `DELETE /api/v1/api-keys/{id}`), and Settings → API keys
+  (`ApiKeys.svelte`). API keys and the members' permission are on by default (`ENABLE_API_KEYS`,
+  `USER_PERMISSIONS_FEATURES_API_KEYS`), and migration `d2f8b5c1e9a4` turns them on once for
+  installs that stored the old defaults.
+- **Keys:** up to 20 named keys per member. A key is shown once, when it is made, and stored as a
+  hash with a short hint (`sk-5b…44f7`) to recognise it by. Revoking keeps its record, so the
+  ledger still names it; a revoked or expired key is refused at once (401). Open WebUI's one key
+  per member keeps working, is listed as "Default key", and its old Account settings section now
+  points to the keys page.
+- **Auth** (`utils/auth.py`) finds the key, puts its id and limits on `request.state`, and the
+  ledger writes the id into `api_key_id`, with source `api_key`. Every request a key makes is its
+  owner's: decided by the allowance engine, counted in the owner's share, and refused or swapped
+  exactly as the owner would be.
+- **Endpoints:** a member's key reaches only `/api/chat/completions`, `/api/v1/chat/completions`,
+  `/api/models`, `/api/v1/models`, `/api/v1/models/model/limits`,
+  `/api/v1/provider-accounts/usage` and `/api/v1/provider-accounts/credits`, matched exactly
+  (the models router also lives under `/api/v1/models`). Not `/openai/*`, the account routes or
+  the key routes, so a key cannot make more keys. An admin's key keeps the whole API.
+- **Limits**, each optional and checked against the owner: requests per minute (up to 600, every
+  endpoint); requests at once to provider-account models (up to the owner's chat cap, §12 Phase
+  4); the model ids and reasoning efforts it may ask for (checked against the id the client sent);
+  pool points a day per provider (summed from the ledger's `est_units` over the provider's
+  weekly or budget capacity, starting at midnight UTC); expiry. Limits a member set on their own
+  key apply in every mode but `off`. A key without a concurrency limit runs at most as many
+  requests at once as its owner may run chats, in `enforce` only.
+- **Tested:** `test/limits/test_api_keys.py` (hashing and showing once, auth with the key's id,
+  revoked, expired and default keys, the endpoint allowlist, each limit, the owner's bounds, the
+  ledger and share, the migration) and in the running app with the official OpenAI Python SDK
+  (`test/limits/e2e`, `drive.py keys`): the SDK lists the models, chats and streams with Cat's
+  key; the ledger names the key as her use; her share rises by exactly the units the requests
+  cost; her keys page shows the use and today's pool points; the key gets 403 on the key routes,
+  `/openai/*` and the account routes; a 2-a-minute key gets 429 on its third request; a key
+  cannot run more at once than its owner; a revoked key gets 401 at once. 14 checks pass, in
+  `enforce` and in `observe`.
+
 ---
 
 ## 12. Phases
@@ -819,8 +861,14 @@ deployed site.
 
 ### Phase 6: personal API keys (§11)
 
-- [ ] Done when: a member uses Mologate from an outside OpenAI-compatible client with their own
-      key, and that use shows up in their share.
+**Built and tested in the running app: 2026-10-14** (§11).
+
+- [x] Several named keys per member, the key's id in `request.state` and the ledger.
+- [x] Per-key limits never beyond the owner's; keys restricted to the gated endpoints.
+- [x] A "my keys" page (Settings → API keys).
+- [x] Done when: a member uses Mologate from an outside OpenAI-compatible client with their own
+      key, and that use shows up in their share. Done with the official OpenAI Python SDK
+      against the running app (§11); on the deployed site once this branch is there.
 
 ### Phase 7: Claude subscription runners
 
@@ -916,6 +964,11 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   weekly window (or a key's budget); a forfeit takes what the account gave the member and is
   still in their balance; an API key's grant stays with the key, and its earnings go to whoever
   owns the key now.
+- 2026-10-14: Phase 6 choices where the spec was silent: personal keys are stored hashed and
+  shown once; Open WebUI's one key per member keeps working; a member's key reaches only the
+  gated endpoints, an admin's the whole API; limits a member sets on their own key apply in
+  `observe` too (they are the member's own choice), the default cap on a key's requests at once
+  only in `enforce`; daily points are counted per provider from midnight UTC.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

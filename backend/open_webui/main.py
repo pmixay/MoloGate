@@ -149,6 +149,7 @@ from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.users import Users
 from open_webui.routers import (
     provider_accounts,  # Mologate: owner-managed provider connections.
+    api_keys,  # Mologate: personal API keys.
     containers,  # Mologate: each chat's own container.
     uploads,  # Mologate: big uploads in chunks.
     analytics,
@@ -904,6 +905,7 @@ app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
 # Mologate: provider accounts have independent ownership and encrypted credentials.
 app.include_router(provider_accounts.router, prefix='/api/v1/provider-accounts', tags=['provider-accounts'])
+app.include_router(api_keys.router, prefix='/api/v1/api-keys', tags=['api-keys'])  # Mologate
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
 app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
@@ -1171,6 +1173,11 @@ async def chat_completion(
         from open_webui.utils.connection_accounts import resolve_model_alias
 
         model_id = form_data['model'] = await resolve_model_alias(model_id)
+
+    # Mologate: a personal API key may be held to some models and efforts (utils/api_key_limits.py).
+    from open_webui.utils import api_key_limits
+
+    api_key_limits.check_request(request, model_id, form_data)
 
     metadata = {}
     try:

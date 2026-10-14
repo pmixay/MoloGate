@@ -867,12 +867,14 @@ class UsersTable:
 
     async def get_user_api_key_by_id(self, id: str, db: AsyncSession | None = None) -> str | None:
         async with get_async_db_context(db) as session:
-            api_key = (await session.execute(select(ApiKey).where(ApiKey.user_id == id))).scalars().first()
+            # Mologate: personal keys live beside this one (models/api_keys.py); this is the default key.
+            api_key = (await session.execute(select(ApiKey).where(ApiKey.id == f'key_{id}'))).scalars().first()
             return api_key.key if api_key else None
 
     async def update_user_api_key_by_id(self, id: str, api_key: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as session:
-            await session.execute(delete(ApiKey).where(ApiKey.user_id == id))
+            # Mologate: only the default key; a member's personal keys stay.
+            await session.execute(delete(ApiKey).where(ApiKey.id == f'key_{id}'))
             now_ts = int(time.time())
             new_key = ApiKey(
                 id=f'key_{id}',
@@ -887,7 +889,8 @@ class UsersTable:
 
     async def delete_user_api_key_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as session:
-            await session.execute(delete(ApiKey).where(ApiKey.user_id == id))
+            # Mologate: only the default key; a member's personal keys stay.
+            await session.execute(delete(ApiKey).where(ApiKey.id == f'key_{id}'))
             await session.commit()
             return True
 

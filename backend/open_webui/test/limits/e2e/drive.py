@@ -404,8 +404,99 @@ def credits_run():
     )
 
 
+def keys_api(token, path='', method='GET', body=None):
+    response = requests.request(
+        method, MOLOGATE + '/api/v1/api-keys' + path, headers={'Authorization': 'Bearer ' + token}, json=body
+    )
+    return response.status_code, response.json()
+
+
+def keys_run():
+    """Phase 6: Cat uses Mologate from an outside client (the official OpenAI SDK) with her own key,
+    and that use counts in her share."""
+    import openai
+
+    state = setup()
+    users = state['users']
+    control(**{key: {'mode': 'ok', 'cost': 2.0, 'delay': 0} for key in ('key-a', 'key-b', 'key-c')})
+    calls_since()
+    cat = users['cat']['token']
+
+    status, made = keys_api(cat, '', 'POST', {'name': 'Laptop', 'limits': {'rpm': 30}})
+    secret = made.get('secret', '')
+    check('K1 a member makes a named key, shown once', status == 200 and secret.startswith('sk-'), str(made)[:200])
+    status, listed = keys_api(cat)
+    check(
+        'K1 the list never shows it again',
+        status == 200 and secret not in json.dumps(listed),
+        listed['data'][0]['hint'],
+    )
+
+    client = openai.OpenAI(base_url=MOLOGATE + '/api', api_key=secret, max_retries=0)
+    ids = [model.id for model in client.models.list().data]
+    check('K2 the SDK lists the models', GPT in ids, str(ids)[:200])
+    before = (standing(cat).get('allowance') or {}).get('windows', {}).get('budget', {}).get('used', 0)
+    start = int(time.time())
+    answer = client.chat.completions.create(model=GPT, messages=[{'role': 'user', 'content': 'Hi'}])
+    check(
+        'K3 the SDK chats through the key',
+        answer.choices[0].message.content == 'Hello from gpt-6',
+        answer.choices[0].message.content,
+    )
+    chunks = [
+        chunk.choices[0].delta.content or ''
+        for chunk in client.chat.completions.create(
+            model=GPT, messages=[{'role': 'user', 'content': 'Hi'}], stream=True
+        )
+        if chunk.choices
+    ]
+    check('K3 and streams', ''.join(chunks) == 'Hello from gpt-6', ''.join(chunks))
+    time.sleep(1)
+    with sqlite3.connect(DB) as db:
+        rows = db.execute(
+            'SELECT api_key_id, source, user_id, est_units FROM usage_event WHERE ts >= ? AND status = ?', (start, 'ok')
+        ).fetchall()
+    key_id = made['key']['id']
+    check(
+        "K4 the ledger names the key, as the owner's use",
+        len(rows) == 2 and all(r[0] == key_id and r[1] == 'api_key' and r[2] == users['cat']['id'] for r in rows),
+        str(rows),
+    )
+    time.sleep(CACHE_WAIT)
+    after = (standing(cat).get('allowance') or {}).get('windows', {}).get('budget', {}).get('used', 0)
+    check('K5 that use counts in her share (2 x $2 = 20 units)', round(after - before, 3) == 20, f'{before} -> {after}')
+    status, listed = keys_api(cat)
+    usage = listed['data'][0]['usage']
+    check('K5 her keys page shows it', usage['week']['requests'] == 2 and usage['points_today'], json.dumps(usage))
+
+    for path in ('/api/v1/api-keys', '/openai/chat/completions', '/api/v1/provider-accounts'):
+        response = requests.get(MOLOGATE + path, headers={'Authorization': 'Bearer ' + secret})
+        check(f'K6 the key cannot reach {path}', response.status_code == 403, str(response.status_code))
+
+    status, limited = keys_api(cat, '', 'POST', {'name': 'Script', 'limits': {'rpm': 2}})
+    script = openai.OpenAI(base_url=MOLOGATE + '/api', api_key=limited['secret'], max_retries=0)
+    errors = []
+    for _ in range(3):
+        try:
+            script.chat.completions.create(model=GPT, messages=[{'role': 'user', 'content': 'Hi'}])
+        except openai.RateLimitError as error:
+            errors.append(error.status_code)
+    check('K7 a key held to 2 requests a minute gets 429 on the third', errors == [429], str(errors))
+
+    status, _ = keys_api(cat, '', 'POST', {'name': 'Too much', 'limits': {'concurrency': 50}})
+    check('K8 a key cannot run more at once than its owner', status == 400, str(status))
+
+    keys_api(cat, f'/{key_id}', 'DELETE')
+    try:
+        client.chat.completions.create(model=GPT, messages=[{'role': 'user', 'content': 'Hi'}])
+        revoked = None
+    except openai.AuthenticationError as error:
+        revoked = error.status_code
+    check('K9 a revoked key stops working at once', revoked == 401, str(revoked))
+
+
 if __name__ == '__main__':
-    {'enforce': enforce_run, 'observe': observe_run, 'credits': credits_run}[sys.argv[1]]()
+    {'enforce': enforce_run, 'observe': observe_run, 'credits': credits_run, 'keys': keys_run}[sys.argv[1]]()
     failed = [name for name, ok in results if not ok]
     print(f'\n{len(results) - len(failed)} passed, {len(failed)} failed')
     sys.exit(1 if failed else 0)

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
-from open_webui.utils import account_slots, allowance_gate, codex_lb
+from open_webui.utils import account_slots, allowance_gate, api_key_limits, codex_lb
 from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
 from open_webui.utils.provider_accounts import (
     auto_reset_enabled,
@@ -510,6 +510,23 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     accounts = await select_accounts(model, user)
     if endpoint not in ('chat/completions', 'responses'):
         raise HTTPException(403, 'This account route only supports model inference.')
+    # Mologate: a personal API key's own limits (phase 6, utils/api_key_limits.py): its daily points
+    # of the pool and how many requests it runs at once. Its models and efforts are checked where
+    # the request comes in (main.chat_completion), against the id it asked for.
+    await api_key_limits.check_daily_points(request, user, split_model_id(model)[0])
+    enforce = await allowance_gate.limits_mode() == 'enforce'
+    slot = await api_key_limits.acquire(request, user, enforce)
+    try:
+        result = await serve_account_model(request, form_data, user, endpoint, metadata, accounts, enforce)
+    except BaseException:
+        if slot is not None:
+            slot.release()
+        raise
+    return api_key_limits.hold_until_done(result, slot)
+
+
+async def serve_account_model(request, form_data, user, endpoint, metadata, accounts, enforce):
+    model = form_data.get('model', '')
     redis = getattr(request.app.state, 'redis', None)
     # Mologate: every attempt leaves a usage ledger row (utils/usage_ledger.py).
     metadata = metadata or getattr(getattr(request, 'state', None), 'metadata', None)
@@ -517,7 +534,7 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     meter = Meter(request, user, metadata, upstream_id)
     # Mologate: in enforce the allowance engine decides first and the request is served as decided
     # (phase 4); a decision that cannot be made lets it go ahead as in observe.
-    if await allowance_gate.limits_mode() == 'enforce':
+    if enforce:
         chat_id = (metadata or {}).get('chat_id') if isinstance(metadata, dict) else None
         decision = await allowance_gate.decide_now(user.id, provider, upstream_id, chat_id)
         if decision is not None:

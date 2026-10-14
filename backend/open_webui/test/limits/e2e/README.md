@@ -18,6 +18,8 @@ E2E_DIR=/tmp/mologate-e2e DATA_DIR=/tmp/mologate-e2e/data WEBUI_SECRET_KEY=e2e-s
 python drive.py observe
 ./server.sh start enforce fresh                 # credits (phase 5), from a fresh team
 python drive.py credits
+./server.sh start enforce fresh                 # personal API keys (phase 6), with the OpenAI SDK
+python drive.py keys
 ./server.sh stop
 ```
 
@@ -29,4 +31,7 @@ up and offers Claude Haiku on Anthropic; and the owner still on their locked res
 `drive.py observe` checks that the same member is served as asked, with the decision only
 recorded. `drive.py credits` checks that Dan's Z.ai Max plan earns 200 credits, that money spent
 through a key earns its owner 0.5 a dollar, that past his share Dan keeps GPT-6 on credits and is
-charged for it, and that disconnecting the plan forfeits the rest.
+charged for it, and that disconnecting the plan forfeits the rest. `drive.py keys` uses the
+official OpenAI Python SDK with a key Cat made: it lists models, chats and streams, the use counts
+in her share and shows on her keys page, the key reaches nothing else, its limits hold, and a
+revoked key stops at once.
