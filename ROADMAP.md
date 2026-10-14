@@ -201,8 +201,9 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
   - After each turn, show the list of files the agent edited in that turn.
   - Show the number of lines added and removed (+ / −) for the whole session.
   - Done: once a response has completely finished, it lists the files added, edited or deleted in
-    the chat's container, with file-type icons and lines added and removed; clicking one opens it
-    in the file browser. A bar above the message box adds them up for the whole chat.
+    the chat's container, with file-type icons and lines added and removed; clicking one shows its
+    diff, and a folder button opens it in the file browser. The bar above the message box with the
+    whole chat's changes shows only in chats linked to a GitHub repository (below).
 
 ### Agents
 
@@ -319,6 +320,10 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
     the chat's container, sets up git, and tells the agent to work in that repository.
   - A repository can only be linked when the chat is created, not added to an existing chat. In a chat
     started without one, every GitHub function is off.
+  - Started: the change summary is ready for it. A chat's link goes in `meta.repository`, and a
+    `git` change source (`utils/change_sources.py`) can report what each response changed and the
+    diff against the base branch; the bar above the message box already shows only in linked chats
+    (docs/container-nodes.md).
 
 ## Security
 

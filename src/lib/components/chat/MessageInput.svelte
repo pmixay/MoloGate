@@ -92,6 +92,7 @@
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
 	import ExtraMenu from './MessageInput/ExtraMenu.svelte';
 	import ChatChangesBar from './MessageInput/ChatChangesBar.svelte';
+	import type { RepositoryLink } from '$lib/utils/changes';
 	import { CONTAINER_TERMINAL_ID, warmUpContainer } from '$lib/apis/containers';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
@@ -148,6 +149,8 @@
 	);
 
 	export let history;
+	// Mologate: the chat's linked repository, if any (lib/utils/changes.ts).
+	export let repository: RepositoryLink | null = null;
 	export let taskIds = null;
 	export let askUser: AskUserPrompt = {
 		show: false,
@@ -1707,9 +1710,9 @@
 							</div>
 						{/if}
 
-						<!-- Mologate: what the agent changed in the chat's container so far. -->
+						<!-- Mologate: in a chat linked to a repository, what isn't committed yet. -->
 						{#if showExtraMenu}
-							<ChatChangesBar {history} />
+							<ChatChangesBar {history} {repository} />
 						{/if}
 
 						<!-- Task list display -->

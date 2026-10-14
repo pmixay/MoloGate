@@ -69,6 +69,7 @@
 		isRasterImageContentType,
 		modelReadsImages
 	} from '$lib/utils';
+	import { chatRepository } from '$lib/utils/changes';
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import { applyResponseStreamEvent, getOutputText } from './Messages/structuredOutput';
@@ -4346,6 +4347,7 @@
 									<MessageInput
 										bind:this={messageInput}
 										{history}
+										repository={chatRepository(chat?.meta)}
 										{taskIds}
 										bind:selectedModels
 										bind:params
@@ -4436,6 +4438,7 @@
 									<MessageInput
 										bind:this={messageInput}
 										{history}
+										repository={chatRepository(chat?.meta)}
 										{taskIds}
 										bind:selectedModels
 										bind:params

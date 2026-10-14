@@ -111,3 +111,58 @@ def test_safe_workspace_path():
     assert safe_workspace_path('/home/user') is None
     assert safe_workspace_path('/home/username/x') is None
     assert safe_workspace_path('/home/user/a\x00b') is None
+
+
+def run_snapshot(tmp_path, mode, snap_id='s1'):
+    import json
+    import subprocess
+    import sys
+
+    from mologate_node.snapshot import SCRIPT
+
+    script = SCRIPT.replace("'/home/user'", repr(str(tmp_path / 'home'))).replace(
+        "'/var/lib/mologate/snapshots'", repr(str(tmp_path / 'store'))
+    )
+    out = subprocess.run([sys.executable, '-c', script, mode, snap_id], capture_output=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_snapshot_changes_with_diffs(tmp_path):
+    home = tmp_path / 'home'
+    (home / 'node_modules').mkdir(parents=True)
+    (home / 'app.py').write_text('a\nb\nc\n')
+    (home / 'old.txt').write_text('gone\n')
+    (home / 'logo.bin').write_bytes(b'\0\1\2')
+    (home / 'node_modules' / 'dep.js').write_text('x\n')
+    assert run_snapshot(tmp_path, 'snapshot')['files'] == 3
+
+    (home / 'app.py').write_text('a\nB\nc\nd\n')
+    (home / 'old.txt').unlink()
+    (home / 'new.md').write_text('# Hi\n')
+    (home / 'logo.bin').write_bytes(b'\0\1\2\3')
+    (home / 'node_modules' / 'dep.js').write_text('changed\n')
+    result = run_snapshot(tmp_path, 'changes')
+    files = {item['path']: item for item in result['files']}
+    assert set(files) == {'app.py', 'old.txt', 'new.md', 'logo.bin'}
+    assert (result['total'], result['added'], result['removed']) == (4, 3, 2)
+
+    app = files['app.py']
+    assert (app['status'], app['added'], app['removed']) == ('modified', 2, 1)
+    assert app['diff'].splitlines() == ['--- a/app.py', '+++ b/app.py', '@@ -1,3 +1,4 @@', ' a', '-b', '+B', ' c', '+d']
+    assert files['new.md']['diff'].splitlines()[:2] == ['--- /dev/null', '+++ b/new.md']
+    assert (files['old.txt']['status'], files['old.txt']['removed']) == ('deleted', 1)
+    assert files['old.txt']['diff'].splitlines()[1] == '+++ /dev/null'
+    # Binary files are listed without counts or a diff.
+    assert files['logo.bin'] == {'path': 'logo.bin', 'status': 'modified', 'added': None, 'removed': None}
+
+
+def test_snapshot_diffs_are_capped(tmp_path):
+
+    home = tmp_path / 'home'
+    home.mkdir()
+    run_snapshot(tmp_path, 'snapshot')
+    (home / 'big.txt').write_text(''.join(f'line {i}\n' for i in range(20000)))
+    big = {item['path']: item for item in run_snapshot(tmp_path, 'changes')['files']}['big.txt']
+    assert big['added'] == 20000
+    assert big['diff_truncated'] is True
+    assert len(big['diff']) <= 32 * 1024

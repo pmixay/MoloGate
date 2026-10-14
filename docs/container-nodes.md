@@ -62,8 +62,18 @@ Terminal API.
   `/home/user` (hashes, plus compressed copies of text files up to 1 MB; dependency, cache and
   version-control folders skipped). When the response has completely finished, sub-agents and
   tool calls included, the message lists the files that were added, edited or deleted, with lines
-  added and removed. A bar above the message box adds them up for the whole chat. Clicking a file
-  opens it in the file browser.
+  added and removed. Clicking a file shows its diff for that response (git's unified diff, up to
+  32 KB per file and 160 KB per response, saved with the message); the folder button opens it in
+  the file browser.
+- **Changes against a repository.** The bar above the message box, with everything not yet
+  committed, shows only in a chat linked to a GitHub repository; in any other chat every GitHub
+  feature is off (ROADMAP.md, GitHub). Linking is not built yet, but the change record is ready
+  for it: `utils/change_sources.py` collects each response's changes from a _source_, `session`
+  (the container snapshots above) for every chat today. A chat links a repository with
+  `meta.repository` (`{"provider": "github", "name": "owner/repo", "branch", "base"}`), and a
+  source registered as `git` takes over linked chats: it reports the same per-response `files`
+  plus `workspace`, the diff against the base branch that a commit or pull request would hold,
+  which the bar then shows instead of adding up the responses.
 - **A network switch.** The **⋯** (Extra) button next to **+** opens the container's settings:
   its state (running, paused, stopped), its size behind the **i** button, and **Network access**. Internet is on by
   default. Switching it off disconnects the running container at once; on reconnects it, with the
@@ -226,7 +236,7 @@ Every `/v1` call needs `Authorization: Bearer <NODE_API_KEY>`. A context is `cha
 | `GET /v1/sandboxes/{context}/export`                 | Stop it and stream `/home/user` as a tar                    |
 | `PUT /v1/sandboxes/{context}/import`                 | Create it from such a tar                                   |
 | `POST /v1/sandboxes/{context}/snapshots/{id}`        | Record `/home/user` before a response                       |
-| `GET /v1/sandboxes/{context}/snapshots/{id}/changes` | Files changed since, with lines added and removed           |
+| `GET /v1/sandboxes/{context}/snapshots/{id}/changes` | Files changed since, with lines added and removed and diffs |
 | `* /v1/sandboxes/{context}/t/{path}`                 | Open Terminal, HTTP and WebSocket, started on demand        |
 
 ## Tests
@@ -236,6 +246,8 @@ Every `/v1` call needs `Authorization: Bearer <NODE_API_KEY>`. A context is `cha
   ownership and the agent's container prompt.
 - `backend/open_webui/test/test_archive_guard.py`: ZIP bombs, lying and overlapping ZIP entries,
   nested archives, gzip bombs, tar entry counts and bounded chunk decompression.
+- `backend/open_webui/test/test_change_sources.py`: the session source by default, a repository
+  source only for chats with a valid `meta.repository` link.
 - `backend/open_webui/test/test_uploads.py`: chunked uploads (raw and gzip chunks, resends, wrong
   sizes, compressed bombs, ownership, the size limit).
 - Checked by hand against Docker: creation in under a second, limits inside the container, the

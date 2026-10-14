@@ -81,7 +81,7 @@ from open_webui.socket.main import (
     get_event_emitter,
 )
 from open_webui.tasks import clear_response_stream, save_response_stream
-from open_webui.utils import containers, refusals
+from open_webui.utils import change_sources, containers, refusals
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
@@ -6650,8 +6650,8 @@ async def streaming_chat_response_handler(response, ctx):
 
                 current_output = full_output()
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
-                # Mologate: the files this response changed in the chat's container, with +/- lines.
-                changes = await containers.collect_changes(metadata)
+                # Mologate: the files this response changed, with +/- lines and diffs (utils/change_sources.py).
+                changes = await change_sources.collect(metadata)
                 # Mologate: whether the model declined, from the provider's word or the answer's.
                 refusal = refusals.detect(current_output, refusal_signals)
                 data = {

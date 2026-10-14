@@ -2,9 +2,10 @@
 
 ``SCRIPT`` runs inside the chat's container with its own Python. When a response starts, it records
 every file under /home/user (size, modification time, hash) and keeps a compressed copy of each
-small text file; when the response is done, it compares the workspace with that record and counts
-changed lines with git's diff (difflib where git is missing). Records are incremental: unchanged
-files aren't read again. Dependency, cache and version-control folders are skipped.
+small text file; when the response is done, it compares the workspace with that record and gives
+each changed text file's unified diff and lines added and removed, from git's diff (difflib where git
+is missing). Diffs are capped per file and per response. Records are incremental: unchanged files
+aren't read again. Dependency, cache and version-control folders are skipped.
 """
 
 SCRIPT = r'''
@@ -21,6 +22,9 @@ MAX_FILES = 20000
 MAX_TEXT = 1024 * 1024
 KEEP = 20
 MAX_LISTED = 300
+# Diffs kept with a response: at most this much per file, and in all.
+DIFF_FILE = 32 * 1024
+DIFF_TOTAL = 160 * 1024
 
 
 def walk():
@@ -157,41 +161,52 @@ def old_text(entry):
         return None
 
 
-def count_lines(data):
-    return data.count(b'\n') + (1 if data and not data.endswith(b'\n') else 0)
 
-
-def numstat(old, new_path):
-    """Lines added and removed between old bytes and a file, or (None, None) for binary files."""
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        f.write(old)
-        old_path = f.name
+def diff(old, new_path, rel):
+    """Unified diff from old bytes (None: the file is new) to a file (None: it was deleted), with
+    lines added and removed; (None, None, None) when git calls it binary."""
+    old_path = '/dev/null'
+    if old is not None:
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(old)
+            old_path = f.name
     try:
-        out = subprocess.run(
-            ['git', 'diff', '--no-index', '--numstat', '--', old_path, new_path],
+        proc = subprocess.run(
+            ['git', 'diff', '--no-index', '--no-color', '--no-ext-diff', '-U3', '--',
+             old_path, new_path or '/dev/null'],
             capture_output=True, timeout=20,
-        ).stdout.decode(errors='replace').split('\t')
-        if len(out) >= 2:
-            return (None, None) if out[0] == '-' else (int(out[0]), int(out[1]))
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+        )
+        out = proc.stdout.decode('utf-8', 'replace')
+        # 1: the files differ, 0: they don't; anything else is git failing.
+        if proc.returncode in (0, 1):
+            if 'Binary files' in out.split('@@', 1)[0]:
+                return None, None, None
+            hunks = out[out.index('@@'):] if '@@' in out else ''
+            return finish(hunks.splitlines(), old is None, new_path is None, rel)
+    except (OSError, subprocess.TimeoutExpired):
         pass
     finally:
-        os.unlink(old_path)
+        if old is not None:
+            os.unlink(old_path)
     import difflib
     try:
-        with open(new_path, 'rb') as f:
-            new = f.read()
-        a = old.decode('utf-8', 'replace').splitlines()
+        new = b''
+        if new_path:
+            with open(new_path, 'rb') as f:
+                new = f.read()
+        a = (old or b'').decode('utf-8', 'replace').splitlines()
         b = new.decode('utf-8', 'replace').splitlines()
     except OSError:
-        return None, None
-    added = removed = 0
-    for line in difflib.unified_diff(a, b, n=0, lineterm=''):
-        if line.startswith('+') and not line.startswith('+++'):
-            added += 1
-        elif line.startswith('-') and not line.startswith('---'):
-            removed += 1
-    return added, removed
+        return None, None, None
+    lines = list(difflib.unified_diff(a, b, lineterm=''))[2:]
+    return finish(lines, old is None, new_path is None, rel)
+
+
+def finish(hunks, created, deleted, rel):
+    added = sum(1 for line in hunks if line.startswith('+'))
+    removed = sum(1 for line in hunks if line.startswith('-'))
+    header = ['--- ' + ('/dev/null' if created else 'a/' + rel), '+++ ' + ('/dev/null' if deleted else 'b/' + rel)]
+    return added, removed, '\n'.join(header + hunks) if hunks else ''
 
 
 def changes(snap_id):
@@ -201,30 +216,30 @@ def changes(snap_id):
     before = base['files']
     after, truncated = scan(before)
     result = []
+    budget = DIFF_TOTAL
     for rel in sorted(set(before) | set(after)):
         old, new = before.get(rel), after.get(rel)
         if old and new and old[2] == new[2]:
             continue
-        path = os.path.join(ROOT, rel)
-        if new and not old:
-            added = None
-            if new[3] and new[0] <= MAX_TEXT:
-                try:
-                    with open(path, 'rb') as f:
-                        added = count_lines(f.read())
-                except OSError:
-                    pass
-            result.append({'path': rel, 'status': 'added', 'added': added, 'removed': 0 if added is not None else None})
-        elif old and not new:
-            data = old_text(old) if old[3] else None
-            removed = count_lines(data) if data is not None else None
-            result.append({'path': rel, 'status': 'deleted', 'added': 0 if removed is not None else None, 'removed': removed})
-        else:
-            added = removed = None
-            data = old_text(old) if old[3] else None
-            if data is not None and new[3] and new[0] <= MAX_TEXT:
-                added, removed = numstat(data, path)
-            result.append({'path': rel, 'status': 'modified', 'added': added, 'removed': removed})
+        status = 'added' if not old else 'deleted' if not new else 'modified'
+        item = {'path': rel, 'status': status, 'added': None, 'removed': None}
+        result.append(item)
+        # Text on both sides that is small enough to keep (a deleted or new file has one side).
+        old_data = (old_text(old) if old[3] else None) if old else b''
+        new_ok = not new or (new[3] and new[0] <= MAX_TEXT)
+        if old_data is None or not new_ok:
+            continue
+        added, removed, text = diff(old_data if old else None, os.path.join(ROOT, rel) if new else None, rel)
+        item['added'], item['removed'] = added, removed
+        if text is None or len(result) > MAX_LISTED:
+            continue
+        limit = min(DIFF_FILE, budget)
+        if len(text) > limit:
+            text = text[: text.rfind('\n', 0, limit) + 1 if limit > 0 else 0].rstrip('\n')
+            item['diff_truncated'] = True
+        if text:
+            item['diff'] = text
+            budget -= len(text)
     save('last.json', {'at': time.time(), 'files': after, 'truncated': truncated})
     return {
         'files': result[:MAX_LISTED],
