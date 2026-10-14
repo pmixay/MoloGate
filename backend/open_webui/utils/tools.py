@@ -662,6 +662,21 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('chats'):
         builtin_functions.extend([search_chats, view_chat])
 
+    # Mologate: the chat's tasks (utils/agent_tasks.py). Every agent of a saved chat checks them; the
+    # main agent also stops them.
+    if (
+        is_builtin_tool_enabled('subagents')
+        and config.get('subagents.enable')
+        and getattr(request.state, 'direct', False) is not True
+        and is_saved_chat_id(metadata.get('chat_id'))
+        and not metadata.get('automation_id')
+    ):
+        from open_webui.tools.builtin import cancel_task, task_status
+
+        builtin_functions.append(task_status)
+        if getattr(request.state, 'internal', False) is not True:
+            builtin_functions.append(cancel_task)
+
     if (
         is_builtin_tool_enabled('subagents')
         and config.get('subagents.enable')
@@ -831,6 +846,24 @@ async def get_builtin_tools(
                 'description': "The sub-agent's role. "
                 + ' '.join(f'{profile["name"]}: {profile["description"]}' for profile in profiles),
             }
+            # Mologate: when a foreground sub-agent moves to the background by itself (utils/task_limits.py).
+            from open_webui.utils import task_limits
+            from open_webui.utils.agent_tasks import describe_seconds
+
+            auto_background = (
+                await task_limits.get('auto_background_seconds') if config.get('subagents.background_enabled') else 0
+            )
+
+            def describe_auto_background(text: str) -> str:
+                if not auto_background:
+                    return '\n'.join(line for line in text.split('\n') if 'to the background by itself' not in line)
+                return text.replace('that runs long', f'still working after {describe_seconds(auto_background)}')
+
+            spec['description'] = describe_auto_background(spec.get('description') or '')
+            if isinstance(properties.get('background'), dict):
+                properties['background']['description'] = describe_auto_background(
+                    properties['background'].get('description') or ''
+                )
 
         tools_dict[func.__name__] = {
             'tool_id': f'builtin:{func.__name__}',

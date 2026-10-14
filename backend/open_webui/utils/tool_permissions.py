@@ -79,6 +79,10 @@ READ_ONLY_TOOLS = {
     'timer',
     'list_agents',
     'send_message',
+    # Mologate: the chat's tasks; cancel_task only stops the agent's own work, schedule_task is a timer.
+    'task_status',
+    'cancel_task',
+    'schedule_task',
 }
 
 # The safety net when no reviewer answers: only unmistakably destructive commands.
