@@ -36,7 +36,8 @@
 		showFileNavPath,
 		showFileNavDir,
 		pyodideWorker,
-		desktopEvent
+		desktopEvent,
+		showTasks
 	} from '$lib/stores';
 	import { refreshChatList } from '$lib/stores/chatList';
 	import { getFileContentById } from '$lib/apis/files';
@@ -621,6 +622,40 @@
 				if ($settings?.notificationEnabled ?? false) {
 					new Notification(`${data.title} / ${$WEBUI_NAME}`, {
 						body: timeStr,
+						// LICENSE covers this Open WebUI notification identifier.
+						// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+						// https://docs.openwebui.com/license.
+						icon: `${WEBUI_BASE_URL}/static/favicon.png`
+					});
+				}
+			}
+			return;
+		}
+
+		// Mologate: a task with news for the user (e.g. a schedule that turned itself off after
+		// failing). Every open tab shows it; the Tasks panel refetches on its own.
+		if (type === 'chat:task') {
+			const notify = data?.notify;
+			if (notify && (notify.title || notify.body)) {
+				toast.custom(/** @type {any} */ (NotificationToast), {
+					componentProps: {
+						onClick: () => {
+							if (event.chat_id === $chatId) {
+								showTasks.set({ taskId: data.task_id ?? null });
+							} else {
+								goto(`/c/${event.chat_id}`);
+							}
+						},
+						title: notify.title || $i18n.t('Tasks'),
+						content: notify.body ?? ''
+					},
+					duration: 15000,
+					unstyled: true
+				});
+
+				if ($isLastActiveTab && ($settings?.notificationEnabled ?? false)) {
+					new Notification(`${notify.title || $i18n.t('Tasks')} / ${$WEBUI_NAME}`, {
+						body: notify.body ?? '',
 						// LICENSE covers this Open WebUI notification identifier.
 						// Do not alter, remove, obscure, or replace it except as LICENSE permits:
 						// https://docs.openwebui.com/license.

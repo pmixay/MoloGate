@@ -152,6 +152,11 @@ export const showFileNav = writable(false);
 export type FileNavOpenRequest = string | { path: string; page?: number | null };
 export const showFileNavPath: Writable<FileNavOpenRequest | null> = writable(null);
 export const showFileNavDir: Writable<string | null> = writable(null);
+// Mologate: the side panel's tab, and a request to show its Tasks tab, on one task (row id or
+// handle) if given.
+export type ChatControlsTab = 'files' | 'tasks' | 'overview';
+export const chatControlsTab: Writable<ChatControlsTab> = writable('overview');
+export const showTasks: Writable<{ taskId?: string | null } | null> = writable(null);
 export const selectedTerminalId: Writable<string | null> = writable(null);
 // Mologate: the ⋯ menu's internet switch for a chat that isn't saved yet; null keeps the default
 // (on). Sent with the chat's first message, then the chat's container keeps it.

@@ -1,7 +1,3 @@
-<script context="module" lang="ts">
-	let savedTab: 'files' | 'overview' = 'overview';
-</script>
-
 <script lang="ts">
 	import { onMount, tick, getContext } from 'svelte';
 	import {
@@ -13,7 +9,9 @@
 		settings,
 		showFileNavPath,
 		selectedTerminalId,
-		user
+		user,
+		chatControlsTab,
+		showTasks
 	} from '$lib/stores';
 
 	import Drawer from '../common/Drawer.svelte';
@@ -23,13 +21,15 @@
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
+	import TasksPanel from './Tasks/TasksPanel.svelte';
+	import { chatTasks } from './Tasks/tasksStore';
 	import { isSavedChatId } from '$lib/utils/chatId';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	// Mologate: this side panel no longer has a Controls tab (chat parameters) and no voice-call
-	// overlay. It only opens for artifacts, embeds, terminal/code-interpreter files and the
-	// chat overview, each from its own entry point.
+	// overlay. It only opens for artifacts, embeds, terminal/code-interpreter files, the chat's
+	// tasks and the chat overview, each from its own entry point.
 	export let history;
 
 	export let chatId = null;
@@ -44,12 +44,8 @@
 	let mounted = false;
 	let controlsWidth = 350;
 
-	// Tab state for the Files / Overview panel
-	let activeTab = savedTab;
-	// svelte-ignore reactive_declaration_module_script_dependency
-	$: {
-		savedTab = activeTab;
-	}
+	// Mologate: the Files / Tasks / Overview tab is $chatControlsTab, which the header buttons
+	// also set; it stays as it was when another chat opens.
 
 	$: hasMessages = history?.messages && Object.keys(history.messages).length > 0;
 
@@ -74,25 +70,49 @@
 		terminalFilesAvailable ||
 		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
 	$: showOverviewTab = hasMessages;
+	// Mologate: once the chat has had tasks (it stays after Clear empties the list).
+	$: showTasksTab = isSavedChatId(chatId) && $chatTasks.chatId === chatId && $chatTasks.visible;
 
-	// Tab fallback: if active tab becomes hidden, switch to the other one
-	$: if (!showOverviewTab && activeTab === 'overview' && showFilesTab) activeTab = 'files';
-	$: if (!showFilesTab && activeTab === 'files') activeTab = 'overview';
+	// Tab fallback: if active tab becomes hidden, switch to another one
+	$: if (!showOverviewTab && $chatControlsTab === 'overview' && showFilesTab)
+		$chatControlsTab = 'files';
+	$: if (!showFilesTab && $chatControlsTab === 'files') $chatControlsTab = 'overview';
+	$: if (!showTasksTab && $chatControlsTab === 'tasks')
+		$chatControlsTab = showFilesTab ? 'files' : 'overview';
+	$: if (!showOverviewTab && !showFilesTab && showTasksTab && $chatControlsTab === 'overview')
+		$chatControlsTab = 'tasks';
 
 	// Auto-close if there is nothing to show
-	$: if (!showFilesTab && !showOverviewTab && !specialPanel) {
+	$: if (!showFilesTab && !showOverviewTab && !showTasksTab && !specialPanel) {
 		showControls.set(false);
 	}
 
 	// Auto-switch to Files tab when display_file is triggered
 	$: if ($showFileNavPath && terminalFilesAvailable) {
-		activeTab = 'files';
+		$chatControlsTab = 'files';
 		showControls.set(true);
 	}
 
 	// Keep Files selected when a terminal is active; opening the panel is handled by selection UI.
 	$: if ($selectedTerminalId && terminalFilesAvailable) {
-		activeTab = 'files';
+		$chatControlsTab = 'files';
+	}
+
+	// Mologate: the Tasks tab, opened from the header, a message row or a tool call, on one task
+	// if the request names it.
+	let selectedTaskId: string | null = null;
+	let tasksChatId = chatId;
+	$: if (chatId !== tasksChatId) {
+		tasksChatId = chatId;
+		selectedTaskId = null;
+	}
+	$: if ($showTasks) {
+		if ($showTasks.taskId !== undefined) selectedTaskId = $showTasks.taskId ?? null;
+		$chatControlsTab = 'tasks';
+		showArtifacts.set(false);
+		showEmbeds.set(false);
+		showControls.set(true);
+		showTasks.set(null);
 	}
 
 	// Clear selected direct terminal if user lost permission
@@ -183,22 +203,38 @@
 							<div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
 								{#if showFilesTab}
 									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
 										'files'
 											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
 											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'files')}
+										on:click={() => ($chatControlsTab = 'files')}
 									>
 										{$i18n.t('Files')}
 									</button>
 								{/if}
+								{#if showTasksTab}
+									<button
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
+										'tasks'
+											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
+											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
+										on:click={() => ($chatControlsTab = 'tasks')}
+									>
+										{$i18n.t('Tasks')}
+										{#if $chatTasks.running}
+											<span class="ml-0.5 text-xs tabular-nums text-gray-400 dark:text-gray-500"
+												>{$chatTasks.running}</span
+											>
+										{/if}
+									</button>
+								{/if}
 								{#if showOverviewTab}
 									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
 										'overview'
 											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
 											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'overview')}
+										on:click={() => ($chatControlsTab = 'overview')}
 									>
 										{$i18n.t('Overview')}
 									</button>
@@ -222,8 +258,23 @@
 							</button>
 						</div>
 
-						<div class="flex-1 min-h-0 {activeTab === 'overview' ? 'h-full' : ''}">
-							{#if activeTab === 'overview'}
+						<div
+							class="flex-1 min-h-0 {$chatControlsTab === 'overview' || $chatControlsTab === 'tasks'
+								? 'h-full'
+								: ''}"
+						>
+							{#if $chatControlsTab === 'tasks' && showTasksTab}
+								<TasksPanel
+									chatId={chatId ?? ''}
+									{history}
+									{chatUser}
+									showMessage={(message: any, scroll?: boolean) => {
+										showControls.set(false);
+										showMessage(message, scroll);
+									}}
+									bind:selectedTaskId
+								/>
+							{:else if $chatControlsTab === 'overview'}
 								<Overview
 									{history}
 									{chatUser}
@@ -232,9 +283,9 @@
 										showMessage(node.data.message, true);
 									}}
 								/>
-							{:else if activeTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
+							{:else if $chatControlsTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
 								<FileNav {chatId} />
-							{:else if activeTab === 'files' && codeInterpreterEnabled}
+							{:else if $chatControlsTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav />
 							{/if}
 						</div>
@@ -258,7 +309,8 @@
 			<div
 				class="w-full {specialPanel
 					? ' '
-					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {activeTab === 'files'
+					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {$chatControlsTab === 'files' ||
+				$chatControlsTab === 'tasks'
 					? ''
 					: 'overflow-y-auto'} scrollbar-hidden"
 				id="controls-container"
@@ -275,22 +327,38 @@
 							<div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
 								{#if showFilesTab}
 									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
 										'files'
 											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
 											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'files')}
+										on:click={() => ($chatControlsTab = 'files')}
 									>
 										{$i18n.t('Files')}
 									</button>
 								{/if}
+								{#if showTasksTab}
+									<button
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
+										'tasks'
+											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
+											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
+										on:click={() => ($chatControlsTab = 'tasks')}
+									>
+										{$i18n.t('Tasks')}
+										{#if $chatTasks.running}
+											<span class="ml-0.5 text-xs tabular-nums text-gray-400 dark:text-gray-500"
+												>{$chatTasks.running}</span
+											>
+										{/if}
+									</button>
+								{/if}
 								{#if showOverviewTab}
 									<button
-										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {activeTab ===
+										class="px-2.5 py-1 text-sm rounded-lg transition whitespace-nowrap {$chatControlsTab ===
 										'overview'
 											? 'bg-gray-100/40 dark:bg-gray-800/25 font-normal text-gray-700 dark:text-gray-200'
 											: 'text-gray-500 dark:text-gray-400 hover:bg-gray-100/30 dark:hover:bg-gray-800/20 hover:text-gray-600 dark:hover:text-gray-300'}"
-										on:click={() => (activeTab = 'overview')}
+										on:click={() => ($chatControlsTab = 'overview')}
 									>
 										{$i18n.t('Overview')}
 									</button>
@@ -314,8 +382,20 @@
 							</button>
 						</div>
 
-						<div class="flex-1 min-h-0 {activeTab === 'overview' ? 'h-full' : ''}">
-							{#if activeTab === 'overview'}
+						<div
+							class="flex-1 min-h-0 {$chatControlsTab === 'overview' || $chatControlsTab === 'tasks'
+								? 'h-full'
+								: ''}"
+						>
+							{#if $chatControlsTab === 'tasks' && showTasksTab}
+								<TasksPanel
+									chatId={chatId ?? ''}
+									{history}
+									{chatUser}
+									{showMessage}
+									bind:selectedTaskId
+								/>
+							{:else if $chatControlsTab === 'overview'}
 								<Overview
 									{history}
 									{chatUser}
@@ -329,9 +409,9 @@
 										showMessage(node.data.message, true);
 									}}
 								/>
-							{:else if activeTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
+							{:else if $chatControlsTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
 								<FileNav overlay={dragged} {chatId} />
-							{:else if activeTab === 'files' && codeInterpreterEnabled}
+							{:else if $chatControlsTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav overlay={dragged} />
 							{/if}
 						</div>
