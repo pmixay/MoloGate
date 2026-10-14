@@ -95,6 +95,15 @@ async def scheduler_worker_loop(app) -> None:
             except Exception:
                 log.exception('Scheduler: timer error')
 
+            # ── Monitors ──
+            try:
+                from open_webui.utils.monitors import claim_due_monitors, run_monitor_check
+
+                for monitor_id, claim_id in await claim_due_monitors(int(time.time_ns()), limit=10):
+                    asyncio.create_task(run_monitor_check(app, monitor_id, claim_id))
+            except Exception:
+                log.exception('Scheduler: monitor error')
+
             if now < next_scheduler_poll:
                 await asyncio.sleep(max(1, TIMER_POLL_INTERVAL))
                 continue

@@ -4527,3 +4527,70 @@ async def delete_calendar_event(
     except Exception as e:
         log.exception(f'delete_calendar_event error: {e}')
         return JSONCodec.dumps({'error': str(e)})
+
+
+# =============================================================================
+# MONITOR TOOL
+# =============================================================================
+
+
+async def monitor(
+    description: str,
+    command: str = '',
+    url: str = '',
+    expect_status: int = 200,
+    pattern: str = '',
+    interval_seconds: int = 0,
+    timeout_minutes: int = 0,
+    max_checks: int = 0,
+    background: bool = False,
+    __request__: Request = None,
+    __user__: dict = None,
+    __metadata__: dict = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Wait until something in this chat's container becomes true: a command succeeds or prints what
+    you expect, or a URL answers. Use it instead of polling with run_command to wait for a build, a
+    server, a file or a deployment. Checks run in the container on a schedule, in /home/user, and
+    never call a model. Give exactly one of command or url.
+    It waits and returns the result; if still waiting after a few minutes it moves to the
+    background by itself, and you get one message in this chat when it's true or when it gives up.
+
+    :param description: What you are waiting for, in a few words, such as "the build to finish"
+    :param command: Shell command; true when it exits 0, or when its output matches pattern
+    :param url: http(s) URL fetched from inside the container; true when it answers expect_status
+        (and its body matches pattern)
+    :param expect_status: The HTTP status that counts as true for url
+    :param pattern: Optional extended regular expression (grep -E) the output or body must match
+    :param interval_seconds: Seconds between checks; 0 for the default, which is also the shortest
+    :param timeout_minutes: Give up after this many minutes; 0 for the longest allowed (6 hours by default)
+    :param max_checks: Give up after this many checks; 0 for the most allowed
+    :param background: Return at once and get a message in this chat when it ends
+    :return: JSON with the outcome (met, timed_out, failed or cancelled), the checks made and the last check's output
+    """
+    if __request__ is None:
+        return 'Error: request context not available.'
+    if getattr(__request__.state, 'internal', False) is True:
+        return 'Error: monitors cannot be started from internal chats.'
+    if not is_saved_chat_id(__chat_id__):
+        return 'Error: monitors need a saved chat.'
+
+    from open_webui.utils.monitors import start_monitor
+
+    return await start_monitor(
+        description=description,
+        command=command,
+        url=url,
+        expect_status=expect_status,
+        pattern=pattern,
+        interval_seconds=interval_seconds,
+        timeout_minutes=timeout_minutes,
+        max_checks=max_checks,
+        background=background,
+        user_data=__user__ or {},
+        metadata=__metadata__ or {},
+        parent_chat_id=__chat_id__ or '',
+        parent_message_id=__message_id__,
+    )
