@@ -883,6 +883,16 @@ async def get_builtin_tools(
                     properties['background'].get('description') or ''
                 )
 
+        if func.__name__ == 'monitor':
+            # Mologate: name the admin's time before a waiting monitor moves to the background.
+            from open_webui.utils import task_limits
+            from open_webui.utils.agent_tasks import describe_seconds
+
+            if auto_background := await task_limits.get('auto_background_seconds'):
+                spec['description'] = (spec.get('description') or '').replace(
+                    'after a few minutes', f'after {describe_seconds(auto_background)}'
+                )
+
         tools_dict[func.__name__] = {
             'tool_id': f'builtin:{func.__name__}',
             'callable': callable,
