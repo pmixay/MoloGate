@@ -144,7 +144,8 @@ At that baseline there were no account, ledger or credit tables, and no account 
 provides `provider_account`, `provider_login` and account UI, and keys limits by account on the
 chat, Responses and proxy paths; §10 added `limit_reset_event`, and Phase 2 added the usage
 ledger (`usage_event`) and metering (`account_window`, `account_reading`, `meter_interval`,
-`usage_calibration`, §8). `decide()` and the credit tables remain work for Phases 3 and 5.
+`usage_calibration`, §8), and Phase 3 the allowance engine (`decide()`, §7) in observe mode. The
+credit tables remain work for Phase 5.
 
 ---
 
@@ -217,9 +218,10 @@ fit: intervals, observed and predicted percent, error, fitted weight), `samples`
 (`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside`), `tier`
 (`reserve` | `pool` | `credit` | `worker` | `owner_outside`), `input_tokens`, `output_tokens`,
 `cached_tokens`, `reasoning_tokens`, `cost` (USD) and `cost_source` (`provider` | `estimate`),
-`est_units`, `units`, `window`, `credits_charged`, `status` (`ok` | `error` | `limited`),
-`chat_id`, `request_id`. Index on (`user_id`, `ts`) and (`account_id`, `ts`). Migration
-`a8d4e2c7f915`; `c4e8a2d6f1b9` added `window`. `ts` is when the answer ended. Request rows leave
+`est_units`, `units`, `window`, `decision`, `credits_charged`, `status` (`ok` | `error` |
+`limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and (`account_id`, `ts`).
+Migration `a8d4e2c7f915`; `c4e8a2d6f1b9` added `window`, `d7a3f9c2e5b1` `decision` (what the
+allowance engine decided for the request, §7.6). `ts` is when the answer ended. Request rows leave
 `units` empty: a request's units in a window come from its tokens and that window's calibration
 (§8) when they are needed, so a refit re-prices history. `outside` rows are the unexplained rises
 from §8: no tokens, their `units` and `window` set, `tier` `owner_outside`, and the owner as
@@ -320,6 +322,60 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
    until the 5-hour window moves on.
 8. A and B both reach `u = 100 - lock`. Every non-owner gets tier 5. Ann and Bob still use their
    locked reserves (tier 1).
+
+### 7.6 Implementation (Phase 3)
+
+`utils/allowance.py` holds the engine: `decide(request, state)` is pure, and every example above
+is a test (`test/limits/test_allowance.py`). `build_state` turns what metering knows into the
+engine's numbers, for the live gate and the replay alike:
+
+- `u_a` is the account window's latest reading (§8); an unknown window counts as unused, never
+  empty. A member's units on an account come from their tokens since the window last reset and
+  the provider's calibration. Before there is one, the account's own rise, less outside use, is
+  shared out by tokens weighted 1 : 0.1 : 4 : 4, so the members' units add up to the reading.
+- `o_a` is the owner's units on their account plus their outside use (§8), over `c_a`, at most
+  `u_a`. The owner is idle when neither has happened in 24 hours; their own request ends the loan.
+- `used_u` is the member's units on accounts that are not theirs, plus their own shared
+  account's use past the reserve, outside use included (decision 4).
+- `N` counts every approved member (role user or admin).
+
+Where this section is silent, the engine does the following:
+
+- A **private** account is all its owner's: tier 1 while `u_a < 100`, not only up to 50, and
+  never part of the pool. A **team** account is all pool (`C` gets `c_a * 100`). A **paused**
+  account gives nothing.
+- An account **cooling down** still counts towards `C`, but is not chosen.
+- An **API key** with a monthly budget has one window, `budget`: `u_a` is this month's spend in the
+  ledger over the budget, and a $20 budget weighs 1 (a dollar is 5 units), so keys of different
+  sizes share one pool like plans do. A key without a budget has no window and limits nobody.
+- When no account with room serves the model asked for, a member within their share also gets the
+  provider's worker model (tier 4), with a note that says so.
+- **Worker models** are found by family in the provider's model list: Luna for ChatGPT and OpenAI,
+  Haiku for Anthropic, Flash for Z.ai, Luna for OpenRouter (the newest of the family, as the
+  default system model is found). The `mologate.worker_models` setting, `{provider: family}`,
+  changes them. A worker model asked for within the share is plain pool use.
+- Credits (Phase 5) and overrides (Phase 4) are zero until those phases.
+
+`utils/allowance_gate.py` runs it on every request a provider account serves, beside the
+request: it never slows or fails one. The pool's numbers are shared for 15 seconds. The decision
+(tier, account, model, whether it would swap, the reason and each window's capacity, share,
+extra, use and what is left) is written on the request's ledger rows as `decision`, with the
+mode. In `observe`, nothing changes: `tier` still says whose account served the request, and
+the request goes where it would have gone. Enforcing the decision is Phase 4.
+
+`GET /api/v1/provider-accounts/allowance?days=7` (admins) shows, per member, how many requests
+went to each tier, and the same days decided again by `replay`: the ledger's requests, outside
+use and the account readings, in order, under the rules. `blocked_with_room` counts requests the
+rules refused, or sent to a worker within the member's share, while an account had room for
+them; it must stay 0.
+
+Tested with a week of five members on a ChatGPT Plus account (Ann's) and a Pro account five times
+its size (Bob's), with Ann's laptop use, every decision enforced. Over five seeds: no request
+refused; Dan, who works without a break, got about 570 big-model requests within his share and
+3,200 on workers after; Cat, steadily busy, about 620 and 530; Eve, now and then, never ran past
+her share; Ann used her reserve, then the pool; Bob's own Pro account always had room. Throughout,
+big models went to the pool only within the share, the pool never took more than one request
+from an owner's locked reserve, and an owner with reserve left always got it.
 
 ---
 
@@ -599,11 +655,13 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 3: allowance engine
 
-- [ ] `decide()` as a pure module with every example in §7.5 as a test, plus a simulation that
-      replays a week of ledger data under the rules.
-- [ ] `MOLOGATE_LIMITS_MODE=observe` records decisions on every request.
+- [x] `decide()` as a pure module with every example in §7.5 as a test, plus a simulation that
+      replays a week of ledger data under the rules (§7.6: `utils/allowance.py`, the replay in
+      `GET /api/v1/provider-accounts/allowance`).
+- [x] `MOLOGATE_LIMITS_MODE=observe` records decisions on every request (`usage_event.decision`).
 - [ ] Done when: tests pass and the simulation shows no member blocked while the pool has headroom
-      for their tier.
+      for their tier. The tests and the simulated week pass (§7.6); the replay of a week of the
+      team's real requests is still to come.
 
 ### Phase 4: enforcement
 

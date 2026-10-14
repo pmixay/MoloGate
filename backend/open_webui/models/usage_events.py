@@ -11,7 +11,7 @@ import uuid
 
 from sqlalchemy import BigInteger, Column, Float, Index, Integer, String, Text, func, select
 
-from open_webui.internal.db import Base, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context
 
 
 class UsageEvent(Base):
@@ -41,6 +41,10 @@ class UsageEvent(Base):
     units = Column(Float, nullable=True)
     # 5h | weekly, for outside rows only
     window = Column(String(16), nullable=True)
+    # Mologate: what the allowance engine decided for the request (utils/allowance_gate.py): tier,
+    # account, model, whether it would swap to a worker, and the pool numbers. In observe mode it
+    # changes nothing; ``tier`` above still says whose account served the request.
+    decision = Column(JSONField, nullable=True)
     credits_charged = Column(Float, nullable=False, default=0)
     # ok | error | limited
     status = Column(String(16), nullable=False)
@@ -186,6 +190,109 @@ class UsageEventsTable:
         result = {}
         for account_id, window, units in rows:
             result.setdefault(account_id, {})[window] = float(units or 0)
+        return result
+
+    async def tokens_by_user_model(self, account_id: str, since: int) -> dict:
+        """Every member's tokens on an account since a time, {user: {model: tokens}}."""
+        query = (
+            select(
+                UsageEvent.user_id,
+                UsageEvent.model_id,
+                func.sum(UsageEvent.input_tokens),
+                func.sum(UsageEvent.output_tokens),
+                func.sum(UsageEvent.cached_tokens),
+                func.sum(UsageEvent.reasoning_tokens),
+                func.sum(UsageEvent.cost),
+            )
+            .where(
+                UsageEvent.account_id == account_id,
+                UsageEvent.ts >= since,
+                UsageEvent.status.in_(('ok', 'error')),
+                UsageEvent.source != 'outside',
+            )
+            .group_by(UsageEvent.user_id, UsageEvent.model_id)
+        )
+        async with get_async_db_context() as db:
+            rows = (await db.execute(query)).all()
+        tokens: dict = {}
+        cost: dict = {}
+        for user_id, model_id, input_tokens, output_tokens, cached, reasoning, spent in rows:
+            tokens.setdefault(user_id, {})[model_id] = {
+                'input_tokens': int(input_tokens or 0),
+                'output_tokens': int(output_tokens or 0),
+                'cached_tokens': int(cached or 0),
+                'reasoning_tokens': int(reasoning or 0),
+            }
+            if spent is not None:
+                cost[user_id] = cost.get(user_id, 0.0) + float(spent)
+        return {'tokens': tokens, 'cost': cost}
+
+    async def outside_by_user(self, account_id: str, window: str, since: int) -> dict:
+        query = (
+            select(UsageEvent.user_id, func.sum(UsageEvent.units))
+            .where(
+                UsageEvent.account_id == account_id,
+                UsageEvent.source == 'outside',
+                UsageEvent.window == window,
+                UsageEvent.ts >= since,
+            )
+            .group_by(UsageEvent.user_id)
+        )
+        async with get_async_db_context() as db:
+            rows = (await db.execute(query)).all()
+        return {user_id: float(units or 0) for user_id, units in rows}
+
+    async def used_since(self, account_id: str, user_id: str, since: int) -> bool:
+        """Whether a member used an account since a time, in Mologate or outside it."""
+        query = (
+            select(UsageEvent.id)
+            .where(
+                UsageEvent.account_id == account_id,
+                UsageEvent.user_id == user_id,
+                UsageEvent.ts >= since,
+                UsageEvent.status.in_(('ok', 'error')),
+            )
+            .limit(1)
+        )
+        async with get_async_db_context() as db:
+            return (await db.execute(query)).first() is not None
+
+    async def last_account(self, user_id: str, chat_id: str) -> str | None:
+        """The account that last served a chat."""
+        query = (
+            select(UsageEvent.account_id)
+            .where(UsageEvent.user_id == user_id, UsageEvent.chat_id == chat_id, UsageEvent.status == 'ok')
+            .order_by(UsageEvent.ts.desc())
+            .limit(1)
+        )
+        async with get_async_db_context() as db:
+            return (await db.execute(query)).scalar()
+
+    async def between(self, since: int, until: int) -> list:
+        """Every row in a stretch of time, oldest first (the replay)."""
+        query = (
+            select(UsageEvent)
+            .where(UsageEvent.ts >= since, UsageEvent.ts < until)
+            .order_by(UsageEvent.ts, UsageEvent.created_at)
+        )
+        async with get_async_db_context() as db:
+            return list((await db.execute(query)).scalars().all())
+
+    async def decisions(self, since: int) -> list[tuple[str, dict]]:
+        query = select(UsageEvent.user_id, UsageEvent.request_id, UsageEvent.decision).where(
+            UsageEvent.ts >= since, UsageEvent.decision.is_not(None), UsageEvent.source != 'outside'
+        )
+        async with get_async_db_context() as db:
+            rows = (await db.execute(query)).all()
+        # One decision per request, though every attempt carries it.
+        seen, result = set(), []
+        for user_id, request_id, decision in rows:
+            key = (user_id, request_id) if request_id else None
+            if key is not None and key in seen:
+                continue
+            if key is not None:
+                seen.add(key)
+            result.append((user_id, decision))
         return result
 
 

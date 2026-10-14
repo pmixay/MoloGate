@@ -739,15 +739,19 @@ class LedgerMigrationTests(unittest.TestCase):
         self.assertEqual(migration.down_revision, 'f7c2a9d4b8e1')
         # Mologate: metering adds the window of outside-use rows.
         metering = importlib.import_module('open_webui.migrations.versions.c4e8a2d6f1b9_add_metering')
+        # And the allowance engine's decision on each row.
+        decision = importlib.import_module('open_webui.migrations.versions.d7a3f9c2e5b1_add_usage_decision')
         engine = create_engine('sqlite://')
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
             metering.upgrade()
+            decision.upgrade()
             columns = {column['name'] for column in inspect(connection).get_columns('usage_event')}
             # The model and the migrations agree.
             self.assertEqual(columns, set(UsageEvent.__table__.columns.keys()))
             indexes = {index['name'] for index in inspect(connection).get_indexes('usage_event')}
             self.assertEqual(indexes, {'ix_usage_event_user_ts', 'ix_usage_event_account_ts'})
+            decision.downgrade()
             metering.downgrade()
             migration.downgrade()
             self.assertNotIn('usage_event', inspect(connection).get_table_names())

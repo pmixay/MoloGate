@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
-from open_webui.utils import codex_lb
+from open_webui.utils import allowance_gate, codex_lb
 from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
 from open_webui.utils.provider_accounts import (
     auto_reset_enabled,
@@ -491,7 +491,10 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     redis = getattr(request.app.state, 'redis', None)
     # Mologate: every attempt leaves a usage ledger row (utils/usage_ledger.py).
     metadata = metadata or getattr(getattr(request, 'state', None), 'metadata', None)
-    meter = Meter(request, user, metadata, split_model_id(model)[1])
+    provider, upstream_id = split_model_id(model)
+    meter = Meter(request, user, metadata, upstream_id)
+    # Mologate: the allowance engine decides every request; observe records it (phase 3).
+    meter.decision = allowance_gate.observe(user, provider, upstream_id, metadata)
 
     async def attempt(account):
         written = meter.rows

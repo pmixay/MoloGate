@@ -21,7 +21,7 @@ from open_webui.models.provider_accounts import (
     seal_secret,
 )
 from open_webui.models.users import Users
-from open_webui.utils import codex_accounts, metering
+from open_webui.utils import allowance_gate, codex_accounts, metering
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.provider_accounts import (
     TEAM,
@@ -162,6 +162,18 @@ async def run_metering(request: Request, user=Depends(get_admin_user)):
     measured = await metering.process()
     fitted = await metering.calibrate()
     return {'measured': measured, 'calibrated': [f'{provider}:{window}' for provider, window in fitted]}
+
+
+@router.get('/allowance')
+async def allowance_report(days: int = 7, user=Depends(get_admin_user)):
+    """Mologate: the allowance engine in observe mode (docs/limits-and-accounts.md, Phase 3): what it
+    decided for each member's requests, and the same days decided again under the rules."""
+    days = max(1, min(days, 30))
+    return {
+        'mode': await Config.get('mologate.limits_mode', 'observe'),
+        'decided': await allowance_gate.summary(days),
+        'replay': await allowance_gate.replay(days),
+    }
 
 
 @router.get('')

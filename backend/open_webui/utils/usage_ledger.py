@@ -86,6 +86,8 @@ class Meter:
         self.chat_id = metadata.get('chat_id') or None
         self.request_id = metadata.get('message_id') or None
         self.rows = 0
+        # Mologate: the allowance engine's decision, computed beside the request (phase 3).
+        self.decision = None
 
     def record(self, account, status: str, usage: dict | None = None) -> None:
         self.rows += 1
@@ -109,13 +111,19 @@ class Meter:
             chat_id=self.chat_id,
             request_id=self.request_id,
         )
-        task = asyncio.create_task(_write(values, account if status == 'ok' else None, self.model_id, numbers))
+        task = asyncio.create_task(
+            _write(values, account if status == 'ok' else None, self.model_id, numbers, self.decision)
+        )
         _writes.add(task)
         task.add_done_callback(_writes.discard)
 
 
-async def _write(values: dict, served_by, model_id: str, numbers: dict) -> None:
+async def _write(values: dict, served_by, model_id: str, numbers: dict, decision=None) -> None:
     try:
+        if decision is not None:
+            from open_webui.utils.allowance_gate import decision_of
+
+            values['decision'] = await decision_of(decision)
         if served_by is not None:
             values['cost'], values['cost_source'] = await request_cost(served_by, model_id, numbers)
         await UsageEvents.insert(**values)
