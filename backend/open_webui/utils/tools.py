@@ -782,6 +782,24 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('tasks') and is_saved_chat_id(metadata.get('chat_id')):
         builtin_functions.extend([create_tasks, update_task])
 
+    # Mologate: monitor waits for a condition in the chat's own container (utils/monitors.py), so
+    # only the main agent of a saved chat that has one gets it.
+    if (
+        is_builtin_tool_enabled('subagents')
+        and config.get('subagents.enable')
+        and getattr(request.state, 'direct', False) is not True
+        and getattr(request.state, 'internal', False) is not True
+        and is_saved_chat_id(metadata.get('chat_id'))
+        and not metadata.get('automation_id')
+        and metadata.get('terminal_id') == containers.CONNECTION_ID
+        and not metadata.get('container_error')
+        and get_model_capability('terminal')
+        and await containers.containers_enabled()
+    ):
+        from open_webui.tools.builtin import monitor
+
+        builtin_functions.append(monitor)
+
     # Automation tools - create and manage scheduled automations from chat
     if (
         is_builtin_tool_enabled('automations')
