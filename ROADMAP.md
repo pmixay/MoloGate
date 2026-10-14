@@ -88,9 +88,9 @@ The full design and phased plan for accounts, limits, credits and personal API k
     change it under Settings → General, up to 10. Slots live in Redis, shared by every worker, and
     free themselves within a minute if a worker stops. Like every limit, it applies when
     `MOLOGATE_LIMITS_MODE` is `enforce`; in `observe`, the default for now, a chat that would
-    have waited is only logged. Sub-agents keep Open WebUI's own caps from Settings → Sub-agents:
-    20 running at once and 20 in the background by default, counted across the whole server, not
-    per chat or per member as [Proposed limits](#proposed-limits) suggests.
+    have waited is only logged. Sub-agents have their own limits per chat and per member (see
+    [Background tasks](#tasks)), on top of Open WebUI's server-wide caps from Settings → Sub-agents:
+    20 running at once and 20 in the background.
 
 ## Tools, containers and capabilities
 
@@ -285,22 +285,55 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
 
 ### Tasks
 
-- [ ] **Tasks panel:** one place to see the chat's tasks, running or finished: background sub-agents,
-      workflows, monitor and scheduled tasks.
+- [x] **Tasks panel:** one place, like a vertical tab, for the chat's tasks, running or finished, of
+      every type: sub-agents, monitors and scheduled tasks. Background and ordinary tasks are shown
+      alike: some run on their own and some block the agent, but they are the same kind of task.
   - Opening a task shows its output where it has one, updating live while the task runs where
     possible.
   - Each task shows how long it took or, while it runs, how long it has been running so far.
   - Running tasks can be stopped.
   - A "Clear" button removes all completed tasks from the list.
-- [ ] **Background tasks:** a task moves to the background automatically after a set time.
-- [ ] **Monitor tasks:** wait for a specific condition to become true, within limits (see
+  - Done: a Tasks tab in the chat's side panel, opened from a header button that shows how many are
+    running, lists the chat's sub-agents, monitors and scheduled tasks in one list, running ones
+    first, with no split between foreground and background. Each row shows the task's status and
+    how long it has been running or took (a schedule: when it runs next and how many runs it has
+    had), with Stop while it runs or waits; Clear hides the finished ones. Opening a task shows its
+    prompt and output: a running sub-agent's answer and tool calls as they stream, a monitor's
+    checks and last output, a schedule's runs and each run's answer. Sub-agents link to their
+    conversation, and tasks link to the message that started them. The list updates live in every
+    open tab. Stopping a task doesn't start a new turn. Workflows will join the list once they exist.
+- [x] **Background tasks:** they don't block the agent. The agent can start one in the background,
+      and an ordinary one moves to the background by itself after a set time. The agent has tools to
+      check on its tasks and to cancel background and scheduled ones.
+  - Done: `delegate_task` and `monitor` move to the background after 5 minutes (admins choose 30
+    seconds to an hour, or never), or start there with `background`; the agent gets a message in the
+    chat when one finishes. `task_status` lists the chat's tasks or shows one with its result, and can
+    wait up to 5 minutes for it to finish. `cancel_task` stops a background task or cancels a
+    schedule. Limits as [proposed](#subagents-and-background-tasks): 4 sub-agents at once per chat,
+    5 background tasks per member, 2 hours per run. Admins change these and the other task limits
+    under Settings → Sub-agents → Tasks, within the hard caps, which hold for admins too.
+- [x] **Monitor tasks:** the agent waits for a specific condition to become true, within limits (see
       [Proposed limits](#proposed-limits)).
-- [ ] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
+  - Done: the `monitor` tool waits until a command in the chat's container succeeds or prints what
+    the agent expects, or until a URL fetched from inside the container answers. Checks never call a
+    model. A waiting call returns the result; one in the background wakes the agent once, when the
+    condition is true or the monitor gives up. It keeps the container awake while it waits and picks
+    up again after a restart. It's offered when the chat has its container. Limits as
+    [proposed](#monitor-tasks).
+- [x] **Scheduled tasks:** delayed or recurring tasks, with strict limits (see
       [Proposed limits](#proposed-limits)).
-  - **Open WebUI today:** an agent can set a one-shot `timer` that sends a prompt back into the
+  - **Open WebUI before:** an agent could set a one-shot `timer` that sends a prompt back into the
     chat. With the automations permission (off for members by default), `create_automation` runs a
     prompt once or on a recurring schedule; its limits (`AUTOMATION_MAX_COUNT`,
-    `AUTOMATION_MIN_INTERVAL`) are unset by default. None of the proposed limits apply yet.
+    `AUTOMATION_MIN_INTERVAL`) are unset by default.
+  - Done: `schedule_task` replaces `timer`. It runs a prompt in the chat once (in 10 minutes, or at
+    a set time) or repeatedly (every few hours, daily or weekly), until a date or a number of runs.
+    Runs never overlap: one that comes due while the chat is busy waits, and is skipped if the next
+    one comes first. A run is stopped after 30 minutes, a schedule turns itself off after 3 failed
+    runs in a row and says so, and a run waits while the model has less than 10% of its limit left.
+    Each run shows in the chat as "Scheduled · run N". Automations now share the limits: at most 10
+    schedules and automations per member, repeating at most hourly, for admins too, and an automation
+    that fails 3 times in a row turns itself off.
 
 ### Browser
 
