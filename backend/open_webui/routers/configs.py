@@ -11,7 +11,7 @@ from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.oauth_sessions import OAuthSessions
-from open_webui.utils import containers
+from open_webui.utils import containers, task_limits
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import bearer_auth_header, get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
@@ -823,6 +823,30 @@ async def set_subagents_config(
         data={'enabled': values.get('ENABLE_SUBAGENTS')},
     )
     return values
+
+
+class TaskLimitsForm(BaseModel):
+    limits: dict[str, int]
+
+
+# Mologate: limits for the chat's tasks (utils/task_limits.py), shown under Settings → Sub-agents.
+@router.get('/task_limits')
+async def get_task_limits_config(user=Depends(get_admin_user)):
+    return {'limits': task_limits.describe(await task_limits.get_all())}
+
+
+@router.post('/task_limits')
+async def set_task_limits_config(request: Request, form_data: TaskLimitsForm, user=Depends(get_admin_user)):
+    values = await task_limits.set_many(form_data.limits)
+    await publish_event(
+        request,
+        EVENTS.CONFIG_UPDATED,
+        actor=user,
+        subject_id='task_limits',
+        subject_type='config',
+        data={'limits': values},
+    )
+    return {'limits': task_limits.describe(values)}
 
 
 class PromptSuggestion(BaseModel):

@@ -37,6 +37,7 @@ from open_webui.env import (
 )
 from open_webui.models.config import Config
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.task_limits import DEFAULT_CONFIG as TASK_LIMIT_DEFAULTS
 
 
 async def seed_registered_defaults():
@@ -3190,6 +3191,8 @@ DEFAULT_CONFIG = {
     'automations.max_count': AUTOMATION_MAX_COUNT,
     'automations.min_interval': AUTOMATION_MIN_INTERVAL,
     'automations.auth_token_expires_in': AUTOMATION_AUTH_TOKEN_EXPIRES_IN,
+    # Mologate: limits for sub-agents, background work, monitors and schedules (utils/task_limits.py).
+    **TASK_LIMIT_DEFAULTS,
     'notes.enable': ENABLE_NOTES,
     'users.enable_status': ENABLE_USER_STATUS,
     'evaluation.arena.enable': ENABLE_EVALUATION_ARENA_MODELS,
