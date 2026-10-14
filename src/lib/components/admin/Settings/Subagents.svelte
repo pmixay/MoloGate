@@ -2,10 +2,17 @@
 	import { getContext, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
-	import { getSubagentsConfig, setSubagentsConfig } from '$lib/apis/configs';
+	import {
+		getSubagentsConfig,
+		getTaskLimitsConfig,
+		setSubagentsConfig,
+		setTaskLimitsConfig,
+		type TaskLimit
+	} from '$lib/apis/configs';
 	import { models } from '$lib/stores';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
+	import AdminSettingSection from './AdminSettingSection.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -24,7 +31,114 @@
 	let maxOutput = 30000;
 	let systemPrompt = '';
 
+	// Mologate: limits for sub-agents, background work, monitors and schedules
+	// (utils/task_limits.py). Times are stored in seconds and entered in the unit that reads best;
+	// the server keeps every value in its range.
+	let taskLimits: TaskLimit[] = [];
+	let taskLimitValues: Record<string, number | null> = {};
+
+	const LIMIT_FACTORS: Record<string, number> = {
+		auto_background_seconds: 60,
+		background_run_seconds: 60,
+		monitor_lifetime_seconds: 3600,
+		schedule_interval_seconds: 60,
+		schedule_ahead_seconds: 86400,
+		schedule_run_seconds: 60,
+		schedule_lifetime_seconds: 86400
+	};
+	const limitFactor = (name: string) => LIMIT_FACTORS[name] ?? 1;
+	const toDisplay = (name: string, value: number) =>
+		Math.round((value / limitFactor(name)) * 1000) / 1000;
+
+	const applyTaskLimits = (limits: TaskLimit[]) => {
+		taskLimits = limits;
+		taskLimitValues = Object.fromEntries(
+			limits.map((limit) => [limit.name, toDisplay(limit.name, limit.value)])
+		);
+	};
+
+	$: limitViews = {
+		auto_background_seconds: {
+			label: $i18n.t('Move a sub-agent or monitor to the background after'),
+			unit: $i18n.t('minutes'),
+			hint: $i18n.t('0 = never')
+		},
+		subagents_per_chat: {
+			label: $i18n.t('Sub-agents at once in a chat'),
+			unit: $i18n.t('sub-agents')
+		},
+		background_tasks_per_user: {
+			label: $i18n.t('Background tasks per member'),
+			unit: $i18n.t('tasks')
+		},
+		background_run_seconds: {
+			label: $i18n.t('Longest background run'),
+			unit: $i18n.t('minutes')
+		},
+		monitors_per_user: { label: $i18n.t('Active monitors per member'), unit: $i18n.t('monitors') },
+		monitor_interval_seconds: {
+			label: $i18n.t('Time between checks'),
+			unit: $i18n.t('seconds'),
+			hint: $i18n.t('The default, and the shortest an agent can ask for')
+		},
+		monitor_check_timeout_seconds: {
+			label: $i18n.t('Time limit for one check'),
+			unit: $i18n.t('seconds')
+		},
+		monitor_lifetime_seconds: { label: $i18n.t('Longest a monitor waits'), unit: $i18n.t('hours') },
+		monitor_max_checks: { label: $i18n.t('Most checks per monitor'), unit: $i18n.t('checks') },
+		schedules_per_user: {
+			label: $i18n.t('Active schedules per member'),
+			unit: $i18n.t('schedules'),
+			hint: $i18n.t('Automations count too')
+		},
+		schedule_interval_seconds: {
+			label: $i18n.t('Shortest repeat'),
+			unit: $i18n.t('minutes'),
+			hint: $i18n.t('For automations too')
+		},
+		schedule_ahead_seconds: {
+			label: $i18n.t('Furthest ahead a task can be scheduled'),
+			unit: $i18n.t('days')
+		},
+		schedule_run_seconds: { label: $i18n.t('Time limit for one run'), unit: $i18n.t('minutes') },
+		schedule_lifetime_seconds: {
+			label: $i18n.t('Longest a schedule lasts'),
+			unit: $i18n.t('days')
+		},
+		schedule_max_failures: {
+			label: $i18n.t('Turn a schedule off after this many failed runs in a row'),
+			unit: $i18n.t('runs')
+		},
+		schedule_low_limit_percent: {
+			label: $i18n.t('Hold a run while the model has less than this much of its limit left'),
+			unit: '%',
+			hint: $i18n.t('0 = off')
+		}
+	} as Record<string, { label: string; unit: string; hint?: string }>;
+
+	$: limitGroups = [
+		{
+			title: $i18n.t('Sub-agents and background work'),
+			limits: taskLimits.filter(
+				(limit) => !limit.name.startsWith('monitor') && !limit.name.startsWith('schedule')
+			)
+		},
+		{
+			title: $i18n.t('Monitors'),
+			limits: taskLimits.filter((limit) => limit.name.startsWith('monitor'))
+		},
+		{
+			title: $i18n.t('Scheduled tasks'),
+			limits: taskLimits.filter((limit) => limit.name.startsWith('schedule'))
+		}
+	].filter((group) => group.limits.length > 0);
+
 	onMount(async () => {
+		getTaskLimitsConfig(localStorage.token)
+			.then((res) => applyTaskLimits(Array.isArray(res?.limits) ? res.limits : []))
+			.catch(() => {});
+
 		try {
 			const config = await getSubagentsConfig(localStorage.token);
 			enabled = config?.ENABLE_SUBAGENTS ?? true;
@@ -62,6 +176,18 @@
 					model: profile.model || null
 				}))
 			});
+			if (taskLimits.length > 0) {
+				const values = Object.fromEntries(
+					taskLimits
+						.filter((limit) => Number.isFinite(Number(taskLimitValues[limit.name] ?? NaN)))
+						.map((limit) => [
+							limit.name,
+							Math.round(Number(taskLimitValues[limit.name]) * limitFactor(limit.name))
+						])
+				);
+				const res = await setTaskLimitsConfig(localStorage.token, values);
+				if (Array.isArray(res?.limits)) applyTaskLimits(res.limits);
+			}
 			toast.success($i18n.t('Settings saved successfully!'));
 		} catch (error) {
 			toast.error(`${(error as any)?.detail ?? error}`);
@@ -288,6 +414,65 @@
 							+ {$i18n.t('Add profile')}
 						</button>
 					</div>
+
+					{#if taskLimits.length > 0}
+						<AdminSettingSection
+							title={$i18n.t('settings.admin.subagents.tasks.title')}
+							className="task-limits"
+						>
+							<p class="-mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+								{$i18n.t('settings.admin.subagents.tasks.description')}
+							</p>
+							{#each limitGroups as group}
+								<div class="flex flex-col gap-1.5">
+									<div
+										class="pt-1 text-[0.625rem] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-600"
+									>
+										{group.title}
+									</div>
+									{#each group.limits as limit (limit.name)}
+										{@const view = limitViews[limit.name] ?? { label: limit.name, unit: '' }}
+										{@const factor = limitFactor(limit.name)}
+										<div class="flex items-center justify-between gap-3">
+											<div class="min-w-0">
+												<label
+													class="text-xs text-gray-600 dark:text-gray-400"
+													for="task-limit-{limit.name}"
+												>
+													{view.label}
+												</label>
+												{#if view.hint}
+													<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
+														{view.hint}
+													</div>
+												{/if}
+											</div>
+											<div class="flex shrink-0 items-center gap-1.5">
+												<input
+													id="task-limit-{limit.name}"
+													type="number"
+													bind:value={taskLimitValues[limit.name]}
+													min={limit.zero_allowed ? 0 : toDisplay(limit.name, limit.min)}
+													max={toDisplay(limit.name, limit.max)}
+													step={factor === 1 ? 1 : 'any'}
+													placeholder={`${toDisplay(limit.name, limit.default)}`}
+													title={$i18n.t('{{MIN}} to {{MAX}}, default {{DEFAULT}}', {
+														MIN: toDisplay(limit.name, limit.min),
+														MAX: toDisplay(limit.name, limit.max),
+														DEFAULT: toDisplay(limit.name, limit.default)
+													})}
+													class="h-7 w-20 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:focus:border-blue-500"
+												/>
+												<span class="w-16 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+													{view.unit}
+												</span>
+											</div>
+										</div>
+									{/each}
+								</div>
+							{/each}
+						</AdminSettingSection>
+					{/if}
 				{/if}
 			</div>
 		{/if}
