@@ -64,7 +64,6 @@
 		show: false,
 		questions: [],
 		allowOther: true,
-		timeoutMs: null,
 		onConfirm: (_value: any) => {},
 		onCancel: () => {}
 	};

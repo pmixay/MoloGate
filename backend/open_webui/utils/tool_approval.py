@@ -15,7 +15,6 @@ class ResolveToolCallForm(BaseModel):
     call_id: str
     action: Literal['approve', 'reject', 'answer']
     answers: Any | None = None
-    timed_out: bool = False
     # Mologate: with approve, also stop permission prompts for the rest of this chat.
     always_allow: bool = False
 
@@ -89,14 +88,11 @@ async def resolve_tool_call_output(
     else:
         if tool_name != 'ask_user':
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tool call does not accept answers.')
-        if form_data.answers is None and not form_data.timed_out:
+        # Mologate: ask_user has no timeout; the turn waits until the user answers or dismisses it.
+        if form_data.answers is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Answers are required for ask_user.')
         function_call['status'] = 'completed'
-        answer_payload = (
-            {'status': 'cancelled', 'answers': {}, 'timed_out': True}
-            if form_data.timed_out
-            else {'status': 'answered', 'answers': form_data.answers or {}}
-        )
+        answer_payload = {'status': 'answered', 'answers': form_data.answers}
         output.append(
             {
                 'type': 'function_call_output',

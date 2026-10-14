@@ -5992,7 +5992,14 @@ async def streaming_chat_response_handler(response, ctx):
                     tool_call_iterations += 1
 
                     response_tool_calls = tool_calls.pop(0)
-                    ask_user_staged, ask_user_error = stage_ask_user_tool_calls(response_tool_calls, output, output_id)
+                    # Mologate: in a saved chat, ask_user pauses the turn until the user answers, however
+                    # long that takes. A temporary chat can't be resumed later, so there the tool runs and
+                    # asks through the open browser tab instead, waiting for the answer the same way.
+                    ask_user_staged, ask_user_error = (
+                        stage_ask_user_tool_calls(response_tool_calls, output, output_id)
+                        if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id')
+                        else (False, None)
+                    )
                     if ask_user_error:
                         response_tool_calls = [
                             tool_call
@@ -6000,14 +6007,13 @@ async def streaming_chat_response_handler(response, ctx):
                             if tool_call.get('function', {}).get('name') != 'ask_user'
                         ]
                     elif ask_user_staged:
-                        if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id'):
-                            await pause_for_tool_approval(
-                                metadata['chat_id'],
-                                metadata['message_id'],
-                                full_output(),
-                                form_data,
-                                metadata,
-                            )
+                        await pause_for_tool_approval(
+                            metadata['chat_id'],
+                            metadata['message_id'],
+                            full_output(),
+                            form_data,
+                            metadata,
+                        )
                         await event_emitter({'type': 'chat:completion', 'data': {'output': full_output()}})
                         return
 

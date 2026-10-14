@@ -113,7 +113,6 @@
 		show: boolean;
 		questions: any[];
 		allowOther: boolean;
-		timeoutMs: number | null;
 		onConfirm: (value: any) => void;
 		onCancel: () => void;
 	};
@@ -155,7 +154,6 @@
 		show: false,
 		questions: [],
 		allowOther: true,
-		timeoutMs: null,
 		onConfirm: (_value: any) => {},
 		onCancel: () => {}
 	};
@@ -1698,7 +1696,6 @@
 									show={askUser.show}
 									questions={askUser.questions}
 									allowOther={askUser.allowOther}
-									timeoutMs={askUser.timeoutMs}
 									on:confirm={(e) => {
 										askUser.onConfirm(e.detail);
 									}}

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { createEventDispatcher, getContext } from 'svelte';
-	import { onDestroy } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import Check from '$lib/components/icons/Check.svelte';
 
 	const i18n: Writable<i18nType> = getContext('i18n');
 	const dispatch = createEventDispatcher();
@@ -33,25 +33,17 @@
 				text: string;
 		  };
 
+	// Mologate: up to five questions with up to five options each. There is no timer: the card
+	// stays until the user answers or cancels, and the agent waits for it.
 	export let show = false;
 	export let questions: AskUserQuestion[] = [];
 	export let allowOther = true;
-	export let timeoutMs: number | null = null;
 
 	let answers: Record<string, DraftAnswer> = {};
 	let questionIndex = 0;
 	let wasOpen = false;
-	let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-	const clearAutoCancel = () => {
-		if (timeoutHandle) {
-			clearTimeout(timeoutHandle);
-			timeoutHandle = null;
-		}
-	};
 
 	const cancel = () => {
-		clearAutoCancel();
 		show = false;
 		dispatch('cancel');
 	};
@@ -60,32 +52,23 @@
 		answers = {};
 		questionIndex = 0;
 		wasOpen = true;
-		clearAutoCancel();
-		if (typeof timeoutMs === 'number' && timeoutMs > 0) {
-			timeoutHandle = setTimeout(() => {
-				cancel();
-			}, timeoutMs);
-		}
 	}
 
 	$: if (!show && wasOpen) {
-		clearAutoCancel();
 		wasOpen = false;
 	}
-
-	onDestroy(clearAutoCancel);
 
 	const questionAllowsOther = (question: AskUserQuestion) => question.allow_other ?? allowOther;
 
 	$: question = questions[questionIndex];
-	$: selectedAnswer = question ? answers[question.id] : undefined;
+
+	const isAnswered = (question: AskUserQuestion, selected = answers) => {
+		const answer = selected[question.id];
+		return answer?.type === 'option' || (answer?.type === 'other' && answer.text.trim() !== '');
+	};
 
 	const hasAnswers = (selected = answers) =>
-		questions.length > 0 &&
-		questions.every((question) => {
-			const answer = selected[question.id];
-			return answer?.type === 'option' || (answer?.type === 'other' && answer.text.trim() !== '');
-		});
+		questions.length > 0 && questions.every((question) => isAnswered(question, selected));
 
 	$: complete = hasAnswers(answers);
 
@@ -182,10 +165,29 @@
 									{question.header}
 								</div>
 								{#if questions.length > 1}
-									<div
-										class="shrink-0 text-right text-[0.6875rem] text-gray-500 dark:text-gray-400"
-									>
-										{questionIndex + 1}/{questions.length}
+									<div class="flex shrink-0 items-center gap-0.5">
+										{#each questions as step, stepIndex (step.id)}
+											<Tooltip content={step.header} placement="top">
+												<button
+													type="button"
+													class="flex size-5 items-center justify-center rounded-full text-[0.625rem] tabular-nums transition-colors {stepIndex ===
+													questionIndex
+														? 'bg-gray-900 text-white dark:bg-white dark:text-black'
+														: isAnswered(step, answers)
+															? 'bg-gray-200/80 text-gray-700 hover:bg-gray-300/70 dark:bg-white/[0.1] dark:text-gray-200 dark:hover:bg-white/[0.16]'
+															: 'text-gray-500 hover:bg-gray-200/60 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-100'}"
+													aria-label={step.header}
+													aria-current={stepIndex === questionIndex ? 'step' : undefined}
+													on:click={() => (questionIndex = stepIndex)}
+												>
+													{#if stepIndex !== questionIndex && isAnswered(step, answers)}
+														<Check className="size-3" strokeWidth="2.5" />
+													{:else}
+														{stepIndex + 1}
+													{/if}
+												</button>
+											</Tooltip>
+										{/each}
 									</div>
 								{/if}
 							</div>

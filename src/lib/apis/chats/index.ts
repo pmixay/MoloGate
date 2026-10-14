@@ -1504,7 +1504,7 @@ export const resolveChatMessageToolCall = async (
 	messageId: string,
 	callId: string,
 	action: 'approve' | 'reject' | 'answer',
-	options: { answers?: unknown; timed_out?: boolean; always_allow?: boolean } = {}
+	options: { answers?: unknown; always_allow?: boolean } = {}
 ) => {
 	let error = null;
 

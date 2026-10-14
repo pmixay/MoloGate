@@ -104,6 +104,7 @@ from open_webui.tools.builtin import (
 )
 from open_webui.utils import containers
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
+from open_webui.utils.ask_user import get_ask_user_questions_schema
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.headers import (
     bearer_auth_header,
@@ -587,10 +588,18 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('time'):
         builtin_functions.extend([get_current_timestamp, calculate_timestamp])
 
-    if is_builtin_tool_enabled('user_input', True):
+    metadata = extra_params.get('__metadata__') or {}
+
+    # Mologate: ask_user waits for the answer with no time limit, so it is only offered where
+    # someone is there to answer: not in automations, channels or internal sub-agent runs.
+    if (
+        is_builtin_tool_enabled('user_input', True)
+        and not metadata.get('automation_id')
+        and not str(metadata.get('chat_id') or '').startswith('channel:')
+        and getattr(request.state, 'internal', False) is not True
+    ):
         builtin_functions.append(ask_user)
 
-    metadata = extra_params.get('__metadata__') or {}
     chat_files = metadata.get('files') or extra_params.get('__files__') or []
     has_chat_files = any(
         isinstance(item, dict)
@@ -808,6 +817,8 @@ async def get_builtin_tools(
             parameters.get('properties', {}).pop('background', None)
             if isinstance(parameters.get('required'), list):
                 parameters['required'] = [name for name in parameters['required'] if name != 'background']
+        if func.__name__ == 'ask_user':
+            spec.get('parameters', {}).get('properties', {})['questions'] = get_ask_user_questions_schema()
         if func.__name__ == 'delegate_task':
             # Mologate: the profiles the model can pick, built-in and the admin's (utils/subagent_profiles.py).
             profiles = get_subagent_profiles(config.get('subagents.profiles'))

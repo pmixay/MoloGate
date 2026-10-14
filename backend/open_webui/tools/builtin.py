@@ -65,6 +65,7 @@ from open_webui.routers.retrieval import search_web as _search_web
 from open_webui.socket.main import sio
 from open_webui.tasks import stop_item_tasks
 from open_webui.tools.knowledge_fs import kb_exec  # noqa: F401 — re-exported
+from open_webui.utils.ask_user import normalize_ask_user_request
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.notifications import notify_target
@@ -518,73 +519,20 @@ async def edit_image(
 async def ask_user(
     questions: list[dict],
     allow_other: bool = True,
-    timeout_ms: int = 120_000,
     __event_call__: callable = None,
 ) -> str:
     """
-    Ask the user clarifying questions before continuing.
+    Ask the user clarifying questions before continuing, and wait for the answers.
     Use this when the next step depends on user intent, preference, or a tradeoff that cannot be inferred safely.
+    The turn pauses until the user answers or dismisses the questions; there is no time limit.
 
-    :param questions: 1-3 question objects, each with id, header, question, and 2-3 options. Each option needs label and description.
+    :param questions: 1-5 question objects, each with id, header, question, and 2-5 options. Each option needs label and description.
         List the option you recommend first; the UI labels the first option Recommended.
     :param allow_other: Whether users may enter a free-form answer instead of choosing one of the options
-    :param timeout_ms: How long the browser should keep the prompt open before cancelling it
     :return: JSON with status and answers keyed by question id
     """
     try:
-        if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
-            raise ValueError('ask_user requires 1-3 questions.')
-
-        normalized_questions = []
-        seen_ids = set()
-        for index, question in enumerate(questions):
-            if not isinstance(question, dict):
-                raise ValueError('Each question must be an object.')
-
-            question_id = str(question.get('id') or '').strip()[:64]
-            if not question_id:
-                raise ValueError('Each question requires a non-empty id.')
-            if question_id in seen_ids:
-                raise ValueError(f'Duplicate question id: {question_id}')
-            seen_ids.add(question_id)
-
-            options = question.get('options')
-            if not isinstance(options, list) or not 2 <= len(options) <= 3:
-                raise ValueError('Each question requires 2-3 options.')
-
-            normalized_options = []
-            for option in options:
-                if not isinstance(option, dict):
-                    raise ValueError('Each option must be an object.')
-
-                label = str(option.get('label') or '').strip()[:80]
-                description = str(option.get('description') or '').strip()[:240]
-                if not label or not description:
-                    raise ValueError('Each option requires a label and description.')
-
-                normalized_options.append(
-                    {
-                        'label': label,
-                        'description': description,
-                    }
-                )
-
-            question_text = str(question.get('question') or '').strip()[:500]
-            if not question_text:
-                raise ValueError('Each question requires question text.')
-
-            normalized_questions.append(
-                {
-                    'id': question_id,
-                    'header': str(question.get('header') or '').strip()[:48] or f'Question {index + 1}',
-                    'question': question_text,
-                    'options': normalized_options,
-                    'allow_other': bool(question.get('allow_other', allow_other)),
-                }
-            )
-
-        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or not 60_000 <= timeout_ms <= 240_000:
-            timeout_ms = 120_000
+        user_input = normalize_ask_user_request({'questions': questions, 'allow_other': allow_other})
 
         if __event_call__ is None:
             return JSONCodec.dumps(
@@ -595,16 +543,7 @@ async def ask_user(
                 ensure_ascii=False,
             )
 
-        output = await __event_call__(
-            {
-                'type': 'request:user_input',
-                'data': {
-                    'questions': normalized_questions,
-                    'allow_other': allow_other,
-                    'timeout_ms': timeout_ms,
-                },
-            }
-        )
+        output = await __event_call__({'type': 'request:user_input', 'data': user_input})
 
         if not isinstance(output, dict):
             return JSONCodec.dumps({'status': 'error', 'error': 'Invalid user input response.'}, ensure_ascii=False)
