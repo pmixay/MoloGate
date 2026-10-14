@@ -4,13 +4,25 @@
 
 	const i18n = getContext('i18n');
 
-	// Mologate: one of two pixel-art hammer animations, picked at random for each reply.
-	const variant = Math.random() < 0.5 ? 'hammer-a' : 'hammer-b';
+	// Mologate: one of three pixel-art hammer animations, picked at random for each reply. Each is
+	// shown at its own size in pixels, so one art pixel is one CSS pixel in all of them.
+	const variants = [
+		{ name: 'hammer-a', size: 48 },
+		{ name: 'hammer-b', size: 48 },
+		// The hammer jumps on a nail until it's driven in, then a new nail comes.
+		{ name: 'hammer-c', size: 64 }
+	];
+	const variant = variants[Math.floor(Math.random() * variants.length)];
 	const src = (theme: 'dark' | 'light', ext: 'gif' | 'png') =>
-		`${WEBUI_BASE_URL}/assets/working/${variant}-${theme}.${ext}`;
+		`${WEBUI_BASE_URL}/assets/working/${variant.name}-${theme}.${ext}`;
 </script>
 
-<div role="status" aria-label={$i18n.t('Working')} class="working-indicator size-12 my-1">
+<div
+	role="status"
+	aria-label={$i18n.t('Working')}
+	class="working-indicator my-1"
+	style="--working-size: {variant.size / 16}rem"
+>
 	<img src={src('light', 'gif')} alt="" class="for-light anim" />
 	<img src={src('dark', 'gif')} alt="" class="for-dark anim" />
 	<img src={src('light', 'png')} alt="" class="for-light still" />
@@ -19,10 +31,15 @@
 
 <style>
 	/* Show the animation for the current theme; a still frame when motion is reduced. */
+	.working-indicator {
+		width: var(--working-size);
+		height: var(--working-size);
+	}
+
 	.working-indicator img {
 		display: none;
-		width: 3rem;
-		height: 3rem;
+		width: var(--working-size);
+		height: var(--working-size);
 		image-rendering: pixelated;
 	}
 
