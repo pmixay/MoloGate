@@ -231,6 +231,9 @@ export const shareWindowName = (name: string, t: Translate = plainText) =>
 				? t('Monthly share')
 				: name;
 
+// In observe the rules are only recorded: what they say is what would happen once enforced.
+export const observing = (allowance: Allowance | null | undefined) => allowance?.mode === 'observe';
+
 export const tierLabel = (allowance: Allowance, t: Translate = plainText) =>
 	({
 		reserve: t('Your own account'),
@@ -266,6 +269,13 @@ export const shareWarningText = (
 		RESET: item.resets_at ? formatDuration(item.resets_at - now / 1000) : '',
 		MODEL: allowance.model_name
 	};
+	if (item.level === 'empty' && observing(allowance)) {
+		const text =
+			allowance.tier === 'worker'
+				? t('{{WINDOW}} is used up. Once limits are enforced, replies would use {{MODEL}}.', values)
+				: t('{{WINDOW}} is used up.', values);
+		return `${text} ${t('Limits are not enforced yet, so nothing changes for now.')}`;
+	}
 	if (item.level === 'empty') {
 		if (allowance.tier === 'worker') {
 			return values.RESET

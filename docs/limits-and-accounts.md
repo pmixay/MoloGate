@@ -445,7 +445,9 @@ With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_
   the share ("Weekly share: 84% used, about 40m of work at the recent pace. It frees up in 2d
   3h.") and says when replies use a worker model. A member on their own account gets no share
   warning: they are not drawing on the pool. When no shared account has room for the member
-  (tier 5), the warning says that instead of their share.
+  (tier 5), the warning says that instead of their share. In `observe` the panel and the warning
+  say what the rules would do ("Once limits are enforced, replies would use GPT Luna. Limits are
+  not enforced yet, so nothing changes for now."), in amber, never as a refusal.
 - **Tested** (`test/limits/test_allowance.py`): `EnforceTests` runs the real proxy in `enforce`
   with two keys and three members: the owner on their own account, the worker swap and its
   notice, failover within the pool tier and from a limited own account to the pool, tier 5 with

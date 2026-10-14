@@ -21,6 +21,7 @@
 	import {
 		formatDuration,
 		formatPercent,
+		observing,
 		shareWindowName,
 		tierLabel
 	} from '$lib/utils/providerLimits';
@@ -353,6 +354,13 @@
 									{tierLabel(allowance, t)}
 								</div>
 							</div>
+							{#if observing(allowance)}
+								<div class="text-[11.5px] text-gray-500 dark:text-gray-400">
+									{$i18n.t(
+										'Not enforced yet: this is what the rules would do. Nothing is limited for now.'
+									)}
+								</div>
+							{/if}
 							{#each Object.entries(allowance.windows) as [name, window] (name)}
 								<div class="flex flex-col gap-1">
 									<div class="flex items-baseline justify-between gap-3 text-[12px]">
@@ -391,7 +399,11 @@
 							</div>
 							{#if allowance.swapped}
 								<div class="text-[11.5px] text-gray-500 dark:text-gray-400">
-									{$i18n.t('Replies use {{MODEL}}.', { MODEL: allowance.model_name })}
+									{observing(allowance)
+										? $i18n.t('Once enforced, replies would use {{MODEL}}.', {
+												MODEL: allowance.model_name
+											})
+										: $i18n.t('Replies use {{MODEL}}.', { MODEL: allowance.model_name })}
 								</div>
 							{/if}
 						</div>

@@ -12,6 +12,7 @@
 	import { modelLimits } from '$lib/stores';
 	import {
 		lowWindows,
+		observing,
 		shareWarnings,
 		shareWarningText,
 		stillDismissed,
@@ -51,11 +52,15 @@
 			? [
 					{
 						id: 'pool-empty',
-						level: 'critical' as Outlook['level'],
+						level: (observing(allowance) ? 'low' : 'critical') as Outlook['level'],
 						resets_at: null,
-						text: t(
-							'The team pool has no room for this model right now. A model from another provider may still have some.'
-						)
+						text: observing(allowance)
+							? t(
+									'By the fair-use rules the team pool has no room for this model. Limits are not enforced yet, so your requests still go through.'
+								)
+							: t(
+									'The team pool has no room for this model right now. A model from another provider may still have some.'
+								)
 					}
 				]
 			: [];
@@ -63,7 +68,10 @@
 		...poolEmpty,
 		...(poolEmpty.length ? [] : shareWarnings(allowance)).map((item) => ({
 			id: item.id,
-			level: (item.level === 'empty' ? 'critical' : 'low') as Outlook['level'],
+			// Mologate: in observe nothing is refused or swapped, so nothing is critical.
+			level: (item.level === 'empty' && !observing(allowance)
+				? 'critical'
+				: 'low') as Outlook['level'],
 			resets_at: item.resets_at,
 			text: shareWarningText(item, allowance!, t)
 		})),
