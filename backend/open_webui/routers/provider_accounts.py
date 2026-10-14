@@ -21,8 +21,8 @@ from open_webui.models.provider_accounts import (
     seal_secret,
 )
 from open_webui.models.users import Users
-from open_webui.utils import codex_accounts
-from open_webui.utils.auth import get_verified_user
+from open_webui.utils import codex_accounts, metering
+from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.provider_accounts import (
     TEAM,
     auto_reset_enabled,
@@ -141,6 +141,27 @@ async def set_auto_reset(form: AutoResetForm, user=Depends(get_verified_user)):
     )
     log.info('Automatic limit resets turned %s by user %s.', 'on' if form.enabled else 'off', user.id)
     return await auto_reset_view()
+
+
+@router.get('/usage')
+async def my_usage(user=Depends(get_verified_user)):
+    """Mologate: the member's own metered use (docs/limits-and-accounts.md §8), read-only."""
+    return await metering.member_summary(user.id)
+
+
+@router.get('/metering')
+async def metering_report(user=Depends(get_admin_user)):
+    return await metering.report()
+
+
+@router.post('/metering/run')
+async def run_metering(request: Request, user=Depends(get_admin_user)):
+    """Poll, measure and calibrate now instead of waiting for the next round."""
+    await metering.poll(getattr(request.app.state, 'redis', None))
+    await metering.flush()
+    measured = await metering.process()
+    fitted = await metering.calibrate()
+    return {'measured': measured, 'calibrated': [f'{provider}:{window}' for provider, window in fitted]}
 
 
 @router.get('')

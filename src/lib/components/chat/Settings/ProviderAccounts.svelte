@@ -9,6 +9,7 @@
 		type AutoReset,
 		type ProviderAccount,
 		type DeviceLogin,
+		type MyUsage,
 		type Sharing
 	} from '$lib/apis/provider-accounts';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -21,6 +22,7 @@
 		amountText,
 		formatCount,
 		formatDollars,
+		formatPercent,
 		limitLabel,
 		mainWindows,
 		shortLabel,
@@ -59,6 +61,7 @@
 
 	let accounts: ProviderAccount[] = [];
 	let autoReset: AutoReset | null = null;
+	let myUsage: MyUsage | null = null;
 	let loading = true;
 	let busy = false;
 	let error = '';
@@ -165,9 +168,11 @@
 	};
 
 	const refresh = async (refreshModels = false) => {
-		[accounts, autoReset] = await Promise.all([
+		[accounts, autoReset, myUsage] = await Promise.all([
 			request<{ data: ProviderAccount[] }>().then((result) => result.data),
-			request<AutoReset>('/auto-reset')
+			request<AutoReset>('/auto-reset'),
+			// Mologate: numbers only; the page works without them.
+			request<MyUsage>('/usage').catch(() => null)
 		]);
 		if (refreshModels) {
 			models.set(
@@ -866,5 +871,48 @@
 				</ul>
 			{/if}
 		</section>
+
+		<!-- Mologate: the member's own use, read-only (docs/limits-and-accounts.md §8). Shares of an
+		     account window appear once metering has calibrated the provider. -->
+		{#if myUsage && myUsage.accounts.length}
+			<section class="mt-4">
+				<h3 class="mb-2 text-xs text-gray-600 dark:text-gray-400">Your use · last 7 days</h3>
+				<ul
+					class="divide-y divide-gray-100 rounded-2xl border border-gray-100 text-xs dark:divide-gray-850 dark:border-gray-850"
+				>
+					{#each myUsage.accounts as entry (entry.id)}
+						<li class="px-3 py-2">
+							<div class="flex items-baseline justify-between gap-3">
+								<span class="truncate font-medium text-gray-900 dark:text-white">{entry.label}</span
+								>
+								<span class="shrink-0 text-[0.6875rem] text-gray-500">
+									{entry.requests} requests · {formatCount(entry.input_tokens)} in · {formatCount(
+										entry.output_tokens
+									)} out{entry.cost != null ? ` · ${formatDollars(entry.cost)}` : ''}
+								</span>
+							</div>
+							{#if entry.windows.length}
+								<div class="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.6875rem] text-gray-500">
+									{#each entry.windows as item}
+										<span
+											title={item.calibrated
+												? 'Your share of this account window since it last reset, estimated from your tokens.'
+												: 'Metering learns what a token costs on this provider from about a week of use.'}
+										>
+											{item.window === '5h' ? '5-hour' : 'Weekly'}:
+											{item.percent != null
+												? `you ${formatPercent(item.percent)}`
+												: 'measuring'}{item.outside_percent
+												? ` · outside Mologate ${formatPercent(item.outside_percent)}`
+												: ''}
+										</span>
+									{/each}
+								</div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
 	</div>
 </div>

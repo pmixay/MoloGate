@@ -38,6 +38,36 @@ export type ProviderAccount = {
 	};
 };
 
+// Mologate: the member's own metered use (docs/limits-and-accounts.md §8), read-only.
+export type MeteredWindow = {
+	window: '5h' | 'weekly';
+	since: number;
+	resets_at: number | null;
+	account_used_percent: number | null;
+	calibrated: boolean;
+	units: number | null;
+	percent: number | null;
+	outside_units?: number;
+	outside_percent?: number;
+};
+
+export type MyUsage = {
+	since: number;
+	units: Record<string, Record<string, number>>;
+	accounts: {
+		id: string;
+		label: string;
+		provider: string;
+		plan: string;
+		owner: boolean;
+		requests: number;
+		input_tokens: number;
+		output_tokens: number;
+		cost: number | null;
+		windows: MeteredWindow[];
+	}[];
+};
+
 export type AutoReset = {
 	enabled: boolean;
 	changed_by: string | null;

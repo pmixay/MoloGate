@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 
 from open_webui.models.usage_events import UsageEvents
 from open_webui.utils import model_prices
@@ -90,6 +91,9 @@ class Meter:
         self.rows += 1
         numbers = usage_numbers(usage)
         values = dict(
+            # When the answer ended, not when the row is written: metering sets rows against the
+            # provider's readings by time.
+            ts=int(time.time()),
             user_id=self.user_id,
             account_id=account.id,
             provider=account.provider,

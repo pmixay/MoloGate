@@ -142,9 +142,9 @@ branch.
 
 At that baseline there were no account, ledger or credit tables, and no account UI. Phase 1 now
 provides `provider_account`, `provider_login` and account UI, and keys limits by account on the
-chat, Responses and proxy paths; §10 added `limit_reset_event`, and Phase 2 started the usage
-ledger (`usage_event`, §8). `account_window`, `decide()` and credit tables remain work for
-Phases 2, 3 and 5.
+chat, Responses and proxy paths; §10 added `limit_reset_event`, and Phase 2 added the usage
+ledger (`usage_event`) and metering (`account_window`, `account_reading`, `meter_interval`,
+`usage_calibration`, §8). `decide()` and the credit tables remain work for Phases 3 and 5.
 
 ---
 
@@ -191,20 +191,40 @@ Unique: (`provider`, `external_account_id`).
 Account uniqueness prevents simultaneous duplicates; the permanent `credit_grant` below prevents
 reconnect credit farming after an account row is deleted.
 
-**`account_window`** (latest snapshot per account and window; history in the ledger)
-`account_id`, `window` (`5h` | `weekly` | `budget`), `used_percent`, `resets_at`, `source`
-(`poll` | `headers` | `ledger`), `observed_at`.
+**`account_window`** (latest reading per account and window; migration `c4e8a2d6f1b9`)
+`account_id`, `window` (`5h` | `weekly`), `used_percent`, `resets_at`, `window_minutes`, `source`
+(`poll` | `headers`), `observed_at`. API-key budgets are not stored here: they come from the
+ledger's costs when the accounts page asks (§8).
+
+**`account_reading`** (each change of a window, kept 35 days)
+`id`, `account_id`, `window`, `used_percent`, `resets_at`, `window_minutes`, `source`,
+`observed_at`. A reading is kept only when the window rises or starts a new period.
+
+**`meter_interval`** (a stretch of one account window, measured against the ledger; kept 35 days)
+`id`, `account_id`, `provider`, `window`, `start`, `end`, `used_start`, `used_end`, `rise`
+(percent), `weight` (the account's `capacity_weight` then), `requests` and `features` (the
+ledger's tokens in the interval, by model), `first` (the first reading Mologate ever saw),
+`expected` (percent Mologate's requests explain; empty before calibration), `outside` (percent
+recorded as outside use) and `outside_event_id`.
+
+**`usage_calibration`** (one row per provider and window)
+`id` (`provider:window`), `values` (`k`, model `scales`, `default_scale`, and each account's
+fit: intervals, observed and predicted percent, error, fitted weight), `samples`, `error`,
+`fitted_at`.
 
 **`usage_event`** (one row per provider request)
 `id`, `ts`, `user_id`, `api_key_id` (nullable), `account_id`, `provider`, `model_id`, `source`
 (`chat` | `subagent` | `task` | `api_key` | `scheduled` | `workflow` | `outside`), `tier`
 (`reserve` | `pool` | `credit` | `worker` | `owner_outside`), `input_tokens`, `output_tokens`,
 `cached_tokens`, `reasoning_tokens`, `cost` (USD) and `cost_source` (`provider` | `estimate`),
-`est_units`, `units` (after calibration), `credits_charged`, `status` (`ok` | `error` |
-`limited`), `chat_id`, `request_id`. Index on (`user_id`, `ts`) and (`account_id`, `ts`).
-`outside` rows are the unexplained jumps from §8. Migration `a8d4e2c7f915`. Until the allowance
-engine assigns tiers, a row's tier says only whose account served it: `reserve` for the owner,
-`pool` for anyone else.
+`est_units`, `units`, `window`, `credits_charged`, `status` (`ok` | `error` | `limited`),
+`chat_id`, `request_id`. Index on (`user_id`, `ts`) and (`account_id`, `ts`). Migration
+`a8d4e2c7f915`; `c4e8a2d6f1b9` added `window`. `ts` is when the answer ended. Request rows leave
+`units` empty: a request's units in a window come from its tokens and that window's calibration
+(§8) when they are needed, so a refit re-prices history. `outside` rows are the unexplained rises
+from §8: no tokens, their `units` and `window` set, `tier` `owner_outside`, and the owner as
+`user_id` (empty for a team account). Until the allowance engine assigns tiers, a request row's
+tier says only whose account served it: `reserve` for the owner, `pool` for anyone else.
 
 **`credit_grant`**
 `id`, `user_id`, `provider`, `external_account_id`, `plan`, `amount`, `granted_at`, `forfeited_at`.
@@ -327,8 +347,15 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   `GET /api/v1/models/model/limits`). A window is low at 20% left or an hour of work, critical at
   10% or 15 minutes, unless it resets first. The chat shows it above the message box
   (`LimitsWarning.svelte`) and on the limits ring.
-- **Polling:** codex-lb reads each ChatGPT account's windows from OpenAI every minute and from
-  every response; Mologate takes them from its account summary. Store them in `account_window`.
+- **Readings (implemented, `utils/metering.py`):** every reading of an account's 5-hour and
+  weekly windows, from answer headers, codex-lb's account summary or Z.ai's quota endpoint,
+  updates `account_window` and, when the window rose or started a new period, adds an
+  `account_reading`. A lower reading is a stale one and never lowers the window. Writes happen in
+  the background and never slow a request.
+- **Polling (implemented):** one worker (a Redis lease; every worker without Redis) runs the
+  metering loop. Every minute it reads codex-lb's view of the ChatGPT accounts (codex-lb reads them
+  from OpenAI every minute) and, every 5 minutes, each Z.ai coding plan's quota. So the owner's use
+  outside Mologate shows up even while nobody uses Mologate. `MOLOGATE_LIMITS_MODE=off` stops it.
 - **Owner and team split (started, an estimate):** until the ledger exists, Mologate counts the
   requests each account serves for its owner and for everyone else, per 5-hour and weekly window.
   When a reading shows the window's used percent rose, the rise is shared out by those counts and
@@ -336,13 +363,44 @@ Members: Ann, Bob, Cat (no account). Weekly window unless stated.
   requests from Mologate, and whatever was used before Mologate first read the window, is the
   owner's (decision 4). A reset time that moves on, or a drop of more than 5 points, starts the
   split over. Kept in Redis (or memory) with the limit snapshots; `utils/provider_limits.py`.
-- **Outside use:** between two readings of `u_a`, the expected change is the sum of `units` of the
-  ledger rows in that interval. An increase larger than that, beyond a noise margin, becomes an
-  `outside` row attributed to the owner (decision 4).
-- **Calibration:** for each provider and model, fit `k` (units per weighted token, with input, cached,
-  output and reasoning tokens as separate features) by least squares over polling intervals. Refit
-  daily. Until a model has enough samples, use the provider's most expensive known `k` (a
-  conservative estimate). Also refit `c_a` across accounts.
+- **Intervals (implemented, `utils/calibration.py`):** every 5 minutes the loop cuts each window's
+  readings into intervals of at least 15 minutes, using readings at least 2 minutes old, so the
+  lag between a request ending and the provider counting it falls inside an interval. A new
+  period starts its own interval at the period start with the window at 0. The first reading
+  Mologate ever sees starts one at its period start: the use before it is the owner's.
+- **Outside use (implemented):** an interval's expected rise is the units of the ledger rows in it
+  (failed ones too: a cut-off stream still used the account) divided by `c_a`. A rise larger than
+  that by at least 1 point and 20% of the expected rise becomes an `outside` row for the owner
+  (decision 4). An interval without Mologate requests is all outside use. One with requests but
+  no calibration yet stays unknown, and nothing is written.
+- **Calibration (implemented):** once a day (hourly until a provider window has its first fit),
+  each provider window is fitted from the last 14 days of intervals that had Mologate traffic,
+  except an account's first. Features are uncached input, cached input, output (without
+  reasoning) and reasoning tokens, in millions. The fit is non-negative least squares pulled
+  towards typical price ratios (1 : 0.1 : 4 : 4) when the data cannot tell the features apart.
+  It is alternated with a scale per model seen in at least 8 intervals; other models get the
+  highest scale (the provider's most expensive known `k`, a conservative estimate). Intervals far
+  from the fit (2.5 robust spreads and at least 1.5 points) are left out, in up to two rounds,
+  since outside use only adds to a rise. At least 12 intervals are needed. When the provider's
+  base-plan accounts (ChatGPT Plus, Z.ai Lite: weight 1) have enough intervals, `k` comes from
+  them alone, and every other account's capacity weight is fitted against them (`fitted_weight`).
+  The fit never changes an account's `capacity_weight`: an account whose fitted weight is more
+  than 25% off is flagged (`weight_mismatch`) for an admin to set, and kept out of the headline
+  error until then.
+- **Reports (implemented):** `GET /api/v1/provider-accounts/usage` gives a member their requests,
+  tokens and cost of the last 7 days per account, their share of each account window since it
+  last reset (once calibrated), and, for owners, their outside use. Settings → Provider accounts
+  shows it under "Your use". Admins get every calibration, each account's error against the 10%
+  bar and its fitted weight, the latest windows, and a week of intervals and outside use from
+  `GET /api/v1/provider-accounts/metering`. `POST /api/v1/provider-accounts/metering/run` polls,
+  measures and calibrates at once.
+- **Tested** (`test/limits/test_metering.py`): besides the unit tests, a simulation of six days
+  of a small team on a ChatGPT Plus account and a Pro account five times its size (left at weight
+  1), with costs known, whole-percent readings, resets and the owner's laptop use on days 4 to 6.
+  Over eight random seeds: the fit after three days is within 0.5 to 2.5% on the Plus account,
+  the Pro account's fitted weight is 4.9 to 5.0, 83 to 91% of the outside use is found with none
+  found on the Pro account, and after six days, outside use included, the Plus account is within
+  2.3 to 5.6%. Real providers are noisier; the week of `observe` below is the real test.
 - **Run `observe` for at least a week** of real team use before switching to `enforce`. Compare
   decisions to what actually happened.
 
@@ -530,11 +588,12 @@ acceptance check is two real Codex accounts serving chats.
 ### Phase 2: metering (observe-only)
 
 - [x] `usage_event` ledger written for every source, including API keys and unsaved chats (§8).
-- [ ] Account polling, outside-use detection, calibration jobs.
-- [ ] Accounts page and a "my usage" page (read-only numbers). Started: the accounts page shows
-      each shared account's owner and team use, estimated from request counts (§8), each
-      member's requests, tokens and cost from the ledger, and an API key's budget left. The "my
-      usage" page is not started.
+- [x] Account polling, outside-use detection, calibration jobs (§8, `utils/metering.py`).
+- [x] Accounts page and a "my usage" page (read-only numbers): the accounts page shows each
+      shared account's owner and team use, estimated from request counts (§8), each member's
+      requests, tokens and cost from the ledger, and an API key's budget left; "Your use" in
+      Settings → Provider accounts shows the member's own numbers, and admins have the metering
+      report (`GET /api/v1/provider-accounts/metering`).
 - [ ] Done when: after a week, ledger units match the provider's percent changes within 10% per
       account.
 

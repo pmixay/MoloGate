@@ -313,15 +313,24 @@ async def record_provider_limits(redis, account_id: str, headers: Mapping[str, s
             return
 
         # Headers carry no reset coupons; the count the account service last reported is kept.
-        await record_provider_snapshot(redis, account_id, windows)
+        await record_provider_snapshot(redis, account_id, windows, reading_source='headers')
     except Exception as e:
         log.debug('Could not record provider limits: %s', e)
 
 
 async def record_provider_snapshot(
-    redis, account_id: str, windows: list[dict], reset_credits: float | None = None, source: str | None = None
+    redis,
+    account_id: str,
+    windows: list[dict],
+    reset_credits: float | None = None,
+    source: str | None = None,
+    reading_source: str = 'poll',
 ) -> None:
     """Keep a reading. It replaces the windows its source reported before; other sources' stay."""
+    # Mologate: metering keeps the 5-hour and weekly readings in the database (utils/metering.py).
+    from open_webui.utils import metering
+
+    metering.note_reading(account_id, windows, reading_source)
     previous = await get_provider_limits(redis, account_id) or {}
     ids = {window.get('id') for window in windows}
     kept = [

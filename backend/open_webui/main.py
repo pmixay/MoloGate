@@ -432,6 +432,11 @@ async def lifespan(app: FastAPI):
     await chat_containers.sync_connection()
     app.state.container_cleanup_loop = asyncio.create_task(chat_containers.cleanup_loop())
 
+    # Mologate: metering polls the provider accounts and measures their use (docs/limits-and-accounts.md §8).
+    from open_webui.utils import metering
+
+    app.state.metering_loop = asyncio.create_task(metering.loop(app))
+
     if await Config.get('models.base_models_cache'):
         try:
             await get_all_models(
@@ -525,6 +530,7 @@ async def lifespan(app: FastAPI):
     app.state.periodic_session_pool_cleanup.cancel()
     app.state.scheduler_worker_loop.cancel()
     app.state.container_cleanup_loop.cancel()
+    app.state.metering_loop.cancel()
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_COMPLETED, source='system')
 

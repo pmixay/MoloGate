@@ -73,9 +73,12 @@ The full design and phased plan for accounts, limits, credits and personal API k
       [docs/limits-and-accounts.md](docs/limits-and-accounts.md).
   - Started: the usage ledger records every request a provider account serves or refuses (member,
     account, model, source, tokens, cost), and the accounts page shows each shared window split
-    between owner and team. Missing: calibrating units against the providers' percentages
-    (phase 2, after a week of real use), the allowance engine that decides each request's tier
-    (phase 3), enforcing it with the swap to worker models (phase 4), and credits (phase 5).
+    between owner and team. Metering (phase 2) polls every account's 5-hour and weekly windows,
+    sets each rise against the tokens Mologate sent, records the owner's use outside Mologate,
+    and fits each provider's units per token and each account's capacity weight daily; members
+    see their own use under "Your use", admins the calibration report. Missing: a week of real
+    use to check the fit against the 10% bar, the allowance engine that decides each request's
+    tier (phase 3), enforcing it with the swap to worker models (phase 4), and credits (phase 5).
 - [x] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed
