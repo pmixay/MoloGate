@@ -4,6 +4,51 @@ from open_webui.utils.json_codec import JSONCodec
 
 
 ASK_USER_NAME = 'ask_user'
+# Mologate: up to five questions with up to five options each. There is no timeout: the turn
+# waits for the user's answer for as long as it takes.
+MAX_QUESTIONS = 5
+MIN_OPTIONS = 2
+MAX_OPTIONS = 5
+
+
+def get_ask_user_questions_schema() -> dict:
+    """The exact shape of ask_user's questions, so the model sees the limits."""
+    return {
+        'type': 'array',
+        'minItems': 1,
+        'maxItems': MAX_QUESTIONS,
+        'description': f'1-{MAX_QUESTIONS} questions, asked together in one card.',
+        'items': {
+            'type': 'object',
+            'properties': {
+                'id': {'type': 'string', 'description': 'Short unique id; the answers are keyed by it.'},
+                'header': {'type': 'string', 'description': 'A few words naming the question, e.g. "Database".'},
+                'question': {'type': 'string', 'description': 'The full question.'},
+                'options': {
+                    'type': 'array',
+                    'minItems': MIN_OPTIONS,
+                    'maxItems': MAX_OPTIONS,
+                    'description': (
+                        f'{MIN_OPTIONS}-{MAX_OPTIONS} choices. Put the one you recommend first; '
+                        'the UI labels it Recommended.'
+                    ),
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'label': {'type': 'string', 'description': 'The choice, in a few words.'},
+                            'description': {'type': 'string', 'description': 'What choosing it means.'},
+                        },
+                        'required': ['label', 'description'],
+                    },
+                },
+                'allow_other': {
+                    'type': 'boolean',
+                    'description': 'Whether this question also takes a typed answer; defaults to allow_other.',
+                },
+            },
+            'required': ['id', 'header', 'question', 'options'],
+        },
+    }
 
 
 def get_ask_user_tool_calls(tool_calls: list[dict]) -> tuple[list[dict], str | None]:
@@ -24,8 +69,8 @@ def get_ask_user_tool_calls(tool_calls: list[dict]) -> tuple[list[dict], str | N
 
 def normalize_ask_user_request(arguments: dict) -> dict:
     questions = arguments.get('questions')
-    if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
-        raise ValueError('ask_user requires 1-3 questions.')
+    if not isinstance(questions, list) or not 1 <= len(questions) <= MAX_QUESTIONS:
+        raise ValueError(f'ask_user requires 1-{MAX_QUESTIONS} questions.')
 
     normalized_questions = []
     seen_ids = set()
@@ -42,8 +87,8 @@ def normalize_ask_user_request(arguments: dict) -> dict:
         seen_ids.add(question_id)
 
         options = question.get('options')
-        if not isinstance(options, list) or not 2 <= len(options) <= 3:
-            raise ValueError('Each question requires 2-3 options.')
+        if not isinstance(options, list) or not MIN_OPTIONS <= len(options) <= MAX_OPTIONS:
+            raise ValueError(f'Each question requires {MIN_OPTIONS}-{MAX_OPTIONS} options.')
 
         normalized_options = []
         for option in options:
@@ -69,14 +114,9 @@ def normalize_ask_user_request(arguments: dict) -> dict:
             }
         )
 
-    timeout_ms = arguments.get('timeout_ms', 120_000)
-    if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or not 60_000 <= timeout_ms <= 240_000:
-        timeout_ms = 120_000
-
     return {
         'questions': normalized_questions,
         'allow_other': allow_other,
-        'timeout_ms': timeout_ms,
     }
 
 

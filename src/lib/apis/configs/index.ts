@@ -742,6 +742,46 @@ export const setSubagentsConfig = async (token: string, config: object) => {
 	return res.json();
 };
 
+// Mologate: limits for sub-agents, background work, monitors and schedules (utils/task_limits.py).
+// The server clamps every value to its range, admins included.
+export type TaskLimit = {
+	name: string;
+	value: number;
+	default: number;
+	min: number;
+	max: number;
+	// 0 is allowed and means "off", below min.
+	zero_allowed: boolean;
+};
+
+export const getTaskLimitsConfig = async (token: string): Promise<{ limits: TaskLimit[] }> => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/task_limits`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
+export const setTaskLimitsConfig = async (
+	token: string,
+	limits: Record<string, number>
+): Promise<{ limits: TaskLimit[] }> => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/task_limits`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ limits })
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
 export const setDefaultPromptSuggestions = async (
 	token: string,
 	promptSuggestions: any[] | null,

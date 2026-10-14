@@ -2509,5 +2509,153 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(route.await_count, 3)
 
 
+def assembled_calls(chunks):
+    """The tool calls the agent ends up with, merged the way the chat middleware merges deltas."""
+    calls = {}
+    for data in chunks:
+        for choice in data.get('choices') or []:
+            for delta in (choice.get('delta') or {}).get('tool_calls') or []:
+                call = calls.setdefault(delta['index'], {'id': None, 'name': '', 'arguments': ''})
+                call['id'] = delta.get('id') or call['id']
+                function = delta.get('function') or {}
+                call['name'] = function.get('name') or call['name']
+                call['arguments'] += function.get('arguments') or ''
+    return [calls[index] for index in sorted(calls)]
+
+
+def search_added(item_id='fc_1', call_id='call_1', output_index=1):
+    return {
+        'type': 'response.output_item.added',
+        'output_index': output_index,
+        'item': {'type': 'function_call', 'id': item_id, 'call_id': call_id, 'name': 'search_web', 'arguments': ''},
+    }
+
+
+def search_done(arguments, item_id='fc_1', call_id='call_1', output_index=1):
+    return {
+        'type': 'response.output_item.done',
+        'output_index': output_index,
+        'item': {
+            'type': 'function_call',
+            'id': item_id,
+            'call_id': call_id,
+            'name': 'search_web',
+            'arguments': arguments,
+        },
+    }
+
+
+COMPLETED = {'type': 'response.completed', 'response': {'id': 'resp_1', 'output': [], 'usage': {}}}
+QUERY = '{"query":"mologate release notes"}'
+
+
+class CodexToolCallTests(unittest.IsolatedAsyncioTestCase):
+    """Tool calls from the ChatGPT backend reach the agent with their arguments, however they stream."""
+
+    async def calls(self, events):
+        chunks = await read_stream(proxy.codex_chat_stream(Response(events=events), 'test'))
+        self.assertEqual(chunks[-1]['choices'][0]['finish_reason'], 'tool_calls')
+        return assembled_calls(chunks)
+
+    async def test_arguments_only_in_the_done_item(self):
+        calls = await self.calls([search_added(), search_done(QUERY), COMPLETED])
+        self.assertEqual(calls, [{'id': 'call_1', 'name': 'search_web', 'arguments': QUERY}])
+
+    async def test_arguments_done_by_call_id(self):
+        events = [
+            search_added(),
+            {'type': 'response.function_call_arguments.done', 'call_id': 'call_1', 'arguments': QUERY},
+            COMPLETED,
+        ]
+        self.assertEqual((await self.calls(events))[0]['arguments'], QUERY)
+
+    async def test_tool_call_deltas_without_an_added_item(self):
+        events = [
+            {
+                'type': 'response.output_tool_call.delta',
+                'call_id': 'call_1',
+                'name': 'search_web',
+                'arguments': '{"query":',
+            },
+            {'type': 'response.output_tool_call.delta', 'call_id': 'call_1', 'arguments': '"mologate release notes"}'},
+            COMPLETED,
+        ]
+        self.assertEqual(await self.calls(events), [{'id': 'call_1', 'name': 'search_web', 'arguments': QUERY}])
+
+    async def test_done_arguments_win_over_repeated_snapshots(self):
+        events = [
+            {
+                'type': 'response.output_tool_call.delta',
+                'call_id': 'call_1',
+                'name': 'search_web',
+                'arguments': '{"query":"mo',
+            },
+            {'type': 'response.output_tool_call.delta', 'call_id': 'call_1', 'arguments': '{"query":"mologate'},
+            {'type': 'response.function_call_arguments.done', 'call_id': 'call_1', 'arguments': QUERY},
+            search_done(QUERY, item_id='call_1'),
+            COMPLETED,
+        ]
+        self.assertEqual(await self.calls(events), [{'id': 'call_1', 'name': 'search_web', 'arguments': QUERY}])
+
+    async def test_standard_deltas_still_stream_and_are_not_repeated(self):
+        events = [
+            search_added(),
+            {
+                'type': 'response.function_call_arguments.delta',
+                'item_id': 'fc_1',
+                'output_index': 1,
+                'delta': '{"query":',
+            },
+            {
+                'type': 'response.function_call_arguments.delta',
+                'item_id': 'fc_1',
+                'output_index': 1,
+                'delta': '"mologate release notes"}',
+            },
+            {'type': 'response.function_call_arguments.done', 'item_id': 'fc_1', 'output_index': 1, 'arguments': QUERY},
+            search_done(QUERY),
+            COMPLETED,
+        ]
+        chunks = await read_stream(proxy.codex_chat_stream(Response(events=events), 'test'))
+        argument_chunks = [
+            delta['function']['arguments']
+            for data in chunks
+            for delta in data['choices'][0]['delta'].get('tool_calls') or []
+            if delta.get('function', {}).get('arguments')
+        ]
+        self.assertEqual(argument_chunks, ['{"query":', '"mologate release notes"}'])
+        self.assertEqual(assembled_calls(chunks)[0]['arguments'], QUERY)
+
+    async def test_parallel_calls_keep_their_own_arguments(self):
+        other = '{"query":"codex-lb"}'
+        events = [
+            search_added(),
+            search_added('fc_2', 'call_2', 2),
+            {'type': 'response.function_call_arguments.delta', 'item_id': 'fc_2', 'delta': other},
+            {'type': 'response.function_call_arguments.delta', 'item_id': 'fc_1', 'delta': QUERY},
+            search_done(QUERY),
+            search_done(other, 'fc_2', 'call_2', 2),
+            COMPLETED,
+        ]
+        calls = await self.calls(events)
+        self.assertEqual([(call['id'], call['arguments']) for call in calls], [('call_1', QUERY), ('call_2', other)])
+
+    async def test_a_name_that_comes_later(self):
+        events = [
+            {'type': 'response.output_tool_call.delta', 'call_id': 'call_1', 'arguments': QUERY},
+            search_done(QUERY, item_id='call_1'),
+            COMPLETED,
+        ]
+        self.assertEqual((await self.calls(events))[0]['name'], 'search_web')
+
+    async def test_a_whole_result_takes_its_calls_from_the_stream(self):
+        response = Response(events=[search_added(), search_done(QUERY), COMPLETED])
+        result = await proxy.codex_result(response, SimpleNamespace(id='a1', provider='codex'), 'chat/completions')
+        call = result['choices'][0]['message']['tool_calls'][0]
+        self.assertEqual(
+            (call['id'], call['function']['name'], call['function']['arguments']), ('call_1', 'search_web', QUERY)
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

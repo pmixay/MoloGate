@@ -171,7 +171,6 @@
 	let showAskUserDialog = false;
 	let askUserQuestions: any[] = [];
 	let askUserAllowOther = true;
-	let askUserTimeoutMs: number | null = null;
 
 	let selectedModels = [''];
 	let selectedModelIdx = 0;
@@ -513,7 +512,7 @@
 		return !!getPendingAskUserFromMessage(message);
 	};
 
-	const answerPendingAskUser = async (messageId, callId, answers, timedOut = false) => {
+	const answerPendingAskUser = async (messageId, callId, answers) => {
 		if (!$chatId || !messageId || !callId) {
 			return;
 		}
@@ -524,10 +523,7 @@
 			messageId,
 			callId,
 			'answer',
-			{
-				answers,
-				timed_out: timedOut
-			}
+			{ answers }
 		).catch(async (error) => {
 			toast.error(`${error}`);
 			await loadChat();
@@ -561,13 +557,11 @@
 					? pendingAskUser.args.questions
 					: [],
 				allowOther: pendingAskUser.args?.allow_other !== false,
-				timeoutMs: null,
 				onConfirm: (value) => {
 					void answerPendingAskUser(
 						pendingAskUser.message.id,
 						pendingAskUser.call.call_id || pendingAskUser.call.id,
-						value?.answers ?? {},
-						false
+						value?.answers ?? {}
 					);
 				},
 				onCancel: () => {
@@ -583,7 +577,6 @@
 		show: showAskUserDialog,
 		questions: askUserQuestions,
 		allowOther: askUserAllowOther,
-		timeoutMs: askUserTimeoutMs,
 		onConfirm: (value) => {
 			showAskUserDialog = false;
 			eventCallback(value);
@@ -1360,8 +1353,6 @@
 					eventCallback = cb;
 					askUserQuestions = data?.questions ?? [];
 					askUserAllowOther = data?.allow_other ?? true;
-					askUserTimeoutMs =
-						typeof data?.timeout_ms === 'number' && data.timeout_ms > 0 ? data.timeout_ms : null;
 					showAskUserDialog = true;
 				} else if (type.startsWith('terminal:')) {
 					terminalEventHandler(type, data);

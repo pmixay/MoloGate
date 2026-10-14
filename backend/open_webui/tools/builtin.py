@@ -65,6 +65,7 @@ from open_webui.routers.retrieval import search_web as _search_web
 from open_webui.socket.main import sio
 from open_webui.tasks import stop_item_tasks
 from open_webui.tools.knowledge_fs import kb_exec  # noqa: F401 — re-exported
+from open_webui.utils.ask_user import normalize_ask_user_request
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.notifications import notify_target
@@ -518,73 +519,20 @@ async def edit_image(
 async def ask_user(
     questions: list[dict],
     allow_other: bool = True,
-    timeout_ms: int = 120_000,
     __event_call__: callable = None,
 ) -> str:
     """
-    Ask the user clarifying questions before continuing.
+    Ask the user clarifying questions before continuing, and wait for the answers.
     Use this when the next step depends on user intent, preference, or a tradeoff that cannot be inferred safely.
+    The turn pauses until the user answers or dismisses the questions; there is no time limit.
 
-    :param questions: 1-3 question objects, each with id, header, question, and 2-3 options. Each option needs label and description.
+    :param questions: 1-5 question objects, each with id, header, question, and 2-5 options. Each option needs label and description.
         List the option you recommend first; the UI labels the first option Recommended.
     :param allow_other: Whether users may enter a free-form answer instead of choosing one of the options
-    :param timeout_ms: How long the browser should keep the prompt open before cancelling it
     :return: JSON with status and answers keyed by question id
     """
     try:
-        if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
-            raise ValueError('ask_user requires 1-3 questions.')
-
-        normalized_questions = []
-        seen_ids = set()
-        for index, question in enumerate(questions):
-            if not isinstance(question, dict):
-                raise ValueError('Each question must be an object.')
-
-            question_id = str(question.get('id') or '').strip()[:64]
-            if not question_id:
-                raise ValueError('Each question requires a non-empty id.')
-            if question_id in seen_ids:
-                raise ValueError(f'Duplicate question id: {question_id}')
-            seen_ids.add(question_id)
-
-            options = question.get('options')
-            if not isinstance(options, list) or not 2 <= len(options) <= 3:
-                raise ValueError('Each question requires 2-3 options.')
-
-            normalized_options = []
-            for option in options:
-                if not isinstance(option, dict):
-                    raise ValueError('Each option must be an object.')
-
-                label = str(option.get('label') or '').strip()[:80]
-                description = str(option.get('description') or '').strip()[:240]
-                if not label or not description:
-                    raise ValueError('Each option requires a label and description.')
-
-                normalized_options.append(
-                    {
-                        'label': label,
-                        'description': description,
-                    }
-                )
-
-            question_text = str(question.get('question') or '').strip()[:500]
-            if not question_text:
-                raise ValueError('Each question requires question text.')
-
-            normalized_questions.append(
-                {
-                    'id': question_id,
-                    'header': str(question.get('header') or '').strip()[:48] or f'Question {index + 1}',
-                    'question': question_text,
-                    'options': normalized_options,
-                    'allow_other': bool(question.get('allow_other', allow_other)),
-                }
-            )
-
-        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or not 60_000 <= timeout_ms <= 240_000:
-            timeout_ms = 120_000
+        user_input = normalize_ask_user_request({'questions': questions, 'allow_other': allow_other})
 
         if __event_call__ is None:
             return JSONCodec.dumps(
@@ -595,16 +543,7 @@ async def ask_user(
                 ensure_ascii=False,
             )
 
-        output = await __event_call__(
-            {
-                'type': 'request:user_input',
-                'data': {
-                    'questions': normalized_questions,
-                    'allow_other': allow_other,
-                    'timeout_ms': timeout_ms,
-                },
-            }
-        )
+        output = await __event_call__({'type': 'request:user_input', 'data': user_input})
 
         if not isinstance(output, dict):
             return JSONCodec.dumps({'status': 'error', 'error': 'Invalid user input response.'}, ensure_ascii=False)
@@ -1691,14 +1630,17 @@ async def delegate_task(
 ) -> str:
     """
     Delegate focused work to a parallel sub-agent using the current model and tools.
+    task_status shows a sub-agent's progress and result, and cancel_task stops it.
+    A foreground sub-agent that runs long moves to the background by itself; its result then comes back as a message.
 
     :param task: The specific task for the sub-agent to complete
     :param context: Relevant context, decisions, or file paths for the task
     :param file_ids: Attached file IDs the sub-agent needs. Use this for images or files;
         do not put file IDs only in context.
-    :param background: Return immediately and continue this chat when the sub-agent finishes
+    :param background: Return immediately and continue this chat when the sub-agent finishes.
+        Without it, a sub-agent that runs long moves to the background by itself.
     :param profile: The sub-agent's role, such as general-purpose, explore, plan or reviewer
-    :return: Foreground result text, or a JSON dispatch handle for background work
+    :return: Foreground result text, or a JSON handle (task_id) for work that runs in the background
     """
     if __request__ is None:
         return 'Error: request context not available.'
@@ -1781,16 +1723,64 @@ async def timer(
     :param cancel_on: Optional events that cancel the timer before it fires
     :return: JSON status with the scheduled time, or an error string
     """
+    # Mologate: legacy, no longer offered; schedule_task replaced it.
+    return await schedule_task(
+        prompt,
+        at=at,
+        cancel_on=cancel_on,
+        __request__=__request__,
+        __user__=__user__,
+        __metadata__=__metadata__,
+        __chat_id__=__chat_id__,
+        __message_id__=__message_id__,
+    )
+
+
+async def schedule_task(
+    prompt: str,
+    at: str = '',
+    every: str = '',
+    max_runs: int | None = None,
+    until: str = '',
+    name: str = '',
+    cancel_on: list[Literal['chat.read', 'chat.user_message']] | None = None,
+    __request__: Request = None,
+    __user__: dict = None,
+    __metadata__: dict = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Run a prompt in this chat later, once or repeating. Each run is a new turn in this chat that starts
+    with the prompt, so write it as an instruction to yourself. Runs never overlap: a run waits while the
+    chat is busy, and one that would run into the next is skipped.
+
+    :param prompt: What to do on each run, as an instruction to yourself
+    :param at: When to run (first): a relative time like 10m, 2h, 1d, or a timezone-aware RFC 3339 timestamp.
+        A repeating task starts one interval from now by default
+    :param every: How often to repeat, like 2h, 1d or 7d; empty for a one-off. The shortest allowed repeat
+        is set by the admin (an hour by default)
+    :param max_runs: Stop after this many runs (repeating tasks only)
+    :param until: Stop repeating after this time, relative or RFC 3339 (at most 90 days ahead by default)
+    :param name: A short name for the task
+    :param cancel_on: Events that cancel the task: chat.read (the user opens this chat) or chat.user_message
+        (the user writes in it)
+    :return: JSON with the task id (for task_status and cancel_task) and the next run, or an error
+    """
     if __request__ is None:
         return 'Error: request context not available.'
     if getattr(__request__.state, 'internal', False) is True:
-        return 'Error: timers cannot be set from internal chats.'
+        return 'Error: tasks cannot be scheduled from internal chats.'
 
-    from open_webui.utils.timers import create_timer
+    from open_webui.utils.timers import create_schedule
 
-    return await create_timer(
+    return await create_schedule(
         prompt=prompt,
         at=at,
+        every=every,
+        max_runs=max_runs,
+        until=until,
+        name=name,
         cancel_on=cancel_on,
         request=__request__,
         user_data=__user__ or {},
@@ -3736,6 +3726,71 @@ async def update_task(
 
 
 # =============================================================================
+# TASKS PANEL TOOLS
+# =============================================================================
+
+
+async def task_status(
+    task_id: str = '',
+    wait_seconds: int = 0,
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    Check the tasks of this chat: sub-agents, monitors and scheduled prompts, running or finished.
+    Without a task_id it lists them; with one it returns that task's status and result.
+
+    :param task_id: A task's id, such as deleg_1a2b3c4d, mon_1a2b3c4d or sched_1a2b3c4d. Leave empty to list all tasks.
+    :param wait_seconds: Wait up to this many seconds (at most 300) for a running task to finish before answering
+    :return: JSON with the task's status and result, or the list of tasks
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+
+    from open_webui.utils.agent_tasks import agent_task_status
+
+    max_output = int(await Config.get('subagents.max_output', 30_000) or 30_000)
+    return JSONCodec.dumps(
+        await agent_task_status(
+            __request__.app.state.redis,
+            __chat_id__,
+            __user__.get('id', ''),
+            task_id,
+            wait_seconds,
+            max_output=max_output,
+        ),
+        ensure_ascii=False,
+    )
+
+
+async def cancel_task(
+    task_id: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    Stop a task of this chat: a background sub-agent, a monitor, or a scheduled prompt's next runs.
+    It posts no result back to this chat.
+
+    :param task_id: The task's id, such as deleg_1a2b3c4d, mon_1a2b3c4d or sched_1a2b3c4d
+    :return: JSON with status cancelled or already_finished, or an error
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+    if getattr(__request__.state, 'internal', False) is True:
+        return 'Error: only the main agent can cancel tasks.'
+
+    from open_webui.utils.agent_tasks import agent_cancel_task
+
+    return JSONCodec.dumps(
+        await agent_cancel_task(__request__.app.state.redis, __chat_id__, __user__.get('id', ''), task_id),
+        ensure_ascii=False,
+    )
+
+
+# =============================================================================
 # AUTOMATION TOOLS
 # =============================================================================
 
@@ -3769,11 +3824,13 @@ async def create_automation(
     - Every day at 9am: "DTSTART:20250101T090000\\nRRULE:FREQ=DAILY"
     - Every Monday at 8am: "DTSTART:20250106T080000\\nRRULE:FREQ=WEEKLY;BYDAY=MO"
     - Every hour: "RRULE:FREQ=HOURLY;INTERVAL=1"
-    - Every 30 minutes: "RRULE:FREQ=MINUTELY;INTERVAL=30"
+    - Every 6 hours: "RRULE:FREQ=HOURLY;INTERVAL=6"
     - Once at a specific time: "DTSTART:20250415T140000\\nRRULE:FREQ=DAILY;COUNT=1"
     - First day of every month: "DTSTART:20250101T090000\\nRRULE:FREQ=MONTHLY;BYMONTHDAY=1"
 
     The DTSTART time should reflect the desired execution time. Use COUNT=1 for one-time automations.
+    The shortest allowed repeat is set by the admin (an hour by default), and active automations count
+    toward the same per-user limit as scheduled tasks.
 
     :param name: A short descriptive name for the automation
     :param prompt: The prompt/instructions to execute on each run
@@ -4067,6 +4124,14 @@ async def toggle_automation(
             return JSONCodec.dumps({'error': 'Access denied'})
 
         rrule = automation.data.get('rrule', '')
+        if not automation.is_active:
+            # Mologate: turning one back on counts against the shared schedule limits, as in the router.
+            from open_webui.routers.automations import check_automation_limits
+
+            try:
+                await check_automation_limits(__request__, user, rrule, None, activating=True)
+            except HTTPException as e:
+                return JSONCodec.dumps({'error': e.detail})
         toggled = await Automations.toggle(
             automation_id,
             await next_run_ns(rrule, tz=user.timezone if user else None),
@@ -4588,3 +4653,70 @@ async def delete_calendar_event(
     except Exception as e:
         log.exception(f'delete_calendar_event error: {e}')
         return JSONCodec.dumps({'error': str(e)})
+
+
+# =============================================================================
+# MONITOR TOOL
+# =============================================================================
+
+
+async def monitor(
+    description: str,
+    command: str = '',
+    url: str = '',
+    expect_status: int = 200,
+    pattern: str = '',
+    interval_seconds: int = 0,
+    timeout_minutes: int = 0,
+    max_checks: int = 0,
+    background: bool = False,
+    __request__: Request = None,
+    __user__: dict = None,
+    __metadata__: dict = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Wait until something in this chat's container becomes true: a command succeeds or prints what
+    you expect, or a URL answers. Use it instead of polling with run_command to wait for a build, a
+    server, a file or a deployment. Checks run in the container on a schedule, in /home/user, and
+    never call a model. Give exactly one of command or url.
+    It waits and returns the result; if still waiting after a few minutes it moves to the
+    background by itself, and you get one message in this chat when it's true or when it gives up.
+
+    :param description: What you are waiting for, in a few words, such as "the build to finish"
+    :param command: Shell command; true when it exits 0, or when its output matches pattern
+    :param url: http(s) URL fetched from inside the container; true when it answers expect_status
+        (and its body matches pattern)
+    :param expect_status: The HTTP status that counts as true for url
+    :param pattern: Optional extended regular expression (grep -E) the output or body must match
+    :param interval_seconds: Seconds between checks; 0 for the default, which is also the shortest
+    :param timeout_minutes: Give up after this many minutes; 0 for the longest allowed (6 hours by default)
+    :param max_checks: Give up after this many checks; 0 for the most allowed
+    :param background: Return at once and get a message in this chat when it ends
+    :return: JSON with the outcome (met, timed_out, failed or cancelled), the checks made and the last check's output
+    """
+    if __request__ is None:
+        return 'Error: request context not available.'
+    if getattr(__request__.state, 'internal', False) is True:
+        return 'Error: monitors cannot be started from internal chats.'
+    if not is_saved_chat_id(__chat_id__):
+        return 'Error: monitors need a saved chat.'
+
+    from open_webui.utils.monitors import start_monitor
+
+    return await start_monitor(
+        description=description,
+        command=command,
+        url=url,
+        expect_status=expect_status,
+        pattern=pattern,
+        interval_seconds=interval_seconds,
+        timeout_minutes=timeout_minutes,
+        max_checks=max_checks,
+        background=background,
+        user_data=__user__ or {},
+        metadata=__metadata__ or {},
+        parent_chat_id=__chat_id__ or '',
+        parent_message_id=__message_id__,
+    )

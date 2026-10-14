@@ -87,7 +87,6 @@ from open_webui.tools.builtin import (
     search_notes,
     search_web,
     send_message,
-    timer,
     toggle_automation,
     update_automation,
     update_calendar_event,
@@ -104,6 +103,7 @@ from open_webui.tools.builtin import (
 )
 from open_webui.utils import containers
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
+from open_webui.utils.ask_user import get_ask_user_questions_schema
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.headers import (
     bearer_auth_header,
@@ -587,10 +587,18 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('time'):
         builtin_functions.extend([get_current_timestamp, calculate_timestamp])
 
-    if is_builtin_tool_enabled('user_input', True):
+    metadata = extra_params.get('__metadata__') or {}
+
+    # Mologate: ask_user waits for the answer with no time limit, so it is only offered where
+    # someone is there to answer: not in automations, channels or internal sub-agent runs.
+    if (
+        is_builtin_tool_enabled('user_input', True)
+        and not metadata.get('automation_id')
+        and not str(metadata.get('chat_id') or '').startswith('channel:')
+        and getattr(request.state, 'internal', False) is not True
+    ):
         builtin_functions.append(ask_user)
 
-    metadata = extra_params.get('__metadata__') or {}
     chat_files = metadata.get('files') or extra_params.get('__files__') or []
     has_chat_files = any(
         isinstance(item, dict)
@@ -654,13 +662,30 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('chats'):
         builtin_functions.extend([search_chats, view_chat])
 
+    # Mologate: the chat's tasks (utils/agent_tasks.py). Every agent of a saved chat checks them; the
+    # main agent also stops them.
+    if (
+        is_builtin_tool_enabled('subagents')
+        and config.get('subagents.enable')
+        and getattr(request.state, 'direct', False) is not True
+        and is_saved_chat_id(metadata.get('chat_id'))
+        and not metadata.get('automation_id')
+    ):
+        from open_webui.tools.builtin import cancel_task, task_status
+
+        builtin_functions.append(task_status)
+        if getattr(request.state, 'internal', False) is not True:
+            builtin_functions.append(cancel_task)
+
     if (
         is_builtin_tool_enabled('subagents')
         and config.get('subagents.enable')
         and getattr(request.state, 'direct', False) is not True
     ):
         if getattr(request.state, 'internal', False) is not True:
-            builtin_functions.extend([delegate_task, timer, list_agents, send_message])
+            from open_webui.tools.builtin import schedule_task
+
+            builtin_functions.extend([delegate_task, schedule_task, list_agents, send_message])
         else:
             # Mologate: sub-agents message the main agent and each other (utils/agent_messages.py).
             builtin_functions.extend([list_agents, send_message])
@@ -757,6 +782,24 @@ async def get_builtin_tools(
     if is_builtin_tool_enabled('tasks') and is_saved_chat_id(metadata.get('chat_id')):
         builtin_functions.extend([create_tasks, update_task])
 
+    # Mologate: monitor waits for a condition in the chat's own container (utils/monitors.py), so
+    # only the main agent of a saved chat that has one gets it.
+    if (
+        is_builtin_tool_enabled('subagents')
+        and config.get('subagents.enable')
+        and getattr(request.state, 'direct', False) is not True
+        and getattr(request.state, 'internal', False) is not True
+        and is_saved_chat_id(metadata.get('chat_id'))
+        and not metadata.get('automation_id')
+        and metadata.get('terminal_id') == containers.CONNECTION_ID
+        and not metadata.get('container_error')
+        and get_model_capability('terminal')
+        and await containers.containers_enabled()
+    ):
+        from open_webui.tools.builtin import monitor
+
+        builtin_functions.append(monitor)
+
     # Automation tools - create and manage scheduled automations from chat
     if (
         is_builtin_tool_enabled('automations')
@@ -808,6 +851,8 @@ async def get_builtin_tools(
             parameters.get('properties', {}).pop('background', None)
             if isinstance(parameters.get('required'), list):
                 parameters['required'] = [name for name in parameters['required'] if name != 'background']
+        if func.__name__ == 'ask_user':
+            spec.get('parameters', {}).get('properties', {})['questions'] = get_ask_user_questions_schema()
         if func.__name__ == 'delegate_task':
             # Mologate: the profiles the model can pick, built-in and the admin's (utils/subagent_profiles.py).
             profiles = get_subagent_profiles(config.get('subagents.profiles'))
@@ -819,6 +864,34 @@ async def get_builtin_tools(
                 'description': "The sub-agent's role. "
                 + ' '.join(f'{profile["name"]}: {profile["description"]}' for profile in profiles),
             }
+            # Mologate: when a foreground sub-agent moves to the background by itself (utils/task_limits.py).
+            from open_webui.utils import task_limits
+            from open_webui.utils.agent_tasks import describe_seconds
+
+            auto_background = (
+                await task_limits.get('auto_background_seconds') if config.get('subagents.background_enabled') else 0
+            )
+
+            def describe_auto_background(text: str) -> str:
+                if not auto_background:
+                    return '\n'.join(line for line in text.split('\n') if 'to the background by itself' not in line)
+                return text.replace('that runs long', f'still working after {describe_seconds(auto_background)}')
+
+            spec['description'] = describe_auto_background(spec.get('description') or '')
+            if isinstance(properties.get('background'), dict):
+                properties['background']['description'] = describe_auto_background(
+                    properties['background'].get('description') or ''
+                )
+
+        if func.__name__ == 'monitor':
+            # Mologate: name the admin's time before a waiting monitor moves to the background.
+            from open_webui.utils import task_limits
+            from open_webui.utils.agent_tasks import describe_seconds
+
+            if auto_background := await task_limits.get('auto_background_seconds'):
+                spec['description'] = (spec.get('description') or '').replace(
+                    'after a few minutes', f'after {describe_seconds(auto_background)}'
+                )
 
         tools_dict[func.__name__] = {
             'tool_id': f'builtin:{func.__name__}',

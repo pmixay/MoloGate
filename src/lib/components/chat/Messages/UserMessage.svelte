@@ -2,7 +2,7 @@
 	import { toast } from 'svelte-sonner';
 	import { tick, getContext, onMount } from 'svelte';
 
-	import { models, settings } from '$lib/stores';
+	import { models, settings, showTasks } from '$lib/stores';
 	import { user as _user } from '$lib/stores';
 	import {
 		copyToClipboard as _copyToClipboard,
@@ -22,8 +22,10 @@
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import SubagentResultRow from './SubagentResultRow.svelte';
 	import AgentMessageRow from './AgentMessageRow.svelte';
+	import TaskResultRow from './TaskResultRow.svelte';
+	import { chatTasks, findTask } from '../Tasks/tasksStore';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 	export let user;
 
 	export let chatId;
@@ -59,10 +61,17 @@
 
 	let message = structuredClone(history.messages[messageId]);
 	let timerExpanded = false;
-	// Messages the system posts on the user's behalf: sub-agent results, timers, agent messages.
+	// Messages the system posts on the user's behalf: sub-agent and task results, timers, agent
+	// messages.
 	$: internalRow =
 		message?.meta?.internal === true &&
-		['subagent', 'timer', 'agent_message'].includes(message?.meta?.type);
+		['subagent', 'timer', 'agent_message', 'task'].includes(message?.meta?.type);
+	// Mologate: a scheduled task's run (a timer with a task id) links to the task in the panel.
+	$: scheduledRun = message?.meta?.type === 'timer' && !!message?.meta?.task_id;
+	$: scheduledTask =
+		scheduledRun && $chatTasks.chatId === chatId
+			? findTask($chatTasks.tasks, message.meta.timer_id ?? message.meta.task_id)
+			: null;
 	$: if (history.messages) {
 		const source = history.messages[messageId];
 		if (source) {
@@ -344,29 +353,52 @@
 				</div>
 			{:else if message?.meta?.internal === true && message?.meta?.type === 'timer'}
 				<div class="w-full min-w-0">
-					<button
-						type="button"
-						class="flex w-full min-w-0 items-center gap-2 text-left text-gray-500 transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-						aria-expanded={timerExpanded}
-						on:click={() => {
-							timerExpanded = !timerExpanded;
-						}}
-					>
-						<span class="shrink-0 text-[0.75rem] font-medium">{$i18n.t('Timer')}</span>
-						<span class="min-w-0 flex-1 truncate text-[0.75rem]">{message.content}</span>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke-width="2"
-							stroke="currentColor"
-							class="size-3 shrink-0 text-gray-400 transition-transform duration-150 dark:text-gray-600 {timerExpanded
-								? 'rotate-180'
-								: ''}"
+					<div class="flex w-full min-w-0 items-center gap-2">
+						<button
+							type="button"
+							class="flex w-full min-w-0 items-center gap-2 text-left text-gray-500 transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+							aria-expanded={timerExpanded}
+							on:click={() => {
+								timerExpanded = !timerExpanded;
+							}}
 						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-						</svg>
-					</button>
+							<span class="shrink-0 text-[0.75rem] font-medium">
+								{#if scheduledRun}
+									{message.meta.run_number
+										? $i18n.t('Scheduled · run {{NUMBER}}', { NUMBER: message.meta.run_number })
+										: $i18n.t('Scheduled')}
+								{:else}
+									{$i18n.t('Timer')}
+								{/if}
+							</span>
+							<span class="min-w-0 flex-1 truncate text-[0.75rem]">{message.content}</span>
+							<svg
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke-width="2"
+								stroke="currentColor"
+								class="size-3 shrink-0 text-gray-400 transition-transform duration-150 dark:text-gray-600 {timerExpanded
+									? 'rotate-180'
+									: ''}"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="m19.5 8.25-7.5 7.5-7.5-7.5"
+								/>
+							</svg>
+						</button>
+						{#if scheduledTask}
+							<button
+								type="button"
+								class="ml-auto shrink-0 text-[0.6875rem] text-gray-400 transition-colors hover:text-gray-700 hover:underline dark:text-gray-500 dark:hover:text-gray-300"
+								on:click={() => scheduledTask && showTasks.set({ taskId: scheduledTask.id })}
+							>
+								{$i18n.t('Show in Tasks')}
+							</button>
+						{/if}
+					</div>
 					{#if timerExpanded}
 						<div
 							class="mt-2 ml-3 whitespace-pre-wrap break-words border-l border-gray-100 pl-3 text-[0.78125rem] leading-relaxed text-gray-600 dark:border-white/10 dark:text-gray-400"
@@ -378,6 +410,8 @@
 				</div>
 			{:else if message?.meta?.internal === true && message?.meta?.type === 'subagent'}
 				<SubagentResultRow content={message.content} result={message.meta} />
+			{:else if message?.meta?.internal === true && message?.meta?.type === 'task'}
+				<TaskResultRow content={message.content} result={message.meta} {chatId} />
 			{:else if message?.meta?.internal === true && message?.meta?.type === 'agent_message'}
 				<AgentMessageRow
 					content={message.content}

@@ -1265,8 +1265,8 @@ async def get_event_call(request_info):
             log.warning(f'Event caller: session {session_id} not owned by requesting user or disconnected')
             return {'error': 'Client session disconnected.'}
 
-        try:
-            return await sio.call(
+        call = asyncio.ensure_future(
+            sio.call(
                 'events',
                 {
                     'chat_id': request_info.get('chat_id', None),
@@ -1276,9 +1276,20 @@ async def get_event_call(request_info):
                 to=session_id,
                 timeout=WEBSOCKET_EVENT_CALLER_TIMEOUT,
             )
+        )
+        try:
+            # Mologate: calls have no timeout by default (ask_user waits for the user's answer as long
+            # as it takes), so stop waiting once the tab disconnects: nobody can answer any more.
+            while not (await asyncio.wait({call}, timeout=5))[0]:
+                if SESSION_POOL.get(session_id) is None:
+                    log.warning(f'Event caller: session {session_id} disconnected before answering')
+                    return {'error': 'Client session disconnected.'}
+            return call.result()
         except (TimeoutError, socketio.exceptions.TimeoutError):
             log.warning(f'Event caller timed out for session {session_id}')
             return {'error': 'Event call timed out. The browser tab may be inactive or closed.'}
+        finally:
+            call.cancel()
 
     if 'session_id' in request_info and 'chat_id' in request_info and 'message_id' in request_info:
         return __event_caller__

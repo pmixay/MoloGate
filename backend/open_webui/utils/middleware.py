@@ -423,6 +423,17 @@ def _split_tool_calls(
     return expanded
 
 
+def missing_arguments_error(name: str, spec: dict, params: dict) -> str | None:
+    """Mologate: what the agent is told when its call leaves out required arguments, instead of the
+    Python error from running the tool without them ("search_web() missing 1 required ...")."""
+    required = (spec.get('parameters') or {}).get('required') or []
+    missing = [key for key in required if key not in params]
+    if not missing:
+        return None
+    listed = ', '.join(f'`{key}`' for key in missing)
+    return f'Error: `{name}` was called without {listed}. Call it again with the arguments filled in.'
+
+
 def get_citation_source_from_tool_result(
     tool_name: str, tool_params: dict, tool_result: str, tool_id: str = ''
 ) -> list[dict]:
@@ -3416,6 +3427,8 @@ async def execute_tool_call_for_output(request, form_data, user, metadata, event
     direct_tool = tool.get('direct', False)
     allowed_params = spec.get('parameters', {}).get('properties', {}).keys()
     params = {key: value for key, value in params.items() if key in allowed_params}
+    if error := missing_arguments_error(name, spec, params):
+        return {'tool_call_id': tool_call.get('id', ''), 'content': error}
 
     try:
         if direct_tool:
@@ -4557,7 +4570,12 @@ async def streaming_chat_response_handler(response, ctx):
             filter_context = FilterContext()
             tag_scan_positions = {}
             tag_boundary_positions = {}
-            response_stream_task_id = metadata.get('task_id') or metadata.get('message_id')
+            # Mologate: a sub-agent's run keeps its live output under its own task's id (utils/subagents.py).
+            response_stream_task_id = (
+                getattr(request.state, 'response_stream_task_id', None)
+                or metadata.get('task_id')
+                or metadata.get('message_id')
+            )
 
             def tag_output_handler(content_type, tags, output):
                 """
@@ -5992,7 +6010,14 @@ async def streaming_chat_response_handler(response, ctx):
                     tool_call_iterations += 1
 
                     response_tool_calls = tool_calls.pop(0)
-                    ask_user_staged, ask_user_error = stage_ask_user_tool_calls(response_tool_calls, output, output_id)
+                    # Mologate: in a saved chat, ask_user pauses the turn until the user answers, however
+                    # long that takes. A temporary chat can't be resumed later, so there the tool runs and
+                    # asks through the open browser tab instead, waiting for the answer the same way.
+                    ask_user_staged, ask_user_error = (
+                        stage_ask_user_tool_calls(response_tool_calls, output, output_id)
+                        if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id')
+                        else (False, None)
+                    )
                     if ask_user_error:
                         response_tool_calls = [
                             tool_call
@@ -6000,14 +6025,13 @@ async def streaming_chat_response_handler(response, ctx):
                             if tool_call.get('function', {}).get('name') != 'ask_user'
                         ]
                     elif ask_user_staged:
-                        if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id'):
-                            await pause_for_tool_approval(
-                                metadata['chat_id'],
-                                metadata['message_id'],
-                                full_output(),
-                                form_data,
-                                metadata,
-                            )
+                        await pause_for_tool_approval(
+                            metadata['chat_id'],
+                            metadata['message_id'],
+                            full_output(),
+                            form_data,
+                            metadata,
+                        )
                         await event_emitter({'type': 'chat:completion', 'data': {'output': full_output()}})
                         return
 
@@ -6103,6 +6127,8 @@ async def streaming_chat_response_handler(response, ctx):
                         direct_tool = tool.get('direct', False)
                         allowed_params = spec.get('parameters', {}).get('properties', {}).keys()
                         params = {key: value for key, value in params.items() if key in allowed_params}
+                        if error := missing_arguments_error(name, spec, params):
+                            return params, error, tool, tool_type, direct_tool
                         try:
                             if direct_tool:
                                 result = await event_caller(

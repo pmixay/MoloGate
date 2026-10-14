@@ -254,15 +254,48 @@ async def deliver_to_subagent(request: Request, user: UserModel, chat_id: str, e
 
 async def _wake(request: Request, user: UserModel, chat_id: str) -> None:
     """Start a finished sub-agent on its mail. The caller holds the chat's lock and found it idle."""
-    meta = await _change_meta(chat_id, lambda meta: meta.update(wakes=int(meta.get('wakes') or 0) + 1) or dict(meta))
+    from open_webui.utils import agent_tasks
+
+    def wake(meta: dict) -> dict:
+        meta['wakes'] = int(meta.get('wakes') or 0) + 1
+        # Mologate: it runs again, so the Tasks panel lists it as running (utils/agent_tasks.py).
+        meta.update(status='running', started_at=int(time.time()), finished_at=None, error=None, cancelled_by=None)
+        meta.pop('task_cleared', None)
+        return dict(meta)
+
+    meta = await _change_meta(chat_id, wake)
     if not meta or not meta.get('run'):
         return
+    delegation_id = meta.get('delegation_id') or chat_id
+
+    async def emit(status: str):
+        await agent_tasks.emit_task_changed(
+            user.id, meta['parent_chat_id'], chat_id, task_type='subagent', status=status, handle=delegation_id
+        )
+
+    async def finish(status: str, error: str | None, reply: str):
+        def change(row_meta: dict):
+            if row_meta.get('status') in agent_tasks.FINISHED:
+                return False  # stopped from the Tasks panel or with cancel_task
+            row_meta.update(status=status, finished_at=int(time.time()), error=error)
+            if reply:
+                row_meta['result_preview'] = agent_tasks.preview(reply)
+            return True
+
+        try:
+            if await agent_tasks.update_task_meta(chat_id, change):
+                await emit(status)
+        except Exception:
+            log.exception('Could not record how sub-agent %s ended', delegation_id)
+
+    # Its live output is kept under its task's id, like a sub-agent's first run (utils/subagents.py).
+    stream_id = str(uuid4())
 
     async def run():
         from open_webui.utils.subagents import process_pending_internal_messages
 
-        delegation_id = meta.get('delegation_id') or chat_id
         reply = ''
+        status, error = 'completed', None
         try:
             max_iterations = int(await Config.get('subagents.max_iterations', 30) or 30)
             message_id = await process_pending_internal_messages(
@@ -273,24 +306,29 @@ async def _wake(request: Request, user: UserModel, chat_id: str) -> None:
                 internal=True,
                 max_iterations=max_iterations,
                 owned=True,
+                stream_id=stream_id,
             )
             if not message_id:
+                await finish(status, None, '')
                 return
             message = await Chats.get_message_by_id_and_message_id(chat_id, message_id)
-            error = (message or {}).get('error')
+            error = agent_tasks.error_text((message or {}).get('error'))
             reply = _message_text(message) or ''
             if error:
-                detail = error.get('content') if isinstance(error, dict) else error
-                reply = f'{reply}\n\n[It stopped with an error: {detail}]'.strip()
+                status = 'failed'
+                reply = f'{reply}\n\n[It stopped with an error: {error}]'.strip()
         except Exception as exc:
             log.exception('Sub-agent %s failed to handle its messages', delegation_id)
+            status, error = 'failed', str(exc)
             reply = f'[It failed to handle the message: {exc}]'
 
+        await finish(status, error, reply)
         entry = _entry(delegation_id, meta, chat_id, reply or '(no answer)', reply=True)
         await deliver_to_main(request, user, meta['parent_chat_id'], entry, run=meta.get('parent_run'))
         schedule_leftover_messages(request, user, chat_id)
 
-    await create_task(request.app.state.redis, run(), id=chat_id)
+    await create_task(request.app.state.redis, run(), id=chat_id, task_id=stream_id)
+    await emit('running')
 
 
 def schedule_leftover_messages(request: Request, user: UserModel, chat_id: str) -> None:

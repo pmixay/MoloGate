@@ -95,6 +95,15 @@ async def scheduler_worker_loop(app) -> None:
             except Exception:
                 log.exception('Scheduler: timer error')
 
+            # ── Monitors ──
+            try:
+                from open_webui.utils.monitors import claim_due_monitors, run_monitor_check
+
+                for monitor_id, claim_id in await claim_due_monitors(int(time.time_ns()), limit=10):
+                    asyncio.create_task(run_monitor_check(app, monitor_id, claim_id))
+            except Exception:
+                log.exception('Scheduler: monitor error')
+
             if now < next_scheduler_poll:
                 await asyncio.sleep(max(1, TIMER_POLL_INTERVAL))
                 continue
@@ -348,11 +357,28 @@ async def execute_automation(app, automation: AutomationModel) -> None:
     Creates a real chat or channel message, then calls chat_completion exactly like the frontend:
     session_id + chat_id + message_id → async task → pipeline handles everything
     (filters, model params, knowledge/RAG, tools, DB saves, webhooks).
+
+    Mologate: runs in a chat don't overlap (a run due while the previous one is still going is
+    recorded as 'skipped'), each one is stopped at the ``schedule_run_seconds`` limit, and after
+    ``schedule_max_failures`` failed runs in a row the automation turns itself off.
     """
+    run_id = None
     try:
+        from open_webui.tasks import has_active_tasks
+
+        previous = await AutomationRuns.get_latest(automation.id)
+        if previous and previous.status == 'running':
+            if previous.chat_id and await has_active_tasks(app.state.redis, previous.chat_id):
+                await _record_run(
+                    automation.id, 'skipped', chat_id=previous.chat_id, error='The previous run was still going'
+                )
+                return
+            # The server stopped during that run.
+            await _record_run(automation.id, 'error', error='Stopped unexpectedly', run_id=previous.id, app=app)
+
         user = await Users.get_user_by_id(automation.user_id)
         if not user:
-            await _record_run(automation.id, 'error', error='User not found')
+            await _record_run(automation.id, 'error', error='User not found', app=app)
             await publish_event(
                 app,
                 EVENTS.AUTOMATION_RUN_FAILED,
@@ -369,7 +395,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
             and not await has_permission(user.id, 'features.automations', await Config.get('user.permissions'))
         ):
             error = 'Owner no longer permitted to run automations'
-            await _record_run(automation.id, 'error', error=error)
+            await _record_run(automation.id, 'error', error=error, app=app)
             await publish_event(
                 app,
                 EVENTS.AUTOMATION_RUN_FAILED,
@@ -447,7 +473,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
 
         if not chat:
             error = 'Failed to create chat'
-            await _record_run(automation.id, 'error', error=error)
+            await _record_run(automation.id, 'error', error=error, app=app)
             await publish_event(
                 app,
                 EVENTS.AUTOMATION_RUN_FAILED,
@@ -491,8 +517,34 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         }
         # Call the full chat completion pipeline (same as POST /api/chat/completions).
         # The handler reference is stored on app.state to avoid circular imports.
+        run_id = await _record_run(automation.id, 'running', chat_id=chat.id)
         request = _build_request(app, token=token)
-        await app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
+        result = await app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
+
+        # Mologate: wait for the run's turn, stopping it at the run-time limit, and record how it went.
+        from open_webui.utils import task_limits
+        from open_webui.utils.timers import format_span, watch_run
+
+        run_seconds = await task_limits.get('schedule_run_seconds')
+        task_ids = (result.get('task_ids') or []) if isinstance(result, dict) else []
+        outcome = await watch_run(app.state.redis, task_ids, run_seconds)
+        answer = await Chats.get_message_by_id_and_message_id(chat.id, assistant_msg_id) or {}
+        error = None
+        if outcome == 'timed_out':
+            error = f'Stopped at the {format_span(run_seconds)} run-time limit'
+        elif answer.get('error'):
+            answer_error = answer['error']
+            error = str(answer_error.get('content') if isinstance(answer_error, dict) else answer_error)[:4000]
+        if error:
+            await _record_run(automation.id, 'error', chat_id=chat.id, error=error, run_id=run_id, app=app)
+            await publish_event(
+                app,
+                EVENTS.AUTOMATION_RUN_FAILED,
+                actor=user,
+                subject_id=automation.id,
+                data={'name': automation.name, 'chat_id': chat.id, 'error': error},
+            )
+            return
 
         # Notify user
         from open_webui.socket.main import sio
@@ -508,7 +560,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
             room=f'user:{automation.user_id}',
         )
 
-        await _record_run(automation.id, 'success', chat_id=chat.id)
+        await _record_run(automation.id, 'success', chat_id=chat.id, run_id=run_id)
         await publish_event(
             app,
             EVENTS.AUTOMATION_RUN_COMPLETED,
@@ -520,7 +572,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
     except Exception as e:
         log.exception(f'Automation {automation.id} failed')
         error = str(e)[:4000]
-        await _record_run(automation.id, 'error', error=error)
+        await _record_run(automation.id, 'error', error=error, run_id=run_id, app=app)
         await publish_event(
             app,
             EVENTS.AUTOMATION_RUN_FAILED,
@@ -619,7 +671,57 @@ async def _record_run(
     status: str,
     chat_id: str = None,
     error: str = None,
-):
-    """Insert a run record into automation_run."""
+    run_id: str = None,
+    app=None,
+) -> Optional[str]:
+    """Insert a run record into automation_run.
+
+    Mologate: or finish the 'running' record ``run_id`` started. With ``app``, a failed run that
+    makes ``schedule_max_failures`` in a row turns the automation off and tells its owner.
+    """
     async with get_async_db() as db:
-        await AutomationRuns.insert(automation_id, status, chat_id=chat_id, error=error, db=db)
+        if run_id:
+            run = await AutomationRuns.finish(run_id, status, error=error, db=db)
+        else:
+            run = await AutomationRuns.insert(automation_id, status, chat_id=chat_id, error=error, db=db)
+    if status == 'error' and app is not None:
+        await _turn_off_after_failures(app, automation_id)
+    return run.id if run else None
+
+
+async def _turn_off_after_failures(app, automation_id: str) -> None:
+    from open_webui.utils import task_limits
+    from open_webui.utils.agent_tasks import emit_task_changed
+
+    limit = await task_limits.get('schedule_max_failures')
+    failures = 0
+    for run in await AutomationRuns.get_by_automation(automation_id, limit=limit + 20):
+        if run.status == 'skipped':
+            continue
+        if run.status != 'error':
+            break
+        failures += 1
+    if failures < limit:
+        return
+    automation = await Automations.deactivate(automation_id)
+    if not automation:
+        return
+
+    error = f'Turned off after {failures} failed runs in a row'
+    log.warning(f'Automation {automation_id}: {error}')
+    await publish_event(
+        app,
+        EVENTS.AUTOMATION_DISABLED,
+        subject_id=automation.id,
+        subject_type='automation',
+        data={'name': automation.name, 'error': error},
+    )
+    # The same toast a scheduled task shows when it turns itself off.
+    await emit_task_changed(
+        automation.user_id,
+        '',
+        automation.id,
+        task_type='automation',
+        status='failed',
+        notify={'title': f'Automation turned off: {automation.name}', 'body': f'{error}.'},
+    )
