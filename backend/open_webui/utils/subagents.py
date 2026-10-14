@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import time
 from datetime import timedelta
 from uuid import uuid4
@@ -14,6 +15,7 @@ from open_webui.models.chats import Chat, ChatForm, Chats
 from open_webui.models.config import Config
 from open_webui.models.users import UserModel, Users
 from open_webui.tasks import create_task, has_active_tasks
+from open_webui.utils import agent_tasks, task_limits
 from open_webui.utils.auth import create_token
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_message_list
@@ -21,6 +23,8 @@ from open_webui.utils.model_ids import find_model_id
 from open_webui.utils.subagent_profiles import get_profiles, resolve_profile
 from sqlalchemy import select
 from starlette.datastructures import Headers
+
+log = logging.getLogger(__name__)
 
 DEFAULT_SUBAGENT_SYSTEM_PROMPT = """You are a sub-agent working on a specific task assigned by the lead agent.
 
@@ -52,6 +56,12 @@ _background_active: set[str] = set()
 _background_lock = asyncio.Lock()
 _foreground_semaphore: asyncio.Semaphore | None = None
 _parent_locks: dict[str, asyncio.Lock] = {}
+# Mologate: the sub-agents running per main chat, and the background ones per member, for the task
+# limits (utils/task_limits.py). In-process, like the caps above.
+_chat_running: dict[str, set[str]] = {}
+_user_background: dict[str, set[str]] = {}
+# Results waiting for a background sub-agent to finish, kept so they aren't garbage-collected.
+_deliveries: set[asyncio.Task] = set()
 
 
 def _build_request(source: Request, user_id: str, *, internal: bool) -> Request:
@@ -79,6 +89,62 @@ def _build_request(source: Request, user_id: str, *, internal: bool) -> Request:
     return request
 
 
+def _app_request(app) -> Request:
+    """Mologate: a request that only carries the app, for work that outlives the request that started it."""
+    return Request(
+        {
+            'type': 'http',
+            'asgi': {'version': '3.0', 'spec_version': '2.0'},
+            'method': 'POST',
+            'path': '/api/v1/tasks/internal',
+            'query_string': b'',
+            'headers': Headers({}).raw,
+            'client': ('127.0.0.1', 0),
+            'server': ('127.0.0.1', 80),
+            'scheme': 'http',
+            'app': app,
+        }
+    )
+
+
+def _count(members: dict[str, set[str]], key: str) -> int:
+    return len(members.get(key) or ())
+
+
+def _discard(members: dict[str, set[str]], key: str, delegation_id: str) -> None:
+    held = members.get(key)
+    if held is not None:
+        held.discard(delegation_id)
+        if not held:
+            members.pop(key, None)
+
+
+def _background_refusal(user_id: str, *, max_async: int, per_user: int) -> str | None:
+    """Why one more background sub-agent can't start now; the caller holds ``_background_lock``."""
+    if _count(_user_background, user_id) >= per_user:
+        return (
+            f'Error: {per_user} of your background tasks are already running, the most one member can have. '
+            'Wait for one to finish, or stop one with cancel_task.'
+        )
+    if max_async != -1 and len(_background_active) >= max_async:
+        return (
+            f'Error: Async subagent capacity reached ({max_async} running). '
+            'Wait for one to finish or increase subagents.max_async.'
+        )
+    return None
+
+
+def _is_pending_result(meta: dict) -> bool:
+    """A background sub-agent's result, or (Mologate) another task's ('task', see post_task_result),
+    not answered yet."""
+    if meta.get('internal') is not True:
+        return False
+    if meta.get('type') == 'subagent':
+        return meta.get('status') in (None, 'pending')
+    # A task result's ``status`` is the task's own; it waits for an answer until it has one.
+    return meta.get('type') == 'task'
+
+
 def _is_pending_agent_message(meta: dict) -> bool:
     # Mologate: a message one agent sent another (utils/agent_messages.py), not yet delivered.
     return (
@@ -104,11 +170,13 @@ async def process_pending_internal_messages(
     internal: bool = False,
     max_iterations: int | None = None,
     owned: bool = False,
+    stream_id: str | None = None,
 ) -> str | None:
     """Start a turn in ``parent_chat_id`` for its waiting internal messages (background sub-agent
-    results, timers, agent messages). Returns the new assistant message id, or None when nothing
-    was waiting. Mologate: ``internal`` runs the turn as a sub-agent and waits for it to finish
-    (waking a sub-agent); ``owned`` means the caller's task already holds the chat's running slot."""
+    results, task results, timers, agent messages). Returns the new assistant message id, or None
+    when nothing was waiting. Mologate: ``internal`` runs the turn as a sub-agent and waits for it to
+    finish (waking a sub-agent); ``owned`` means the caller's task already holds the chat's running
+    slot; ``stream_id`` is that task's id, under which the turn's live output is kept."""
     lock = _parent_locks.setdefault(parent_chat_id, asyncio.Lock())
     while not owned and await has_active_tasks(source_request.app.state.redis, parent_chat_id):
         await asyncio.sleep(0.25)
@@ -161,11 +229,7 @@ async def process_pending_internal_messages(
                 if message.get('role') == 'user'
                 and not message.get('childrenIds')
                 and (
-                    (
-                        meta.get('internal') is True
-                        and meta.get('type') == 'subagent'
-                        and meta.get('status') in (None, 'pending')
-                    )
+                    _is_pending_result(meta)
                     or (meta.get('internal') is True and meta.get('type') == 'timer')
                     or _is_pending_agent_message(meta)
                 )
@@ -179,7 +243,7 @@ async def process_pending_internal_messages(
             first_meta = first.get('meta') or {}
             kind = (
                 first_meta.get('type')
-                if first_meta.get('internal') is True and first_meta.get('type') in ('timer', 'agent_message')
+                if first_meta.get('internal') is True and first_meta.get('type') in ('timer', 'agent_message', 'task')
                 else 'subagent'
             )
             parent_id = first.get('parentId')
@@ -202,11 +266,8 @@ async def process_pending_internal_messages(
                     for meta in [message.get('meta') or {}]
                     if message.get('parentId') == parent_id
                     and (message.get('model') or model_id) == model_id
-                    and (
-                        meta.get('internal') is True
-                        and meta.get('type') == 'subagent'
-                        and meta.get('status') in (None, 'pending')
-                    )
+                    and meta.get('type') == kind
+                    and _is_pending_result(meta)
                 ]
             combined_content = '\n\n'.join(message.get('content', '') for message in batch if message.get('content'))
             if kind == 'agent_message':
@@ -232,6 +293,17 @@ async def process_pending_internal_messages(
                     combined_meta['timer_id'] = timer_ids[0]
                 elif timer_ids:
                     combined_meta['timer_ids'] = timer_ids
+            elif kind == 'task':
+                # Mologate: a monitor's (or another task's) result; several that came together share a turn.
+                if len(batch) == 1:
+                    combined_meta = {key: value for key, value in first_meta.items() if key != 'delivery'}
+                else:
+                    combined_meta = {
+                        'internal': True,
+                        'type': 'task',
+                        'task_ids': [(m.get('meta') or {}).get('task_id') for m in batch],
+                        'handles': [(m.get('meta') or {}).get('handle') for m in batch],
+                    }
             else:
                 delegation_ids = [
                     message['meta']['delegation_id']
@@ -253,9 +325,11 @@ async def process_pending_internal_messages(
                 elif subagent_chat_ids:
                     combined_meta['subagent_chat_ids'] = subagent_chat_ids
 
-            reuse_message = (
-                len(batch) == 1 and (first.get('meta') or {}).get('status') != 'pending' and kind != 'agent_message'
+            # Results that came while a turn was running are marked pending (post_task_result).
+            waiting = (
+                kind in ('subagent', 'task') and first_meta.get('delivery' if kind == 'task' else 'status') == 'pending'
             )
+            reuse_message = len(batch) == 1 and not waiting and kind != 'agent_message'
             user_message_id = first['id'] if reuse_message else str(uuid4())
             removed_ids = set()
             if not reuse_message:
@@ -268,6 +342,10 @@ async def process_pending_internal_messages(
                         for child_id in messages[parent_id].get('childrenIds', [])
                         if child_id not in removed_ids
                     ]
+                if waiting:
+                    # Mologate: they hang under the answer before that turn; continue after the turn
+                    # instead of branching beside it, which would hide its answer.
+                    parent_id = _latest_assistant_id(messages, history.get('currentId')) or parent_id
 
             assistant_message_id = str(uuid4())
             message_list = get_message_list(messages, parent_id)
@@ -353,6 +431,8 @@ async def process_pending_internal_messages(
         request = _build_request(source_request, user.id, internal=internal)
         if max_iterations:
             request.state.max_tool_call_iterations = max_iterations
+        if stream_id:
+            request.state.response_stream_task_id = stream_id
         if not internal:
             # A regular turn registers its task before the handler returns; holding the lock until then
             # keeps a second caller from starting another turn in the same chat meanwhile.
@@ -362,6 +442,97 @@ async def process_pending_internal_messages(
     # An internal turn runs to its end inside the handler, so it runs outside the lock.
     await source_request.app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
     return assistant_message_id
+
+
+async def post_task_result(
+    app,
+    *,
+    parent_chat_id: str,
+    user_id: str,
+    content: str,
+    meta: dict,
+    run: dict,
+    parent_message_id: str | None = None,
+    model_id: str | None = None,
+) -> str | None:
+    """Mologate: bring a task's result back to the main chat as an internal user message under its
+    latest finished answer, and start a turn for it. A busy chat keeps it waiting instead; the
+    running turn starts one when it ends. ``meta`` is the message's: ``{'type': 'subagent', …}`` for
+    a sub-agent, ``{'type': 'task', 'task_type', 'task_id', 'handle', 'status'}`` for other tasks.
+    Returns the message id, or None when the main chat is gone."""
+    redis = app.state.redis
+    message_id = str(uuid4())
+    message = {
+        'id': message_id,
+        'parentId': None,
+        'childrenIds': [],
+        'role': 'user',
+        'content': content,
+        'model': model_id or run.get('model_id'),
+        'meta': {'internal': True, **meta},
+        'timestamp': int(time.time()),
+    }
+    # A task result's ``status`` is the task's own, so its waiting mark goes under ``delivery``.
+    waiting_key = 'delivery' if meta.get('type') == 'task' else 'status'
+
+    lock = _parent_locks.setdefault(parent_chat_id, asyncio.Lock())
+    async with lock:
+        async with get_async_db() as db:
+            stmt = select(Chat).where(Chat.id == parent_chat_id, Chat.user_id == user_id)
+            if db.bind.dialect.name == 'postgresql':
+                stmt = stmt.with_for_update()
+            parent = (await db.execute(stmt)).scalar_one_or_none()
+            if not parent:
+                return None
+
+            updated_chat = copy.deepcopy(parent.chat or {})
+            updated_history = updated_chat.setdefault('history', {})
+            updated_messages = updated_history.setdefault('messages', {})
+            done_assistants = [
+                message
+                for message in updated_messages.values()
+                if message.get('role') == 'assistant' and message.get('done') is not False
+            ]
+            result_parent_id = (
+                max(done_assistants, key=lambda message: message.get('timestamp', 0)).get('id')
+                if done_assistants
+                else parent_message_id
+            )
+            message['parentId'] = result_parent_id
+            if await has_active_tasks(redis, parent_chat_id):
+                message['meta'][waiting_key] = 'pending'
+            updated_messages[message_id] = message
+            if result_parent_id and result_parent_id in updated_messages:
+                children = updated_messages[result_parent_id].setdefault('childrenIds', [])
+                if message_id not in children:
+                    children.append(message_id)
+            updated_history['messages'] = updated_messages
+            parent.chat = {**(parent.chat or {}), **updated_chat, 'history': updated_history}
+            parent.updated_at = int(time.time())
+            await db.commit()
+
+        await ChatMessages.upsert_message(
+            message_id=message_id,
+            chat_id=parent_chat_id,
+            user_id=user_id,
+            data=message,
+        )
+
+    if message['meta'].get(waiting_key) == 'pending':
+        from open_webui.socket.main import sio
+
+        await sio.emit(
+            'events',
+            {
+                'chat_id': parent_chat_id,
+                'message_id': message_id,
+                'data': {'type': 'chat:reload'},
+            },
+            room=f'user:{user_id}',
+        )
+    if not await has_active_tasks(redis, parent_chat_id):
+        await process_pending_internal_messages(_app_request(app), parent_chat_id, user_id, run)
+    return message_id
 
 
 async def delegate(
@@ -466,7 +637,7 @@ async def delegate(
         if profile_model_id:
             run['model_id'] = profile_model_id
 
-    delegation_id = f'deleg_{uuid4().hex[:8]}'
+    delegation_id = agent_tasks.new_handle(agent_tasks.HANDLE_PREFIXES['subagent'])
     subagent_system_prompt = '\n\n'.join(
         part
         for part in (
@@ -477,24 +648,68 @@ async def delegate(
         )
         if part
     )
-    foreground_semaphore = None
+    user = UserModel(**user_data)
+
+    # Mologate: the task limits (utils/task_limits.py). A chat runs a few sub-agents at once and a member
+    # a few in the background; each run has a time limit, and a long foreground one moves to the background.
+    limits = await task_limits.get_all()
+    per_chat = limits['subagents_per_chat']
+    per_user = limits['background_tasks_per_user']
+    run_seconds = limits['background_run_seconds']
+    auto_background = limits['auto_background_seconds'] if config.get('subagents.background_enabled') else 0
+
+    # What this sub-agent holds, given back once when its run ends or it fails to start.
+    slots = {'chat': False, 'background': False, 'semaphore': None, 'released': False}
+
+    async def release_slots():
+        async with _background_lock:
+            if slots['released']:
+                return
+            slots['released'] = True
+            if slots['chat']:
+                _discard(_chat_running, parent_chat_id, delegation_id)
+            if slots['background']:
+                _background_active.discard(delegation_id)
+                _discard(_user_background, user.id, delegation_id)
+            if slots['semaphore']:
+                slots['semaphore'].release()
+
     if background:
         async with _background_lock:
-            if max_async != -1 and len(_background_active) >= max_async:
+            running = _count(_chat_running, parent_chat_id)
+            if running >= per_chat:
                 return (
-                    f'Error: Async subagent capacity reached ({max_async} running). '
-                    'Wait for one to finish or increase subagents.max_async.'
+                    f'Error: {running} sub-agents are already running in this chat, the most it runs at once. '
+                    'Wait for one to finish (task_status shows them), or run this one in the foreground.'
                 )
+            refusal = _background_refusal(user.id, max_async=max_async, per_user=per_user)
+            if refusal:
+                return refusal
+            _chat_running.setdefault(parent_chat_id, set()).add(delegation_id)
             _background_active.add(delegation_id)
-    elif max_concurrent != -1:
-        if _foreground_semaphore is None:
-            _foreground_semaphore = asyncio.Semaphore(max_concurrent)
-        foreground_semaphore = _foreground_semaphore
-        await foreground_semaphore.acquire()
+            _user_background.setdefault(user.id, set()).add(delegation_id)
+            slots.update(chat=True, background=True)
+    else:
+        # A foreground call over the chat's limit waits for a slot.
+        while True:
+            async with _background_lock:
+                if _count(_chat_running, parent_chat_id) < per_chat:
+                    _chat_running.setdefault(parent_chat_id, set()).add(delegation_id)
+                    slots['chat'] = True
+                    break
+            await asyncio.sleep(0.5)
+        if max_concurrent != -1:
+            if _foreground_semaphore is None:
+                _foreground_semaphore = asyncio.Semaphore(max_concurrent)
+            try:
+                await _foreground_semaphore.acquire()
+            except asyncio.CancelledError:
+                await release_slots()
+                raise
+            slots['semaphore'] = _foreground_semaphore
 
     mode = 'background' if background else 'foreground'
     try:
-        user = UserModel(**user_data)
         chat_id = str(uuid4())
         user_message_id = str(uuid4())
         assistant_message_id = str(uuid4())
@@ -559,23 +774,56 @@ async def delegate(
                 'run': {**run, 'system_prompt': subagent_system_prompt, 'session_id': f'subagent:{chat_id}'},
                 'parent_run': run,
                 'wakes': 0,
+                # Mologate: what the Tasks panel shows (utils/agent_tasks.py).
+                'task_id': delegation_id,
+                'title': task[: agent_tasks.TITLE_CHARS],
+                'status': 'running',
+                'started_at': int(time.time()),
             },
         )
         if not chat:
             raise RuntimeError('Failed to create sub-agent chat')
     except Exception as exc:
-        if background:
-            async with _background_lock:
-                _background_active.discard(delegation_id)
-        elif foreground_semaphore:
-            foreground_semaphore.release()
+        await release_slots()
         prefix = 'background ' if background else ''
         return f'Error: failed to create {prefix}sub-agent: {exc}'
+
+    async def emit(status: str):
+        await agent_tasks.emit_task_changed(
+            user.id, parent_chat_id, chat_id, task_type='subagent', status=status, handle=delegation_id
+        )
+
+    async def finish(status: str, error: str | None = None, summary: str = ''):
+        """Record how the run ended, unless it was stopped from the Tasks panel or with cancel_task."""
+
+        def change(meta: dict):
+            if meta.get('status') in agent_tasks.FINISHED:
+                return False
+            meta.update(
+                status=status,
+                finished_at=int(time.time()),
+                error=error,
+                result_preview=agent_tasks.preview(summary),
+            )
+            return True
+
+        try:
+            if await agent_tasks.update_task_meta(chat_id, change):
+                await emit(status)
+        except Exception:
+            log.exception('Could not record how sub-agent %s ended', delegation_id)
+
+    await emit('running')
+    # Mologate: the run's live output is kept under its task's id, so the Tasks panel and the
+    # sub-agent's conversation can show it while it runs (tasks.get_response_streams_by_chat_id).
+    stream_id = str(uuid4())
+    run_limit_error = f'Stopped at the {agent_tasks.describe_seconds(run_seconds)} run-time limit'
 
     async def run_reserved() -> dict:
         try:
             child_request = _build_request(request, user.id, internal=True)
             child_request.state.max_tool_call_iterations = max_iterations
+            child_request.state.response_stream_task_id = stream_id
             form_data = {
                 'model': run['model_id'],
                 'messages': [
@@ -600,14 +848,23 @@ async def delegate(
                 form_data['terminal_id'] = run['terminal_id']
             if run.get('tool_servers'):
                 form_data['tool_servers'] = run['tool_servers']
-            await request.app.state.CHAT_COMPLETION_HANDLER(child_request, form_data, user=user)
+            try:
+                await asyncio.wait_for(
+                    request.app.state.CHAT_COMPLETION_HANDLER(child_request, form_data, user=user),
+                    timeout=run_seconds,
+                )
+            except TimeoutError:
+                # Mologate: the run-time limit; what it wrote so far stays as partial output.
+                await Chats.upsert_message_to_chat_by_id_and_message_id(
+                    chat_id,
+                    assistant_message_id,
+                    {'done': True, 'error': {'content': run_limit_error}},
+                )
             message = await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
             if not message:
-                return {
-                    'status': 'error',
-                    'summary': '',
-                    'error': 'Sub-agent chat or completion message no longer exists.',
-                }
+                error = 'Sub-agent chat or completion message no longer exists.'
+                await finish('failed', error)
+                return {'status': 'error', 'summary': '', 'error': error}
 
             summary = message.get('content') or ''
             if isinstance(summary, list):
@@ -626,11 +883,12 @@ async def delegate(
                 )
             if len(summary) > max_output:
                 summary = f'{summary[:max_output]}\n\n[output truncated]'
-            error = message.get('error')
+            error = agent_tasks.error_text(message.get('error'))
             # Mologate: messages that reached it after its last step get a turn of their own.
             from open_webui.utils.agent_messages import schedule_leftover_messages
 
             schedule_leftover_messages(request, user, chat_id)
+            await finish('failed' if error else 'completed', error, summary)
             return {
                 'status': 'error' if error else 'completed',
                 'summary': summary or ('Sub-agent produced no output.' if not error else ''),
@@ -642,6 +900,7 @@ async def delegate(
                 assistant_message_id,
                 {'done': True, 'error': {'content': 'Sub-agent cancelled.'}},
             )
+            await finish('cancelled')
             raise
         except Exception as exc:
             await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -649,26 +908,12 @@ async def delegate(
                 assistant_message_id,
                 {'done': True, 'error': {'content': str(exc)}},
             )
+            await finish('failed', str(exc))
             raise
         finally:
-            if background:
-                async with _background_lock:
-                    _background_active.discard(delegation_id)
-            elif foreground_semaphore:
-                foreground_semaphore.release()
+            await release_slots()
 
-    async def run_background() -> dict:
-        started_at = time.time()
-        cancelled = False
-        try:
-            result = await run_reserved()
-        except asyncio.CancelledError:
-            result = {'status': 'interrupted', 'summary': '', 'error': 'cancelled'}
-            cancelled = True
-        except Exception as exc:
-            result = {'status': 'error', 'summary': '', 'error': str(exc)}
-
-        duration = f'{time.time() - started_at:.1f}s'
+    def result_text(result: dict, duration: float) -> str:
         lines = [
             f'[ASYNC SUBAGENT COMPLETE - {delegation_id}]',
             (
@@ -685,7 +930,7 @@ async def delegate(
         lines.extend(
             [
                 f'Subagent chat: {chat_id}',
-                f'Status: {result.get("status", "completed")}   Duration: {duration}',
+                f'Status: {result.get("status", "completed")}   Duration: {duration:.1f}s',
                 '--- RESULT ---',
             ]
         )
@@ -700,107 +945,59 @@ async def delegate(
             lines.append(f'The subagent did not complete successfully.{detail}')
             if result.get('summary'):
                 lines.extend(['Partial output:', result['summary']])
+        return '\n'.join(lines)
 
-        pending_message_id = str(uuid4())
-        pending_meta = {
-            'internal': True,
-            'type': 'subagent',
-            'delegation_id': delegation_id,
-            'subagent_chat_id': chat_id,
-        }
-        pending_message = {
-            'id': pending_message_id,
-            'parentId': None,
-            'childrenIds': [],
-            'role': 'user',
-            'content': '\n'.join(lines),
-            'model': run['model_id'],
-            'meta': pending_meta,
-            'timestamp': int(time.time()),
-        }
-
-        lock = _parent_locks.setdefault(parent_chat_id, asyncio.Lock())
-        async with lock:
-            async with get_async_db() as db:
-                stmt = select(Chat).where(Chat.id == parent_chat_id, Chat.user_id == user.id)
-                if db.bind.dialect.name == 'postgresql':
-                    stmt = stmt.with_for_update()
-                result_row = await db.execute(stmt)
-                parent = result_row.scalar_one_or_none()
-                if not parent:
-                    if cancelled:
-                        raise asyncio.CancelledError
-                    return result
-
-                updated_chat = copy.deepcopy(parent.chat or {})
-                updated_history = updated_chat.setdefault('history', {})
-                updated_messages = updated_history.setdefault('messages', {})
-                done_assistants = [
-                    message
-                    for message in updated_messages.values()
-                    if message.get('role') == 'assistant' and message.get('done') is not False
-                ]
-                result_parent_id = (
-                    max(done_assistants, key=lambda message: message.get('timestamp', 0)).get('id')
-                    if done_assistants
-                    else parent_message_id
-                )
-                pending_message['parentId'] = result_parent_id
-                if await has_active_tasks(request.app.state.redis, parent_chat_id):
-                    pending_message['meta']['status'] = 'pending'
-                updated_messages[pending_message_id] = pending_message
-                if result_parent_id and result_parent_id in updated_messages:
-                    children = updated_messages[result_parent_id].setdefault('childrenIds', [])
-                    if pending_message_id not in children:
-                        children.append(pending_message_id)
-                updated_history['messages'] = updated_messages
-                parent.chat = {**(parent.chat or {}), **updated_chat, 'history': updated_history}
-                parent.updated_at = int(time.time())
-                await db.commit()
-
-            await ChatMessages.upsert_message(
-                message_id=pending_message_id,
-                chat_id=parent_chat_id,
+    async def deliver_when_done(child_task: asyncio.Task, started_at: float) -> None:
+        """Post a background sub-agent's result to the main chat once its run ends."""
+        await asyncio.wait({child_task})
+        if child_task.cancelled():
+            meta = await agent_tasks.get_task_meta(chat_id)
+            if meta is None or meta.get('cancelled_by'):
+                # Mologate: stopped from the Tasks panel or with cancel_task, so there's nothing to report.
+                return
+            result = {'status': 'interrupted', 'summary': '', 'error': 'cancelled'}
+        elif child_task.exception() is not None:
+            result = {'status': 'error', 'summary': '', 'error': str(child_task.exception())}
+        else:
+            result = child_task.result()
+        try:
+            await post_task_result(
+                request.app,
+                parent_chat_id=parent_chat_id,
                 user_id=user.id,
-                data=pending_message,
+                content=result_text(result, time.time() - started_at),
+                meta={'type': 'subagent', 'delegation_id': delegation_id, 'subagent_chat_id': chat_id},
+                run=run,
+                parent_message_id=parent_message_id,
+                model_id=run['model_id'],
             )
+        except Exception:
+            log.exception('Could not post the result of sub-agent %s', delegation_id)
 
-        if pending_message['meta'].get('status') == 'pending':
-            from open_webui.socket.main import sio
+    def deliver_in_background(child_task: asyncio.Task, started_at: float) -> None:
+        delivery = asyncio.create_task(deliver_when_done(child_task, started_at))
+        _deliveries.add(delivery)
+        delivery.add_done_callback(_deliveries.discard)
 
-            await sio.emit(
-                'events',
-                {
-                    'chat_id': parent_chat_id,
-                    'message_id': pending_message_id,
-                    'data': {'type': 'chat:reload'},
-                },
-                room=f'user:{user.id}',
-            )
-        if not await has_active_tasks(request.app.state.redis, parent_chat_id):
-            await process_pending_internal_messages(request, parent_chat_id, user.id, run)
-        if cancelled:
-            raise asyncio.CancelledError
-        return result
-
+    started_at = time.time()
     try:
         _, child_task = await create_task(
             request.app.state.redis,
-            run_background() if background else run_reserved(),
+            run_reserved(),
             id=chat_id,
+            task_id=stream_id,
         )
     except Exception as exc:
-        if background:
-            async with _background_lock:
-                _background_active.discard(delegation_id)
-        elif foreground_semaphore:
-            foreground_semaphore.release()
+        await release_slots()
+        await finish('failed', str(exc))
         return f'Error: {exc}'
 
     if background:
+        deliver_in_background(child_task, started_at)
         return JSONCodec.dumps(
             {
                 'status': 'dispatched',
+                'task_id': delegation_id,
                 'delegation_id': delegation_id,
                 'agent_id': delegation_id,
                 'profile': agent_profile['name'],
@@ -812,15 +1009,77 @@ async def delegate(
             ensure_ascii=False,
         )
 
-    try:
-        result = await child_task
-    except asyncio.CancelledError:
-        if asyncio.current_task() and asyncio.current_task().cancelling():
-            raise
-        return 'Error: sub-agent was cancelled.'
-    except Exception as exc:
-        return f'Error: {exc}'
+    async def move_to_background() -> str | None:
+        """Mologate: hand a long foreground sub-agent to the background, when the member has room."""
+        async with _background_lock:
+            if slots['released'] or child_task.done():
+                return None
+            if _background_refusal(user.id, max_async=max_async, per_user=per_user):
+                return None
+            _background_active.add(delegation_id)
+            _user_background.setdefault(user.id, set()).add(delegation_id)
+            slots['background'] = True
+            # It counts as background work now, so it no longer holds a foreground slot.
+            if slots['semaphore']:
+                slots['semaphore'].release()
+                slots['semaphore'] = None
+        deliver_in_background(child_task, started_at)
+        moved_at = int(time.time())
+        try:
+            await agent_tasks.update_task_meta(
+                chat_id, lambda meta: meta.update(mode='background', moved_to_background_at=moved_at)
+            )
+        except Exception:
+            log.exception('Could not mark sub-agent %s as moved to the background', delegation_id)
+        await emit('running')
+        elapsed = int(time.time() - started_at)
+        return JSONCodec.dumps(
+            {
+                'status': 'moved_to_background',
+                'task_id': delegation_id,
+                'agent_id': delegation_id,
+                'profile': agent_profile['name'],
+                'subagent_chat_id': chat_id,
+                'mode': 'background',
+                'elapsed_seconds': elapsed,
+                'task': task,
+                'note': (
+                    f'Still working after {agent_tasks.describe_seconds(elapsed)}, so it moved to the background. '
+                    'Its result comes back to this chat as a message when it finishes. task_status shows '
+                    'progress, send_message reaches it, cancel_task stops it.'
+                ),
+            },
+            ensure_ascii=False,
+        )
 
+    # Mologate: wait for a while, then move to the background; without room there, keep waiting.
+    timeout = auto_background or None
+    while True:
+        try:
+            done, _ = await asyncio.wait({child_task}, timeout=timeout)
+            moved = None if done else await move_to_background()
+        except asyncio.CancelledError:
+            # Stopping the reply stops its foreground sub-agents; one already moved keeps going.
+            if not slots['background']:
+                child_task.cancel()
+            raise
+        if done:
+            break
+        if moved:
+            return moved
+        timeout = 30
+
+    if child_task.cancelled():
+        cancelled_by = ((await agent_tasks.get_task_meta(chat_id)) or {}).get('cancelled_by')
+        if cancelled_by == 'user':
+            return 'Error: the user stopped this sub-agent.'
+        if cancelled_by == 'agent':
+            return 'Error: this sub-agent was stopped with cancel_task.'
+        return 'Error: sub-agent was cancelled.'
+    if child_task.exception() is not None:
+        return f'Error: {child_task.exception()}'
+
+    result = child_task.result()
     if result.get('status') != 'completed':
         return f'Error: {result.get("error") or "sub-agent failed."}'
     # Mologate: the agent's id lets the main agent message it later; the chat id lets the UI link to it.

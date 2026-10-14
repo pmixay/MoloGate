@@ -4557,7 +4557,12 @@ async def streaming_chat_response_handler(response, ctx):
             filter_context = FilterContext()
             tag_scan_positions = {}
             tag_boundary_positions = {}
-            response_stream_task_id = metadata.get('task_id') or metadata.get('message_id')
+            # Mologate: a sub-agent's run keeps its live output under its own task's id (utils/subagents.py).
+            response_stream_task_id = (
+                getattr(request.state, 'response_stream_task_id', None)
+                or metadata.get('task_id')
+                or metadata.get('message_id')
+            )
 
             def tag_output_handler(content_type, tags, output):
                 """

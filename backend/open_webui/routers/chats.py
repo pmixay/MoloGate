@@ -34,6 +34,7 @@ from open_webui.models.tags import TagModel, Tags
 from open_webui.models.users import Users
 from open_webui.socket.main import get_event_emitter
 from open_webui.tasks import get_response_streams_by_chat_id, has_active_tasks, stop_item_tasks
+from open_webui.utils import agent_tasks
 from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
 from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.auth import get_admin_user, get_verified_user
@@ -1369,6 +1370,87 @@ async def get_chat_subagents(
             }
         )
     return subagents
+
+
+############################
+# Chat tasks
+############################
+
+
+async def get_task_chat(id: str, user, db: AsyncSession, *, manage: bool = False):
+    """Mologate: the chat whose tasks are asked for. Whoever can read it sees them (like its sub-agents);
+    only its owner or an admin stops or clears them."""
+    chat = await Chats.get_chat_by_id_for_user(id, user, db=db)
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ERROR_MESSAGES.NOT_FOUND)
+    if manage and not can_manage_tasks(chat, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERROR_MESSAGES.ACCESS_PROHIBITED)
+    return chat
+
+
+def can_manage_tasks(chat, user) -> bool:
+    return chat.user_id == user.id or user.role == 'admin'
+
+
+@router.get('/{id}/tasks', response_model=dict)
+async def get_chat_tasks(
+    id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: the chat's sub-agents, monitors and scheduled prompts for the Tasks panel."""
+    chat = await get_task_chat(id, user, db)
+    return await agent_tasks.list_tasks(
+        request.app.state.redis, id, chat.user_id, can_manage=can_manage_tasks(chat, user)
+    )
+
+
+@router.post('/{id}/tasks/clear', response_model=dict)
+async def clear_chat_tasks(
+    id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: hide the finished tasks from the Tasks panel."""
+    chat = await get_task_chat(id, user, db, manage=True)
+    return {'cleared': await agent_tasks.clear_tasks(request.app.state.redis, id, chat.user_id)}
+
+
+@router.get('/{id}/tasks/{task_id}', response_model=dict)
+async def get_chat_task(
+    id: str,
+    task_id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: one task with its prompt, output (live while a sub-agent runs), activity, runs and checks."""
+    chat = await get_task_chat(id, user, db)
+    task = await agent_tasks.get_task(
+        request.app.state.redis, id, chat.user_id, task_id, can_manage=can_manage_tasks(chat, user)
+    )
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+    return task
+
+
+@router.post('/{id}/tasks/{task_id}/stop', response_model=dict)
+async def stop_chat_task(
+    id: str,
+    task_id: str,
+    request: Request,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mologate: stop a running task or cancel a scheduled one. It posts no result, so the agent isn't
+    woken; a finished task comes back unchanged."""
+    chat = await get_task_chat(id, user, db, manage=True)
+    task, _ = await agent_tasks.stop_task_row(request.app.state.redis, id, chat.user_id, task_id, cancelled_by='user')
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+    return {'task': task}
 
 
 ############################

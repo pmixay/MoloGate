@@ -1630,14 +1630,17 @@ async def delegate_task(
 ) -> str:
     """
     Delegate focused work to a parallel sub-agent using the current model and tools.
+    task_status shows a sub-agent's progress and result, and cancel_task stops it.
+    A foreground sub-agent that runs long moves to the background by itself; its result then comes back as a message.
 
     :param task: The specific task for the sub-agent to complete
     :param context: Relevant context, decisions, or file paths for the task
     :param file_ids: Attached file IDs the sub-agent needs. Use this for images or files;
         do not put file IDs only in context.
-    :param background: Return immediately and continue this chat when the sub-agent finishes
+    :param background: Return immediately and continue this chat when the sub-agent finishes.
+        Without it, a sub-agent that runs long moves to the background by itself.
     :param profile: The sub-agent's role, such as general-purpose, explore, plan or reviewer
-    :return: Foreground result text, or a JSON dispatch handle for background work
+    :return: Foreground result text, or a JSON handle (task_id) for work that runs in the background
     """
     if __request__ is None:
         return 'Error: request context not available.'
@@ -3672,6 +3675,71 @@ async def update_task(
     except Exception as e:
         log.exception(f'update_task_status error: {e}')
         return JSONCodec.dumps({'error': str(e)})
+
+
+# =============================================================================
+# TASKS PANEL TOOLS
+# =============================================================================
+
+
+async def task_status(
+    task_id: str = '',
+    wait_seconds: int = 0,
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    Check the tasks of this chat: sub-agents, monitors and scheduled prompts, running or finished.
+    Without a task_id it lists them; with one it returns that task's status and result.
+
+    :param task_id: A task's id, such as deleg_1a2b3c4d, mon_1a2b3c4d or sched_1a2b3c4d. Leave empty to list all tasks.
+    :param wait_seconds: Wait up to this many seconds (at most 300) for a running task to finish before answering
+    :return: JSON with the task's status and result, or the list of tasks
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+
+    from open_webui.utils.agent_tasks import agent_task_status
+
+    max_output = int(await Config.get('subagents.max_output', 30_000) or 30_000)
+    return JSONCodec.dumps(
+        await agent_task_status(
+            __request__.app.state.redis,
+            __chat_id__,
+            __user__.get('id', ''),
+            task_id,
+            wait_seconds,
+            max_output=max_output,
+        ),
+        ensure_ascii=False,
+    )
+
+
+async def cancel_task(
+    task_id: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __chat_id__: str = None,
+) -> str:
+    """
+    Stop a task of this chat: a background sub-agent, a monitor, or a scheduled prompt's next runs.
+    It posts no result back to this chat.
+
+    :param task_id: The task's id, such as deleg_1a2b3c4d, mon_1a2b3c4d or sched_1a2b3c4d
+    :return: JSON with status cancelled or already_finished, or an error
+    """
+    if __request__ is None or not __chat_id__ or not __user__:
+        return 'Error: chat context not available.'
+    if getattr(__request__.state, 'internal', False) is True:
+        return 'Error: only the main agent can cancel tasks.'
+
+    from open_webui.utils.agent_tasks import agent_cancel_task
+
+    return JSONCodec.dumps(
+        await agent_cancel_task(__request__.app.state.redis, __chat_id__, __user__.get('id', ''), task_id),
+        ensure_ascii=False,
+    )
 
 
 # =============================================================================
