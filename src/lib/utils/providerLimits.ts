@@ -196,14 +196,16 @@ export const stillDismissed = (
 	// Readings can move the reset time by seconds; a later window starts the warning over.
 	Math.abs((item.resets_at ?? 0) - (dismissed.resets_at ?? 0)) < 300;
 
-// Mologate: the member's share of the team pool for the selected model (phase 4; `allowance` from
-// GET /models/model/limits). A window warns from 80% of the share and is empty past it.
-export type ShareWindow = {
-	capacity: number;
-	share: number;
-	extra: number;
-	used: number;
-	left: number;
+// Mologate: what the member has left of the selected model (`allowance` from GET
+// /models/model/limits). Per window: their own account's half still free plus what is left of their
+// share of the team pool (credits and overrides included), as far as the accounts serving the model
+// have room. It warns from 80% of that and is empty past it. `limit` is the window that runs out
+// first, and `then` what replies use after it.
+export type RoomPart = { allowed: number; used: number; left: number };
+
+export type ShareWindow = RoomPart & {
+	own: RoomPart;
+	pool: { capacity: number; share: number; extra: number; used: number; left: number };
 	percent: number;
 	level: 'ok' | 'low' | 'empty';
 	resets_at: number | null;
@@ -215,20 +217,24 @@ export type Allowance = {
 	tier: 'reserve' | 'pool' | 'credit' | 'worker' | 'empty';
 	model: string;
 	model_name: string;
+	asked_name: string;
 	swapped: boolean;
 	reason: string;
 	credits: number;
 	extra_points: number;
+	limit: string | null;
+	then: 'worker' | 'wait' | 'continues';
+	then_name: string | null;
 	windows: Record<string, ShareWindow>;
 };
 
 export const shareWindowName = (name: string, t: Translate = plainText) =>
 	name === '5h'
-		? t('5-hour share')
+		? t('{{COUNT}}-hour limit', { COUNT: 5 })
 		: name === 'weekly'
-			? t('Weekly share')
+			? t('Weekly limit')
 			: name === 'budget'
-				? t('Monthly share')
+				? t('Monthly budget')
 				: name;
 
 // In observe the rules are only recorded: what they say is what would happen once enforced.
@@ -243,58 +249,84 @@ export const tierLabel = (allowance: Allowance, t: Translate = plainText) =>
 		empty: t('No room in the pool')
 	})[allowance.tier] ?? allowance.tier;
 
+// Each part's left as a share of everything the member may use in the window, so they add up:
+// "5% your account + 8% your pool share = 13% left".
+export const roomParts = (window: ShareWindow) => {
+	const percentOf = (value: number) =>
+		window.allowed > 0 ? Math.max(0, (value / window.allowed) * 100) : 0;
+	return {
+		own: window.own.allowed > 0 ? percentOf(window.own.left) : null,
+		pool: percentOf(window.pool.left),
+		total: Math.max(0, 100 - window.percent)
+	};
+};
+
+export const roomFormula = (window: ShareWindow, t: Translate = plainText) => {
+	const parts = roomParts(window);
+	const values = {
+		OWN: formatPercent(parts.own ?? 0),
+		POOL: formatPercent(parts.pool),
+		TOTAL: formatPercent(parts.total)
+	};
+	return parts.own === null
+		? t('{{TOTAL}} left, all from your share of the pool', values)
+		: t('{{OWN}} your account + {{POOL}} your pool share = {{TOTAL}} left', values);
+};
+
 export type ShareWarning = ShareWindow & { id: string; name: string };
 
-// The share windows worth a warning, the worst first. A member on their own account is not
-// drawing on the pool, so their share needs no warning then.
-export const shareWarnings = (allowance: Allowance | null | undefined): ShareWarning[] =>
-	!allowance || allowance.tier === 'reserve' || allowance.mode === 'off'
-		? []
-		: Object.entries(allowance.windows ?? {})
-				.filter(([, window]) => window.level !== 'ok')
-				.map(([name, window]) => ({ ...window, id: `share:${name}`, name }))
-				.sort((a, b) => b.percent - a.percent);
+// The one window that runs out first, when it is low or used up. A worker model goes on past the
+// share, so it needs none.
+export const allowanceWarnings = (allowance: Allowance | null | undefined): ShareWarning[] => {
+	if (!allowance || allowance.mode === 'off' || allowance.then === 'continues' || !allowance.limit)
+		return [];
+	const window = allowance.windows?.[allowance.limit];
+	return window && window.level !== 'ok'
+		? [{ ...window, id: `share:${allowance.limit}`, name: allowance.limit }]
+		: [];
+};
 
-// "Weekly share: 84% used, about 40m of work at the recent pace. It frees up in 2d 3h."
-export const shareWarningText = (
+// "GPT-6: 13% left (5% your account + 8% your pool share), about 40m of work at your recent pace.
+// After that, replies use GPT Luna. Weekly limit frees up in 2d 3h."
+export const allowanceWarningText = (
 	item: ShareWarning,
 	allowance: Allowance,
 	t: Translate = plainText,
 	now = Date.now()
 ) => {
+	const parts = roomParts(item);
 	const values = {
-		WINDOW: shareWindowName(item.name, t),
-		PERCENT: formatPercent(item.percent),
+		MODEL: allowance.asked_name || allowance.model_name,
+		PERCENT: formatPercent(parts.total),
+		OWN: formatPercent(parts.own ?? 0),
+		POOL: formatPercent(parts.pool),
 		DURATION: item.minutes_left !== null ? formatDuration(item.minutes_left * 60) : '',
-		RESET: item.resets_at ? formatDuration(item.resets_at - now / 1000) : '',
-		MODEL: allowance.model_name
+		WORKER: allowance.then_name ?? '',
+		WINDOW: shareWindowName(item.name, t),
+		RESET: item.resets_at ? formatDuration(item.resets_at - now / 1000) : ''
 	};
-	if (item.level === 'empty' && observing(allowance)) {
-		const text =
-			allowance.tier === 'worker'
-				? t('{{WINDOW}} is used up. Once limits are enforced, replies would use {{MODEL}}.', values)
-				: t('{{WINDOW}} is used up.', values);
-		return `${text} ${t('Limits are not enforced yet, so nothing changes for now.')}`;
+	const empty = item.level === 'empty';
+	const sentences = [];
+	if (empty) {
+		sentences.push(t('{{MODEL}}: you have used all you can for now.', values));
+	} else {
+		let head = t('{{MODEL}}: {{PERCENT}} left', values);
+		if (parts.own !== null)
+			head += ` (${t('{{OWN}} your account + {{POOL}} your pool share', values)})`;
+		if (values.DURATION) head += `, ${t('about {{DURATION}} of work at your recent pace', values)}`;
+		sentences.push(`${head}.`);
 	}
-	if (item.level === 'empty') {
-		if (allowance.tier === 'worker') {
-			return values.RESET
-				? t('{{WINDOW}} is used up, so replies use {{MODEL}}. It frees up in {{RESET}}.', values)
-				: t('{{WINDOW}} is used up, so replies use {{MODEL}}.', values);
-		}
-		return values.RESET
-			? t('{{WINDOW}} is used up. It frees up in {{RESET}}.', values)
-			: t('{{WINDOW}} is used up.', values);
+	if (allowance.then === 'worker' && values.WORKER) {
+		sentences.push(
+			observing(allowance)
+				? t('Once limits are enforced, replies would then use {{WORKER}}.', values)
+				: empty
+					? t('Replies use {{WORKER}}.', values)
+					: t('After that, replies use {{WORKER}}.', values)
+		);
 	}
-	if (item.minutes_left !== null) {
-		return values.RESET
-			? t(
-					'{{WINDOW}}: {{PERCENT}} used, about {{DURATION}} of work at the recent pace. It frees up in {{RESET}}.',
-					values
-				)
-			: t('{{WINDOW}}: {{PERCENT}} used, about {{DURATION}} of work at the recent pace.', values);
-	}
-	return values.RESET
-		? t('{{WINDOW}}: {{PERCENT}} used. It frees up in {{RESET}}.', values)
-		: t('{{WINDOW}}: {{PERCENT}} used.', values);
+	if (values.RESET) sentences.push(t('{{WINDOW}} frees up in {{RESET}}.', values));
+	if (observing(allowance))
+		sentences.push(t('Limits are not enforced yet, so nothing changes for now.'));
+	return sentences.join(' ');
 };

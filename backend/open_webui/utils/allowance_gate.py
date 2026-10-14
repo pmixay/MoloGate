@@ -276,7 +276,7 @@ async def empty_error(user, provider: str, decision: allowance.Decision, now: fl
 # it (at least 5 minutes, so one request does not read as a sprint).
 PACE_SECONDS = 30 * 60
 MIN_PACE_SECONDS = 5 * 60
-# The share warning starts at 80% of it.
+# The warning starts at 80% of what the member may use of a model.
 WARN_SHARE = 0.8
 
 
@@ -286,23 +286,25 @@ def _weighted(tokens: dict) -> float:
 
 
 async def standing(user, provider: str, model: str, now: float | None = None) -> dict:
-    """The member's place in the pool for a model, for the context indicator and the warning.
+    """What the member has left of a model, for the context indicator and the warning.
 
-    Per window: their share and extra, what they used, what is left, the level (`ok`, `low` from
-    80% of share and extra, `empty`), when it frees up and, at the last 30 minutes' pace, about how
-    many minutes of work are left. Also the tier their next request would get and their credits.
+    Per window, everything they may still use of it (``allowance.room_for``): their own accounts'
+    reserve still free plus what is left of their share of the pool and its extra, as far as the
+    accounts serving the model have room; the level (`ok`, `low` from 80% of it, `empty`), when it
+    frees up and, at the last 30 minutes' pace across all their use, about how many minutes of work
+    are left. `limit` is the window that runs out first, and `then` what comes after it: a worker
+    model, or waiting for it to free up. Also the tier their next request gets and their credits.
     """
     now = time.time() if now is None else now
     snapshot, state = await member_state(user.id, provider)
-    decision = allowance.decide(
-        allowance.Request(user.id, provider, model, worker_model=snapshot['worker_model']), state
-    )
-    own = {account.id for account in snapshot['accounts'] if account.owner == user.id}
-    # The member's tokens (or dollars, for a budget) in each window's period, and in the last 30 minutes.
+    request = allowance.Request(user.id, provider, model, worker_model=snapshot['worker_model'])
+    decision = allowance.decide(request, state)
+    room = allowance.room_for(request, state)
+    serving = {account.id for account in state.accounts if account.status == 'ok' and allowance.serves(account, model)}
+    # The member's tokens (or dollars, for a budget) in each window's period, on every account of
+    # the provider, their own included, and in the last 30 minutes.
     period_amount: dict = {}
-    for account_id, windows in snapshot['periods'].items():
-        if account_id in own:
-            continue
+    for windows in snapshot['periods'].values():
         for name, period in windows.items():
             if name == 'budget':
                 amount = period.cost.get(user.id, 0.0)
@@ -310,21 +312,19 @@ async def standing(user, provider: str, model: str, now: float | None = None) ->
                 amount = sum(_weighted(tokens) for tokens in period.tokens.get(user.id, {}).values())
             period_amount[name] = period_amount.get(name, 0.0) + amount
     recent = [
-        row
-        for row in await UsageEvents.member_tokens(user.id, int(now - PACE_SECONDS))
-        if row['provider'] == provider and row['account_id'] not in own
+        row for row in await UsageEvents.member_tokens(user.id, int(now - PACE_SECONDS)) if row['provider'] == provider
     ]
     rows = {row.id: row for row in await ProviderAccounts.list() if row.provider == provider}
     windows = {}
-    for name, item in decision.windows.items():
-        allowed = item['share'] + item['extra']
-        percent = item['used'] / allowed * 100 if allowed > 0 else 100.0
-        level = 'empty' if item['left'] <= 0 else 'low' if percent >= WARN_SHARE * 100 else 'ok'
+    for name, item in room.items():
+        allowed, left = item['allowed'], item['left']
+        percent = (1 - left / allowed) * 100 if allowed > 0 else 100.0
+        level = 'empty' if left <= 0 else 'low' if percent >= WARN_SHARE * 100 else 'ok'
         resets = [
             window.resets_at
-            for account_windows in state.windows.values()
+            for account_id, account_windows in state.windows.items()
             for window_name, window in account_windows.items()
-            if window_name == name and window.resets_at and window.resets_at > now
+            if account_id in serving and window_name == name and window.resets_at and window.resets_at > now
         ]
         minutes_left = None
         if recent and period_amount.get(name):
@@ -332,7 +332,7 @@ async def standing(user, provider: str, model: str, now: float | None = None) ->
             used_recently = item['used'] * min(1.0, amount / period_amount[name])
             span = max(MIN_PACE_SECONDS, now - min(row['ts'] for row in recent)) / 60
             if used_recently > 0:
-                minutes_left = max(0, round(max(0.0, item['left']) / (used_recently / span)))
+                minutes_left = max(0, round(left / (used_recently / span)))
         windows[name] = {
             **item,
             'percent': round(min(100.0, max(0.0, percent)), 1),
@@ -340,16 +340,38 @@ async def standing(user, provider: str, model: str, now: float | None = None) ->
             'resets_at': min(resets) if resets else None,
             'minutes_left': minutes_left,
         }
+    # The window that runs out first: the soonest at the recent pace, else the fullest.
+    limit = min(
+        windows,
+        key=lambda name: (
+            windows[name]['level'] != 'empty',
+            windows[name]['minutes_left'] if windows[name]['minutes_left'] is not None else float('inf'),
+            -windows[name]['percent'],
+        ),
+        default=None,
+    )
+    worker = snapshot['worker_model']
+    if model in state.worker_models:
+        # A worker model goes on past the share, as long as the pool has room (tier 4).
+        then, then_model = 'continues', model
+    elif worker and any(allowance.serves(account, worker) for account in state.accounts):
+        then, then_model = 'worker', worker
+    else:
+        then, then_model = 'wait', None
     credits, extra_points = await extras(user.id)
     return {
         'mode': await limits_mode(),
         'tier': decision.tier,
         'model': decision.model,
         'model_name': model_name(decision.model, list(rows.values())),
+        'asked_name': model_name(model, list(rows.values())),
         'swapped': decision.swapped,
         'reason': decision.reason,
         'credits': round(credits, 2),
         'extra_points': extra_points,
+        'limit': limit,
+        'then': then,
+        'then_name': model_name(then_model, list(rows.values())) if then_model else None,
         'windows': windows,
     }
 

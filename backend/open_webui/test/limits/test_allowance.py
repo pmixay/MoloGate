@@ -168,6 +168,49 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((decision.tier, decision.account_id), ('pool', 'A'))
 
 
+class RoomTests(unittest.TestCase):
+    """What a member has left of a model: their own reserve plus their share, as far as accounts have room."""
+
+    A = plus('A', ANN)
+    B = plus('B', BOB)
+
+    def room(self, user_id, a, b, used, accounts=None, model='gpt-6'):
+        current = state(accounts or [self.A, self.B], {'A': {'weekly': a}, 'B': {'weekly': b}}, {'weekly': used})
+        return allowance.room_for(ask(user_id, model), current)['weekly']
+
+    def test_the_owner_has_their_reserve_and_their_share(self):
+        # Ann used 20 of her own A and 30 of her 33.3 share elsewhere.
+        room = self.room(ANN, Window(used=20, owner_used=20), Window(used=30), 30)
+        self.assertEqual((room['own']['allowed'], room['own']['used'], room['own']['left']), (50, 20, 30))
+        self.assertAlmostEqual(room['pool']['left'], 100 / 3 - 30, places=3)
+        self.assertAlmostEqual(room['left'], 30 + 100 / 3 - 30, places=3)
+        self.assertAlmostEqual(room['allowed'], 50 + 100 / 3, places=3)
+        self.assertEqual(room['used'], 50)
+
+    def test_a_member_without_an_account_has_their_share(self):
+        room = self.room(CAT, Window(used=20, owner_used=20), Window(used=30), 30)
+        self.assertEqual(room['own'], {'allowed': 0, 'used': 0, 'left': 0})
+        self.assertAlmostEqual(room['left'], 100 / 3 - 30, places=3)
+
+    def test_the_share_counts_only_as_far_as_accounts_have_room(self):
+        # A is past what the pool may use of it (30 still locked for Ann); B has 2 points left.
+        room = self.room(CAT, Window(used=75, owner_used=20), Window(used=48), 0)
+        self.assertEqual(room['left'], 2)
+        # Past her reserve Ann has none of her own left, and nothing of A is locked for her: the
+        # pool may use its last 25 points as well as B's 2.
+        room = self.room(ANN, Window(used=75, owner_used=55), Window(used=48), 5)
+        self.assertEqual((room['own']['left'], room['left']), (0, 25 + 2))
+
+    def test_only_accounts_serving_the_model_count(self):
+        luna_only = plus('A', ANN, models=frozenset({'gpt-luna'}))
+        room = self.room(ANN, Window(), Window(), 0, accounts=[luna_only, self.B])
+        self.assertEqual(room['own']['allowed'], 0)
+        self.assertAlmostEqual(room['left'], 100 / 3, places=3)
+        paused = plus('A', ANN, sharing='paused')
+        room = self.room(ANN, Window(), Window(), 0, accounts=[paused, self.B])
+        self.assertEqual(room['own']['allowed'], 0)
+
+
 class StateTests(unittest.TestCase):
     def test_before_calibration_the_rise_is_shared_by_weighted_tokens(self):
         accounts = [plus('A', ANN)]
@@ -829,6 +872,28 @@ class EnforceTests(EnforceCase):
             (standing['tier'], standing['model_name'], standing['windows']['budget']['level']),
             ('worker', 'GPT Luna', 'empty'),
         )
+
+    async def test_the_owner_sees_their_account_and_their_share_together(self):
+        # The owner's $2 through their own A: 10 of their 50 reserve units. $7 through B: 35 of their
+        # share (A is in use, so only B lends: the pool is 125 units, 41.7 each).
+        await self.spent(self.a, OWNER.id, 2)
+        await self.spent(self.b, OWNER.id, 7)
+        standing = await allowance_gate.standing(OWNER, 'openai_api', 'gpt-6')
+        window = standing['windows']['budget']
+        self.assertEqual(standing['tier'], 'reserve')
+        self.assertEqual((window['own']['left'], round(window['pool']['left'], 1)), (40, 6.7))
+        # 46.7 of 91.7 left: not low, though 84% of the share alone is used.
+        self.assertEqual((window['percent'], window['level']), (49.1, 'ok'))
+        self.assertEqual((standing['limit'], standing['then'], standing['then_name']), ('budget', 'worker', 'GPT Luna'))
+        # $7 more on A: 5 reserve units left and 6.7 of the share, 16 units a minute lately.
+        await self.spent(self.a, OWNER.id, 7)
+        allowance_gate._cache.clear()
+        window = (await allowance_gate.standing(OWNER, 'openai_api', 'gpt-6'))['windows']['budget']
+        self.assertEqual((window['level'], window['minutes_left']), ('low', 1))
+
+    async def test_a_worker_model_goes_on_past_the_share(self):
+        standing = await allowance_gate.standing(CAT_USER, 'openai_api', 'gpt-luna-6')
+        self.assertEqual((standing['then'], standing['then_name']), ('continues', 'GPT Luna'))
 
     async def test_observe_serves_as_before(self):
         self.config_patch.stop()

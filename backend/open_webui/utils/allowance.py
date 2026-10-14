@@ -199,6 +199,53 @@ def pool_numbers(state: State, provider: str) -> dict:
     return numbers
 
 
+def room_for(request: Request, state: State) -> dict:
+    """Per window, everything the requester may still use of the model they asked for, in units.
+
+    Their own accounts' reserve still free, plus what is left of their share of the pool and its
+    extra (credits, overrides), no more than the room the shared accounts serving the model still
+    have. The first window to run out is when the model runs out for them (tiers 1 to 3); past that
+    come worker models, or nothing.
+    """
+    accounts = [
+        account
+        for account in state.accounts
+        if account.provider == request.provider
+        and account.id not in request.exclude
+        and account.status == 'ok'
+        and serves(account, request.model)
+    ]
+    room = {}
+    for name, item in pool_numbers(state, request.provider).items():
+        own_allowed = own_used = own_left = pool_room_units = 0.0
+        for account in accounts:
+            window = state.windows.get(account.id, {}).get(name)
+            if window is None:
+                continue
+            weight = window_weight(account, window)
+            if account.owner == request.user_id:
+                # As in decide: the owner's own request ends their loan.
+                window = _active(window)
+                if account.sharing != 'paused':
+                    own_allowed += RESERVE * weight
+                    own_used += min(window.owner_used, RESERVE) * weight
+                    own_left += max(0.0, min(100.0 - window.used, RESERVE - window.owner_used)) * weight
+            if account.sharing == 'shared':
+                pool_room_units += max(0.0, 100.0 - lock(account, window) - window.used) * weight
+        pool_allowed = item['share'] + item['extra']
+        pool_left = max(0.0, min(pool_allowed - item['used'], pool_room_units))
+        allowed = own_allowed + pool_allowed
+        left = own_left + pool_left
+        room[name] = {
+            'allowed': round(allowed, 4),
+            'used': round(own_used + item['used'], 4),
+            'left': round(left, 4),
+            'own': {'allowed': round(own_allowed, 4), 'used': round(own_used, 4), 'left': round(own_left, 4)},
+            'pool': {**item, 'left': round(pool_left, 4)},
+        }
+    return room
+
+
 def _rank(candidates: list, previous: str | None, room) -> list:
     """The chat's previous account first when it qualifies, then the most room for its size."""
     ranked = sorted(candidates, key=lambda account: (-room(account) * (account.weight or 1.0), account.id))

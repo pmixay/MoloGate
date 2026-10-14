@@ -4,7 +4,8 @@
 	// (see utils/contextBreakdown.ts) and the usage limits the model's provider account reported
 	// (utils/provider_limits.py on the server). The limits go to a store, so the low-limit
 	// warning above the message box (LimitsWarning) reads them from here too. Mologate, phase 4:
-	// the panel also shows the member's share of the team pool, their tier and credits.
+	// the panel also shows what the member has left of the model (their own account plus their share
+	// of the team pool), their tier and credits.
 	import { getContext, onMount, tick } from 'svelte';
 	import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom';
 
@@ -22,6 +23,7 @@
 		formatDuration,
 		formatPercent,
 		observing,
+		roomFormula,
 		shareWindowName,
 		tierLabel
 	} from '$lib/utils/providerLimits';
@@ -361,10 +363,28 @@
 									)}
 								</div>
 							{/if}
+							<div class="text-[11.5px] text-gray-500 dark:text-gray-400">
+								{Object.values(allowance.windows).some((window) => window.own.allowed > 0)
+									? $i18n.t(
+											'What you can still use of {{MODEL}}: your own account plus your share of the team pool.',
+											{ MODEL: allowance.asked_name || allowance.model_name }
+										)
+									: $i18n.t('What you can still use of {{MODEL}}: your share of the team pool.', {
+											MODEL: allowance.asked_name || allowance.model_name
+										})}
+							</div>
 							{#each Object.entries(allowance.windows) as [name, window] (name)}
 								<div class="flex flex-col gap-1">
 									<div class="flex items-baseline justify-between gap-3 text-[12px]">
-										<span>{shareWindowName(name, t)}</span>
+										<span
+											>{shareWindowName(
+												name,
+												t
+											)}{#if allowance.limit === name && window.level !== 'ok'}
+												<span class="ml-1 text-gray-500 dark:text-gray-400"
+													>· {$i18n.t('runs out first')}</span
+												>{/if}</span
+										>
 										<span class="font-mono"
 											>{$i18n.t('{{PERCENT}} used', {
 												PERCENT: formatPercent(window.percent)
@@ -377,20 +397,19 @@
 											style="width: {Math.min(100, window.percent)}%"
 										></div>
 									</div>
-									{#if window.resets_at || window.minutes_left !== null}
-										<div class="text-[11px] text-gray-500 dark:text-gray-400">
-											{#if window.minutes_left !== null && window.level !== 'empty'}
-												{$i18n.t('About {{DURATION}} of work left at the recent pace.', {
-													DURATION: formatDuration(window.minutes_left * 60)
-												})}
-											{/if}
-											{#if window.resets_at}
-												{$i18n.t('Frees up in {{DURATION}}.', {
-													DURATION: formatDuration(window.resets_at - Date.now() / 1000)
-												})}
-											{/if}
-										</div>
-									{/if}
+									<div class="text-[11px] text-gray-500 dark:text-gray-400">
+										{roomFormula(window, t)}.
+										{#if window.minutes_left !== null && window.level !== 'empty'}
+											{$i18n.t('About {{DURATION}} of work left at the recent pace.', {
+												DURATION: formatDuration(window.minutes_left * 60)
+											})}
+										{/if}
+										{#if window.resets_at}
+											{$i18n.t('Frees up in {{DURATION}}.', {
+												DURATION: formatDuration(window.resets_at - Date.now() / 1000)
+											})}
+										{/if}
+									</div>
 								</div>
 							{/each}
 							<div class="flex items-baseline justify-between gap-3 text-[12px]">

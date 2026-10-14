@@ -4,8 +4,9 @@
 	// left, about how many minutes of work that is at the recent pace, and when it resets
 	// (utils/provider_limits.py, `outlook`). The context indicator loads the limits; this reads
 	// them from the same store. A dismissed warning comes back when it gets
-	// worse or the window resets. Mologate, phase 4: it also warns from 80% of the member's own
-	// share of the team pool, and says when their replies use a worker model.
+	// worse or the window resets. Mologate, phase 4: with the fair-use rules on, it warns instead from
+	// 80% of everything the member may use of the model (their own account's half plus their share of
+	// the pool), for the window that runs out first, and says what replies use after it.
 	import { getContext } from 'svelte';
 	import { slide } from 'svelte/transition';
 
@@ -13,8 +14,8 @@
 	import {
 		lowWindows,
 		observing,
-		shareWarnings,
-		shareWarningText,
+		allowanceWarnings,
+		allowanceWarningText,
 		stillDismissed,
 		warningText,
 		type DismissedWarning,
@@ -44,7 +45,7 @@
 	$: modelId = selectedModels?.[0] ?? '';
 	$: t = (key: string, values?: Record<string, string | number>) => $i18n.t(key, values);
 	$: outlook = $modelLimits.modelId === modelId ? ($modelLimits.limits?.outlook ?? []) : [];
-	// Mologate: the member's own share of the team pool warns too, from 80% of it (phase 4).
+	// Mologate: what the member has left of the model, their own account and pool share together.
 	$: allowance = $modelLimits.modelId === modelId ? ($modelLimits.limits?.allowance ?? null) : null;
 	// When no shared account has room for the member, that is the warning, whatever their share says.
 	$: poolEmpty =
@@ -66,21 +67,26 @@
 			: [];
 	$: shown = [
 		...poolEmpty,
-		...(poolEmpty.length ? [] : shareWarnings(allowance)).map((item) => ({
+		...(poolEmpty.length ? [] : allowanceWarnings(allowance)).map((item) => ({
 			id: item.id,
 			// Mologate: in observe nothing is refused or swapped, so nothing is critical.
 			level: (item.level === 'empty' && !observing(allowance)
 				? 'critical'
 				: 'low') as Outlook['level'],
 			resets_at: item.resets_at,
-			text: shareWarningText(item, allowance!, t)
+			text: allowanceWarningText(item, allowance!, t)
 		})),
-		...lowWindows(outlook).map((item) => ({
-			id: item.id,
-			level: item.level,
-			resets_at: item.resets_at,
-			text: warningText(item, t)
-		}))
+		// Enforced, the member's total already stops short of the accounts' own limits; only a limit
+		// used up on every account still warns of its own. Observed, the accounts' limits are the
+		// ones that actually stop requests, so they all warn.
+		...lowWindows(outlook)
+			.filter((item) => allowance?.mode !== 'enforce' || item.level === 'empty')
+			.map((item) => ({
+				id: item.id,
+				level: item.level,
+				resets_at: item.resets_at,
+				text: warningText(item, t)
+			}))
 	].filter((item) => !stillDismissed(item, dismissed[`${modelId}:${item.id}`]));
 
 	const dismiss = (item: { id: string; level: Outlook['level']; resets_at: number | null }) => {

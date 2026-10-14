@@ -439,15 +439,28 @@ With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_
   listed with who granted and revoked them.
 - **What the member sees:** `GET /api/v1/models/model/limits` adds `allowance` for an account
   model: the tier their next request would get, the model it would use, their credits, and per
-  window their share, extra, use, what is left, when it frees up and, at the last 30 minutes'
-  pace, about how many minutes of work are left. The context indicator's panel shows it under
-  "Fair use" beside the account windows, and the warning above the message box starts at 80% of
-  the share ("Weekly share: 84% used, about 40m of work at the recent pace. It frees up in 2d
-  3h.") and says when replies use a worker model. A member on their own account gets no share
-  warning: they are not drawing on the pool. When no shared account has room for the member
-  (tier 5), the warning says that instead of their share. In `observe` the panel and the warning
-  say what the rules would do ("Once limits are enforced, replies would use GPT Luna. Limits are
-  not enforced yet, so nothing changes for now."), in amber, never as a refusal.
+  window everything they may still use of the model they picked (`allowance.room_for`):
+
+  `left = own reserve left + min(share + extra - used, pool room for the model)`
+
+  where the own reserve left is `min(100 - u_a, R - o_a)` of each of their own accounts that
+  serves the model, and the pool room is what the shared accounts serving the model still have
+  past their owners' locked reserves. Both parts are in units, so they add up. Each window also
+  has its level (`low` from 80% of that total used, `empty` with nothing left), when it frees up
+  and, at the last 30 minutes' pace of all their use (their own account included), about how many
+  minutes of work are left. `limit` names the window that runs out first, and `then` what comes
+  after it: a worker model (`then_name`), waiting for the window, or, for a worker model itself,
+  nothing changes (`continues`). The context indicator's panel shows each window under "Fair use"
+  as a formula ("5% your account + 8% your pool share = 13% left"). The warning above the message
+  box covers only the window that runs out first: "GPT-6: 13% left (5% your account + 8% your pool
+  share), about 40m of work at your recent pace. After that, replies use GPT Luna. Weekly limit
+  frees up in 2d 3h." So a member whose pool share is nearly used up but whose own account still
+  has room is not warned. When no shared account has room for the member (tier 5), the warning
+  says that instead. In `enforce` the accounts' own low-limit warnings give way to this total
+  (it always stops short of them), except a limit used up on every account. In `observe` they all
+  stay, since they are what actually stops requests; the panel and the warning say what the rules
+  would do ("Once limits are enforced, replies would then use GPT Luna. Limits are not enforced
+  yet, so nothing changes for now."), in amber, never as a refusal.
 - **Tested** (`test/limits/test_allowance.py`): `EnforceTests` runs the real proxy in `enforce`
   with two keys and three members: the owner on their own account, the worker swap and its
   notice, failover within the pool tier and from a limited own account to the pool, tier 5 with
@@ -847,7 +860,8 @@ deployed site.
 - [x] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
       the share with an estimate of minutes left from the last 30 minutes of use. Done: "Fair
       use" in the context indicator's panel (the limits ring was folded into the panel in
-      PR #7), and the share warning above the message box.
+      PR #7), and the share warning above the message box. Since 2026-10-14 both count the
+      member's own account and their pool share together (§7.7).
 - [x] Admin and team overrides (`limit_override`), with an audit log. Done: Settings → Provider
       accounts → Overrides, for admins; revoked overrides stay listed.
 - [ ] Done when: in `enforce`, the §7.5 scenarios behave as written on the deployed site.
@@ -971,6 +985,11 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   gated endpoints, an admin's the whole API; limits a member sets on their own key apply in
   `observe` too (they are the member's own choice), the default cap on a key's requests at once
   only in `enforce`; daily points are counted per provider from midnight UTC.
+- 2026-10-14: the fair-use warning counts everything a member may use of the model they picked:
+  their own accounts' reserve left plus their pool share left (credits and overrides included),
+  capped by the room the accounts serving the model have. It warns for the window that runs out
+  first and names what replies use after it. Before, it counted the pool share alone, so an owner
+  with room on their own account was warned about a share they were not drawing on yet.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 
