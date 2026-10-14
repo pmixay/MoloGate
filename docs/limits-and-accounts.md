@@ -446,6 +446,19 @@ With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_
   then refusing it as busy, a stream holding its slot to the end, a broken gate, overrides, the
   member's standing and observe unchanged. The simulated week now also fails one request in 20
   over: it never returns to an account that refused it and never moves to an earlier tier.
+- **Tested in the running app** (2026-10-14, `test/limits/e2e/`): the real server, in `enforce`
+  and then `observe`, against a fake OpenAI-compatible provider, with four members, two member
+  keys and a team Anthropic key. Over HTTP: the owner on their own account; a member in the pool
+  and at 88% of the share; past it, the worker model with the notice in the answer and in a
+  stream's header; failover within the pool tier, and from an owner's limited key to the pool;
+  three requests at once never putting two on one key; the pool spent until the refusal (429)
+  says when it frees up and offers Claude Haiku on Anthropic, which then serves; the owner still
+  on their locked reserve; and in `observe` the same member served as asked. 26 checks pass. In
+  the browser: the share warning, the "Fair use" panel, the status line under a swapped reply,
+  and granting and revoking an override. Found and fixed: the chat endpoint turned every error
+  on the API path into a 400, so a limit error now keeps its 429 (or 402).
+- **Not shown yet:** the panel lists an API key's budget only on the accounts page; for a key the
+  "Fair use" share is what the panel shows.
 
 ---
 
@@ -735,7 +748,8 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 4: enforcement
 
-**Built: 2026-10-14** (§7.7). Waiting for `enforce` on the deployed site.
+**Built and tested in the running app: 2026-10-14** (§7.7). Waiting for `enforce` on the
+deployed site.
 
 - [x] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
       Done: in `enforce` the request is decided first and served as decided; past the share the

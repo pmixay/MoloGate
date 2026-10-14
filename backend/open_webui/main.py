@@ -1785,8 +1785,9 @@ async def chat_completion(
                 # WebSocket error channel.  We must surface the error as
                 # a proper HTTP response; without this the function would
                 # return None which FastAPI serializes as null.  #23924
+                # Mologate: a limit error keeps its status (429, 402), so API clients know to wait.
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=e.status_code if isinstance(e, HTTPException) else status.HTTP_400_BAD_REQUEST,
                     detail=error_detail,
                 )
         finally:
