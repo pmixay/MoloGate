@@ -513,6 +513,63 @@ class PermissionTests(unittest.TestCase):
         self.assertEqual(parse_zai_quota({'success': False, 'data': result['data']}), [])
 
 
+class ModelGenerationTests(unittest.TestCase):
+    def test_only_the_current_generation_of_a_governed_lab_is_current(self):
+        from open_webui.utils.model_generations import is_current_generation
+
+        current = [
+            # GLM-5.3 family, bare or behind an organization prefix.
+            'glm-5.3',
+            'glm-5.3-flash',
+            'glm-5.3-flashx',
+            'GLM-5.3 Flash',
+            'z-ai/glm-5.3-flash',
+            # GPT-6 generation, whichever way the tier and version are ordered.
+            'gpt-6',
+            'gpt-6-mini',
+            'gpt-luna-6',
+            'gpt-6.1',
+            'gpt-6.1-sol',
+            'gpt-sol-6.1',
+            'gpt-6-2026-10-01',
+            'openai/gpt-6.1-sol',
+            # Not judged: other labs, tool models, ids without a version.
+            'claude-opus-5-5',
+            'gemini-2.5-pro',
+            'codex-auto-approve',
+            'gpt-luna',
+            'test-model',
+        ]
+        old = [
+            'glm-5.2',
+            'glm-5',
+            'glm-4.7',
+            'z-ai/glm-4.6',
+            'glm-5v-turbo',
+            'gpt-5',
+            'gpt-5.5',
+            'gpt-luna-5.5',
+            'gpt-4o',
+            'gpt-oss-120b',
+            'openai/gpt-5-mini',
+            'o3',
+            'o4-mini',
+            # Sol only counts from 6.1.
+            'gpt-6-sol',
+            'gpt-sol-6',
+        ]
+        self.assertEqual([m for m in current if not is_current_generation(m)], [])
+        self.assertEqual([m for m in old if is_current_generation(m)], [])
+
+    def test_a_model_version_is_read_from_its_id(self):
+        from open_webui.utils.model_ids import model_version
+
+        self.assertEqual(model_version('glm-5.3-flash'), (5, 3))
+        self.assertEqual(model_version('openai/gpt-luna-6'), (6,))
+        self.assertEqual(model_version('gpt-6-2026-10-01'), (6,))
+        self.assertEqual(model_version('gpt-luna'), ())
+
+
 class DatabaseCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         # This suite deliberately refuses the production engine.
@@ -603,6 +660,57 @@ class DatabaseTests(DatabaseCase):
             with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[private, unavailable])):
                 self.assertEqual((await account_models())[0]['provider_account_sharing'], 'private')
                 self.assertEqual(await account_models(OTHER), [])
+
+    async def test_older_generations_leave_the_selectors_but_stay_callable(self):
+        zai = account(id='zai', provider='zai', plan='api', models=[{'id': 'glm-5.3-flash'}, {'id': 'glm-4.6'}])
+        openai = account(
+            id='openai', provider='openai_api', plan='api', models=[{'id': 'gpt-6.1-sol'}, {'id': 'gpt-5.5'}]
+        )
+        with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[zai, openai])):
+            catalog = {model['upstream_model_id']: model for model in await account_models(OWNER)}
+            hidden = {name for name, model in catalog.items() if model.get('info', {}).get('meta', {}).get('hidden')}
+            # Old models stay in the list, so chats and presets that use one keep working.
+            self.assertEqual(set(catalog), {'glm-5.3-flash', 'glm-4.6', 'gpt-6.1-sol', 'gpt-5.5'})
+            self.assertEqual(hidden, {'glm-4.6', 'gpt-5.5'})
+            self.assertEqual((await select_account('account:zai:glm-4.6', OWNER)).id, 'zai')
+
+    async def test_glm_models_offer_the_effort_levels_z_ai_documents(self):
+        from open_webui.utils.reasoning_effort import apply_reasoning_effort_options
+
+        models = [
+            catalog_model('glm-5.3-flash', 'GLM-5.3 Flash', {}),
+            catalog_model('glm-5.2', 'GLM-5.2', {}),
+            catalog_model('glm-4.6', 'GLM-4.6', {}),
+            # What the provider lists wins over what Mologate knows.
+            catalog_model('glm-5.3', 'GLM-5.3', {'supported_reasoning_efforts': ['high', 'max']}),
+        ]
+        with patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[account(provider='zai', models=models)])):
+            listing = await account_models(OWNER)
+        apply_reasoning_effort_options(listing)
+        options = {model['upstream_model_id']: model.get('reasoning_effort_options') for model in listing}
+
+        def levels(name):
+            return [level['value'] for level in options[name]['levels']]
+
+        self.assertEqual(
+            (levels('glm-5.3-flash'), options['glm-5.3-flash']['default']), (['low', 'high', 'max'], 'max')
+        )
+        self.assertEqual(levels('glm-5.2'), ['none', 'high', 'max'])
+        # No documented levels for older GLM models: the selector stays hidden.
+        self.assertIsNone(options['glm-4.6'])
+        self.assertEqual(levels('glm-5.3'), ['high', 'max'])
+
+        # A preset built on a GLM model inherits its levels; an admin override still wins.
+        preset = {'id': 'fast-glm', 'info': {'base_model_id': 'account:zai:glm-5.3-flash', 'meta': {}}}
+        override = {
+            'id': 'glm-low-only',
+            'info': {'base_model_id': 'account:zai:glm-5.3-flash', 'meta': {'reasoning_effort_levels': ['low']}},
+        }
+        apply_reasoning_effort_options([*listing, preset, override])
+        self.assertEqual(
+            [level['value'] for level in preset['reasoning_effort_options']['levels']], ['low', 'high', 'max']
+        )
+        self.assertEqual([level['value'] for level in override['reasoning_effort_options']['levels']], ['low'])
 
     async def test_catalog_and_chat_access_follow_sharing_despite_saved_model_acl(self):
         from open_webui.utils import models as model_utils

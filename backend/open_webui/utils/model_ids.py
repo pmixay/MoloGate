@@ -38,6 +38,16 @@ _VERSION_PATTERN = re.compile(r'\d+(?:\.\d+)*')
 _PLAIN_TOKENS = {'gpt', 'chatgpt', 'latest'}
 
 
+def model_version(text: str) -> tuple[int, ...]:
+    """The version a model id or name carries: ``glm-5.3-flash`` is (5, 3), ``openai/gpt-luna-6``
+    is (6,), ``gpt-6-2026-10-01`` is (6,). Empty when there is none."""
+    base = normalize_model_name(text).rsplit('/', 1)[-1]
+    if date_match := _DATE_PATTERN.search(base):
+        base = base[: date_match.start()] + base[date_match.end() :]
+    version_match = _VERSION_PATTERN.search(base)
+    return tuple(int(part) for part in version_match.group(0).split('.')) if version_match else ()
+
+
 def _family_rank(text: str, family: str) -> tuple | None:
     """How recent a model id or name is within ``family``, or None when it isn't in the family.
 
