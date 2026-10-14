@@ -2,8 +2,8 @@
 	// Mologate: the low-limit warning, above the message box. When the selected model's 5-hour,
 	// weekly or credit limit runs low across every account that can serve it, it says how much is
 	// left, about how many minutes of work that is at the recent pace, and when it resets
-	// (utils/provider_limits.py, `outlook`). The limits ring next to the model selector loads the
-	// limits; this reads them from the same store. A dismissed warning comes back when it gets
+	// (utils/provider_limits.py, `outlook`). The context indicator loads the limits; this reads
+	// them from the same store. A dismissed warning comes back when it gets
 	// worse or the window resets.
 	import { getContext } from 'svelte';
 	import { slide } from 'svelte/transition';

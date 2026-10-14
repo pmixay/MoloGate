@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Mologate: the usage limits a model's provider account reported, as labelled bars. Shown in
-	// the context indicator's panel and the limits ring's panel (utils/provider_limits.py).
+	// the context indicator's panel (utils/provider_limits.py).
 	import { getContext } from 'svelte';
 
 	import {
@@ -40,7 +40,10 @@
 			></div>
 		</div>
 		<div class="text-[11px] text-gray-500 dark:text-gray-400">
-			{[amountText(window, t), resetText(window, t)].filter(Boolean).join(' · ')}
+			<!-- Without an absolute limit the amount is just the percentage shown above. -->
+			{[window.limit ? amountText(window, t) : '', resetText(window, t)]
+				.filter(Boolean)
+				.join(' · ')}
 		</div>
 	</div>
 {/each}

@@ -61,7 +61,7 @@
 	import AdminViewSelector from './Models/AdminViewSelector.svelte';
 	import TagSelector from '$lib/components/workspace/common/TagSelector.svelte';
 
-	type ModelListItem = { id: string; name?: string };
+	type ModelListItem = { id: string; name?: string; info?: { meta?: { hidden?: boolean } } };
 
 	let shiftKey = false;
 
@@ -310,6 +310,8 @@
 						...m,
 						id: m.id,
 						name: m.name,
+						// Mologate: models hidden by default (older generations) show as hidden here too.
+						...(m?.info?.meta?.hidden ? { meta: { hidden: true } } : {}),
 
 						is_active: true
 					};
