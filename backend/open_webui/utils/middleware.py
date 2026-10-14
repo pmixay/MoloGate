@@ -423,6 +423,17 @@ def _split_tool_calls(
     return expanded
 
 
+def missing_arguments_error(name: str, spec: dict, params: dict) -> str | None:
+    """Mologate: what the agent is told when its call leaves out required arguments, instead of the
+    Python error from running the tool without them ("search_web() missing 1 required ...")."""
+    required = (spec.get('parameters') or {}).get('required') or []
+    missing = [key for key in required if key not in params]
+    if not missing:
+        return None
+    listed = ', '.join(f'`{key}`' for key in missing)
+    return f'Error: `{name}` was called without {listed}. Call it again with the arguments filled in.'
+
+
 def get_citation_source_from_tool_result(
     tool_name: str, tool_params: dict, tool_result: str, tool_id: str = ''
 ) -> list[dict]:
@@ -3416,6 +3427,8 @@ async def execute_tool_call_for_output(request, form_data, user, metadata, event
     direct_tool = tool.get('direct', False)
     allowed_params = spec.get('parameters', {}).get('properties', {}).keys()
     params = {key: value for key, value in params.items() if key in allowed_params}
+    if error := missing_arguments_error(name, spec, params):
+        return {'tool_call_id': tool_call.get('id', ''), 'content': error}
 
     try:
         if direct_tool:
@@ -6114,6 +6127,8 @@ async def streaming_chat_response_handler(response, ctx):
                         direct_tool = tool.get('direct', False)
                         allowed_params = spec.get('parameters', {}).get('properties', {}).keys()
                         params = {key: value for key, value in params.items() if key in allowed_params}
+                        if error := missing_arguments_error(name, spec, params):
+                            return params, error, tool, tool_type, direct_tool
                         try:
                             if direct_tool:
                                 result = await event_caller(

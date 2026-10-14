@@ -223,12 +223,128 @@ def settle_chat(result):
     return result
 
 
+class CodexToolCalls:
+    """The function calls of a Codex Responses stream, as Chat Completions tool calls.
+
+    The ChatGPT backend doesn't always stream a call the way the Responses docs describe: its
+    arguments may come as `response.function_call_arguments.delta` (by `item_id`), as
+    `response.output_tool_call.delta` (by `call_id`, without `output_item.added`), or only whole, in
+    `response.function_call_arguments.done` or `response.output_item.done`. A call is found by any of
+    its ids, and the `.done` arguments are the final ones; the part not sent yet is sent then. Without
+    that, a call reached the agent with no arguments ("search_web() missing ... 'query'").
+    """
+
+    def __init__(self):
+        self.aliases = {}
+        self.calls = []
+
+    def __bool__(self):
+        return bool(self.calls)
+
+    @staticmethod
+    def _aliases(event, item):
+        output_index = event.get('output_index')
+        aliases = (event.get('item_id'), item.get('id'), event.get('call_id'), item.get('call_id'))
+        return [alias for alias in aliases if alias] + ([('output', output_index)] if output_index is not None else [])
+
+    def _call(self, event, item, deltas):
+        """The call an event belongs to, opened (and announced) the first time one is seen."""
+        aliases = self._aliases(event, item)
+        call = next((self.calls[self.aliases[alias]] for alias in aliases if alias in self.aliases), None)
+        if call is None:
+            call = {
+                'index': len(self.calls),
+                'id': item.get('call_id') or event.get('call_id') or item.get('id') or event.get('item_id'),
+                'name': item.get('name') or event.get('name') or '',
+                'arguments': '',
+                'sent': '',
+            }
+            self.calls.append(call)
+            deltas.append(
+                {
+                    'tool_calls': [
+                        {
+                            'index': call['index'],
+                            'id': call['id'],
+                            'type': 'function',
+                            'function': {'name': call['name'], 'arguments': ''},
+                        }
+                    ]
+                }
+            )
+        elif not call['name'] and (name := item.get('name') or event.get('name')):
+            # Opened by an event without the name: the agent needs it to run the call.
+            call['name'] = name
+            deltas.append({'tool_calls': [{'index': call['index'], 'function': {'name': name}}]})
+        for alias in aliases:
+            self.aliases.setdefault(alias, call['index'])
+        return call
+
+    def _sync(self, call, deltas, final=False):
+        """Send what the call's best-known arguments add to what was sent already."""
+        arguments, sent = call['arguments'], call['sent']
+        if arguments.startswith(sent):
+            if len(arguments) > len(sent):
+                deltas.append(
+                    {'tool_calls': [{'index': call['index'], 'function': {'arguments': arguments[len(sent) :]}}]}
+                )
+                call['sent'] = arguments
+        elif final:
+            log.warning('Codex sent arguments for a tool call that differ from the ones it streamed.')
+
+    def feed(self, event) -> list[dict]:
+        """The Chat Completions deltas an event adds."""
+        kind, deltas = event.get('type'), []
+        item = event.get('item') if isinstance(event.get('item'), dict) else {}
+        if kind in ('response.output_item.added', 'response.output_item.done'):
+            if item.get('type') != 'function_call':
+                return deltas
+            call = self._call(event, item, deltas)
+            if isinstance(item.get('arguments'), str) and item['arguments']:
+                call['arguments'] = item['arguments']
+            if kind == 'response.output_item.done':
+                self._sync(call, deltas, final=True)
+        elif kind == 'response.function_call_arguments.delta':
+            call = self._call(event, item, deltas)
+            call['arguments'] += str(event.get('delta') or '')
+            self._sync(call, deltas)
+        elif kind == 'response.output_tool_call.delta':
+            # Held back until the call is done: these may repeat what came before.
+            call = self._call(event, item, deltas)
+            call['arguments'] += str(event.get('arguments') or event.get('delta') or '')
+        elif kind == 'response.function_call_arguments.done':
+            call = self._call(event, item, deltas)
+            if isinstance(event.get('arguments'), str):
+                call['arguments'] = event['arguments']
+            self._sync(call, deltas, final=True)
+        return deltas
+
+    def finish(self) -> list[dict]:
+        """What is still owed when the stream ends: arguments of calls that never said they were done."""
+        deltas = []
+        for call in self.calls:
+            self._sync(call, deltas, final=True)
+        return deltas
+
+    def items(self) -> list[dict]:
+        """The calls as Responses `function_call` output items."""
+        return [
+            {
+                'type': 'function_call',
+                'call_id': call['id'],
+                'name': call['name'],
+                'arguments': call['arguments'] or '{}',
+            }
+            for call in self.calls
+        ]
+
+
 async def codex_chat_stream(response, model, events=None, on_end=None):
     """Responses SSE as Chat Completions chunks, closed with why the answer stopped when it did not finish.
 
     `on_end(usage, finished)` learns what the answer used once the stream ends (the usage ledger)."""
     identifier = 'chatcmpl-account'
-    calls = {}
+    calls = CodexToolCalls()
     partial = refused = finished = False
     usage = None
     note = ('interrupted', ENDED)
@@ -253,6 +369,9 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
                 kind = event.get('type')
                 delta = None
                 refusal = False
+                for call_delta in calls.feed(event):
+                    partial = True
+                    yield chunk(call_delta)
                 if kind == 'response.created':
                     identifier = event.get('response', {}).get('id', identifier)
                 elif kind == 'response.output_text.delta':
@@ -267,30 +386,9 @@ async def codex_chat_stream(response, model, events=None, on_end=None):
                     if text := refusal_text([event.get('item')]):
                         refused = refusal = True
                         delta = {'content': text}
-                elif kind == 'response.output_item.added' and event.get('item', {}).get('type') == 'function_call':
-                    item = event['item']
-                    index = len(calls)
-                    calls[item['id']] = index
-                    delta = {
-                        'tool_calls': [
-                            {
-                                'index': index,
-                                'id': item['call_id'],
-                                'type': 'function',
-                                'function': {'name': item['name'], 'arguments': ''},
-                            }
-                        ]
-                    }
-                elif kind == 'response.function_call_arguments.delta' and event.get('item_id') in calls:
-                    delta = {
-                        'tool_calls': [
-                            {
-                                'index': calls[event['item_id']],
-                                'function': {'arguments': event.get('delta', '')},
-                            }
-                        ]
-                    }
                 elif kind in FINISHED:
+                    for call_delta in calls.finish():
+                        yield chunk(call_delta)
                     result = event.get('response') or {}
                     usage, finished = result.get('usage'), True
                     finish, note = 'tool_calls' if calls else 'stop', None
@@ -380,9 +478,11 @@ async def codex_result(response, account, endpoint):
     from open_webui.routers.openai import convert_responses_result
 
     written, last, dropped, refused = [], {}, False, False
+    calls = CodexToolCalls()
     try:
         async for event in response_events(response):
             kind = event.get('type')
+            calls.feed(event)
             if kind in ('response.output_text.delta', 'response.refusal.delta'):
                 written.append(event.get('delta') or '')
                 refused = refused or kind == 'response.refusal.delta'
@@ -395,6 +495,10 @@ async def codex_result(response, account, endpoint):
     if kind in FINISHED:
         if endpoint != 'chat/completions':
             return result
+        output = result.get('output') or []
+        if calls and not any(isinstance(item, dict) and item.get('type') == 'function_call' for item in output):
+            # The backend's final response can leave out what it streamed; the calls come from the stream.
+            result = {**result, 'output': [*output, *calls.items()]}
         converted = convert_responses_result(result)
         choice = converted['choices'][0]
         refusal = refusal_text(result.get('output'))
