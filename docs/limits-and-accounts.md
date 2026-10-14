@@ -71,20 +71,20 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
    | ChatGPT Plus                                                | 1x                                                 | 10              | 4                 |
    | ChatGPT Pro tiers (for example 5x, 20x)                     | the tier's multiplier                              | 50, 200         | 20, 80            |
    | GLM coding plan (Lite, Pro, Max)                            | relative to Lite, from Z.ai's published plan sizes | 10 × multiplier | 4 × multiplier    |
-   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | monthly budget ÷ $20, once the key holds money     | 10 × multiplier | 4 × multiplier    |
+   | Pay-as-you-go API key (Anthropic, OpenAI, OpenRouter, Z.ai) | dollars actually spent through it ÷ $20            | 10 × multiplier | 4 × multiplier    |
 
    The admin keeps the multiplier table in settings. Read the plan from the provider when possible
    (ChatGPT plans come from codex-lb); otherwise the member picks it when connecting and an admin
    can correct it (Z.ai coding plans: Lite, Pro, Max). Claude subscriptions are deferred (§12,
    Phase 7), so they have no row here; their credits are decided if that phase starts.
 
-   **API keys earn credits only when they hold money** (2026-10-14): a free key earns none. A key
-   counts as funded once it has paid for a request (the provider reported a charge, as OpenRouter
-   does, or a priced model served it and the ledger's cost estimate is above zero), or the
-   provider shows paid credit (OpenRouter's `/key` says it is not on the free tier). A key that
-   only reaches free models (OpenRouter's `:free` models, Z.ai's free Flash models) or is refused
-   for lack of credit is not funded. A key funded later earns its credits then, still only once
-   (decision 8).
+   **API keys earn credits by the money actually spent through them** (2026-10-14), not by the
+   budget their owner types in: every dollar anyone spends through a key, its owner included,
+   gives the key's owner 0.5 credits (10 per $20, the same rate as a 1x plan), as the spending
+   happens. The dollars are the provider's reported cost (OpenRouter) or the ledger's estimate
+   from published prices (§8). A free key, or free models (OpenRouter's `:free` models, Z.ai's free
+   Flash models), costs nothing and so earns nothing. A team key has no owner and earns nobody
+   credits. Since credits follow spending, re-adding a key cannot earn them twice (decision 8).
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
@@ -694,8 +694,8 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 5: credits and resets
 
-- [ ] Grants on connect (an API key's once it holds money, decision 7), forfeit on disconnect,
-      spending in tier 3, balance in the UI.
+- [ ] Grants on connect (a subscription's), and for API keys as money is spent through them
+      (decision 7); forfeit on disconnect, spending in tier 3, balance in the UI.
 - [x] Automatic limit reset (§10), with a global off switch for any member.
 - [ ] Done when: an automatic reset is redeemed on a real account once every account is empty,
       and the windows refill.
@@ -786,7 +786,8 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   Deployment switches set in the environment win at every start.
 - 2026-10-14: every account is shared with the team; "Only me" is removed and existing private
   accounts become shared. Owners keep their reserve and can pause their account. A member's own
-  account is used first. API keys earn credits only once they hold money; free keys earn none.
+  account is used first. API keys earn credits by the dollars actually spent through them, by
+  anyone, for their owner (0.5 per dollar); free keys and free models earn none.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 
