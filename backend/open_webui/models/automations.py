@@ -45,7 +45,7 @@ class AutomationRun(Base):
     id = Column(Text, primary_key=True)
     automation_id = Column(Text, nullable=False)
     chat_id = Column(Text, nullable=True)
-    status = Column(Text, nullable=False)  # success | error
+    status = Column(Text, nullable=False)  # success | error (Mologate: also running | skipped)
     error = Column(Text, nullable=True)
     created_at = Column(BigInteger, nullable=False)
 
@@ -159,6 +159,34 @@ class AutomationTable:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(func.count()).select_from(Automation).filter_by(user_id=user_id))
             return result.scalar()
+
+    async def count_active_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> int:
+        """Mologate: automations that will still run (counted with scheduled tasks)."""
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(func.count())
+                .select_from(Automation)
+                .where(
+                    Automation.user_id == user_id,
+                    Automation.is_active == True,
+                    Automation.next_run_at.isnot(None),
+                )
+            )
+            return result.scalar() or 0
+
+    async def deactivate(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
+        """Mologate: turn an active automation off; None when it was already off."""
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                update(Automation)
+                .where(Automation.id == id, Automation.is_active == True)
+                .values(is_active=False, next_run_at=None, updated_at=int(time.time_ns()))
+            )
+            await db.commit()
+            if not result.rowcount:
+                return None
+            row = await db.get(Automation, id)
+            return AutomationModel.model_validate(row) if row else None
 
     async def get_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
         async with get_async_db_context(db) as db:
@@ -364,6 +392,23 @@ class AutomationRunTable:
                 created_at=int(time.time_ns()),
             )
             db.add(row)
+            await db.commit()
+            return AutomationRunModel.model_validate(row)
+
+    async def finish(
+        self,
+        id: str,
+        status: str,
+        error: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[AutomationRunModel]:
+        """Mologate: set the outcome of a run recorded as 'running' when it started."""
+        async with get_async_db_context(db) as db:
+            row = await db.get(AutomationRun, id)
+            if not row:
+                return None
+            row.status = status
+            row.error = error
             await db.commit()
             return AutomationRunModel.model_validate(row)
 
