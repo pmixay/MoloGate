@@ -17,6 +17,7 @@
 	import ArrowPath from '$lib/components/icons/ArrowPath.svelte';
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
+	import ProviderOverrides from './ProviderOverrides.svelte';
 	// Mologate: the same wording as the chat's limits panel ("Weekly limit", "Monthly budget").
 	import {
 		amountText,
@@ -898,6 +899,11 @@
 					{/each}
 				</ul>
 			</section>
+		{/if}
+
+		<!-- Mologate: admin and team overrides of the fair-use share, with their history. -->
+		{#if $user?.role === 'admin'}
+			<ProviderOverrides {buttonClass} />
 		{/if}
 	</div>
 </div>

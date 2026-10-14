@@ -17,12 +17,14 @@ from sqlalchemy import create_engine, inspect, select
 from open_webui.internal.db import get_async_db_context
 from open_webui.models.metering import Metering
 from open_webui.models.usage_events import UsageEvent, UsageEvents
-from open_webui.utils import allowance, allowance_gate, usage_ledger
+from fastapi import HTTPException
+
+from open_webui.utils import account_slots, allowance, allowance_gate, usage_ledger
 from open_webui.utils import calibration as fitting
 from open_webui.utils import provider_account_proxy as proxy
 from open_webui.utils.allowance import Account, Period, Request, State, Window, build_state, decide
 from test_metering import MeteringCase
-from test_provider_accounts import ADMIN, OTHER, OWNER, Response, chat_reply
+from test_provider_accounts import ADMIN, OTHER, OWNER, Response, chat_reply, read_stream
 
 HOUR = 3600
 DAY = 24 * HOUR
@@ -295,6 +297,20 @@ class SimulationTests(unittest.TestCase):
             current = team.state(at, user_id)
             request = ask(user_id, model)
             decision = decide(request, current)
+            failed_over = False
+            # Now and then the decided account is rate-limited: the request moves on within its
+            # tier, or to a later one, and never back to an account it found used up.
+            if decision.account_id and rng.random() < 0.05:
+                retried = decide(ask(user_id, model, exclude=frozenset({decision.account_id})), current)
+                self.assertNotEqual(retried.account_id, decision.account_id)
+                self.assertGreaterEqual(allowance.TIERS.index(retried.tier), allowance.TIERS.index(decision.tier))
+                self.assertEqual(
+                    retried.candidates, decision.candidates[1:] if retried.tier == decision.tier else retried.candidates
+                )
+                tally[user_id]['failovers'] = tally[user_id].get('failovers', 0) + 1
+                if retried.tier == 'empty':
+                    continue
+                decision, failed_over = retried, True
             tally[user_id][decision.tier] += 1
             tally[user_id]['swapped'] += decision.swapped
             # No one is refused, or sent to a worker within their share, while the pool has room.
@@ -304,9 +320,10 @@ class SimulationTests(unittest.TestCase):
                 self.assertTrue(any(item['used'] >= item['share'] for item in numbers.values()))
             for account in (a, b):
                 windows = current.windows[account.id]
-                # An owner with reserve left always gets it.
+                # An owner with reserve left always gets it (unless their account just refused).
                 if (
-                    user_id == account.owner
+                    not failed_over
+                    and user_id == account.owner
                     and allowance.owner_room(
                         account, {name: allowance._active(window) for name, window in windows.items()}
                     )
@@ -346,6 +363,7 @@ class SimulationTests(unittest.TestCase):
             # The owners work on their own accounts.
             self.assertGreater(tally[ANN]['reserve'], 0, seed)
             self.assertGreater(tally[BOB]['reserve'], 0, seed)
+            self.assertGreater(sum(member.get('failovers', 0) for member in tally.values()), 0, seed)
 
 
 class ReplayTests(unittest.TestCase):
@@ -569,6 +587,265 @@ class GateTests(MeteringCase):
         self.assertEqual((row.account_id, row.decision), (key.id, None))
 
 
+CAT_USER = SimpleNamespace(id=CAT, role='user', name='Cat')
+MODELS = [{'id': 'gpt-6', 'name': 'GPT-6'}, {'id': 'gpt-luna-6', 'name': 'GPT Luna'}]
+
+
+def settings(**values):
+    """Config.get as the server would answer it, with these settings."""
+    stored = {'mologate.limits_mode': 'enforce', 'mologate.max_account_requests': 4} | values
+    return AsyncMock(side_effect=lambda key, default=None: stored.get(key, default))
+
+
+class EnforceTests(MeteringCase):
+    """Phase 4: in enforce, requests are served as the engine decides.
+
+    Two $20 OpenAI keys, A (the owner's) and B (another member's), each a weight-1 window; three
+    members. Both owners idle for a day lend 25 points each: the pool is 150 units, 50 each.
+    """
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        allowance_gate._cache.clear()
+        account_slots._memory.clear()
+        self.config_patch.stop()
+        self.config_patch = patch('open_webui.models.config.Config.get', settings())
+        self.config_patch.start()
+        self.patches = [
+            patch.object(allowance_gate, 'members', AsyncMock(return_value=3)),
+            patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)),
+        ]
+        for item in self.patches:
+            item.start()
+        self.a = await self.create_account(
+            external_account_id='a', secret={'api_key': 'key-a', 'base_url': 'https://a.test'}, models=MODELS
+        )
+        self.b = await self.create_account(
+            external_account_id='b',
+            owner_user_id=OTHER.id,
+            secret={'api_key': 'key-b', 'base_url': 'https://b.test'},
+            models=MODELS,
+        )
+        self.now = int(__import__('time').time())
+
+    async def asyncTearDown(self):
+        await account_slots.flush()
+        for item in self.patches:
+            item.stop()
+        await super().asyncTearDown()
+
+    async def spent(self, account, user_id, dollars):
+        await UsageEvents.insert(
+            ts=self.now - 60,
+            user_id=user_id,
+            account_id=account.id,
+            provider=account.provider,
+            model_id='gpt-6',
+            source='chat',
+            tier='pool',
+            status='ok',
+            input_tokens=1000,
+            cost=dollars,
+        )
+
+    async def ask(self, user, replies, model='gpt-6', stream=False, metadata=None):
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), state=SimpleNamespace())
+        session = SimpleNamespace(post=AsyncMock(side_effect=replies))
+        form = {'model': f'account:openai_api:{model}', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+        if stream:
+            form['stream'] = True
+        with patch.object(proxy, 'get_session', AsyncMock(return_value=session)):
+            answer = await proxy.account_completion(request, form, user, metadata=metadata)
+            if stream:
+                answer = await read_stream(answer.body_iterator)
+            await usage_ledger.flush()
+        keys = [call.kwargs['headers']['Authorization'].removeprefix('Bearer ') for call in session.post.call_args_list]
+        models = [call.kwargs['json']['model'] for call in session.post.call_args_list]
+        return answer, keys, models
+
+    async def test_the_owner_is_served_by_their_own_account(self):
+        answer, keys, _ = await self.ask(OWNER, [Response(chat_reply('Hi'))])
+        self.assertEqual(keys, ['key-a'])
+        [row] = await self.rows(UsageEvent)
+        # Enforced: the tier is the decision's.
+        self.assertEqual((row.tier, row.decision['tier'], row.decision['mode']), ('reserve', 'reserve', 'enforce'))
+        self.assertNotIn('mologate', answer)
+
+    async def test_past_the_share_the_reply_uses_the_worker_and_says_so(self):
+        # Cat spent $12 through B: 60 units, past her share of 50.
+        await self.spent(self.b, CAT, 12)
+        answer, keys, models = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        # A has the most room for its size.
+        self.assertEqual((keys, models), (['key-a'], ['gpt-luna-6']))
+        self.assertRegex(
+            answer['mologate']['notice'], r'^Your share is used up, so this reply uses GPT Luna\. Resets in '
+        )
+        rows = [row for row in await self.rows(UsageEvent) if row.ts >= self.now]
+        self.assertEqual([(row.tier, row.model_id) for row in rows], [('worker', 'gpt-luna-6')])
+        # Within the share, the model asked for.
+        await self.spent(self.b, CAT, -4)
+        # The pool's numbers are kept for 15 seconds.
+        allowance_gate._cache.clear()
+        _, _, models = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        self.assertEqual(models, ['gpt-6'])
+
+    async def test_a_used_up_account_fails_over_within_the_tier(self):
+        limited = Response({'error': {'code': 'rate_limit_exceeded'}}, status=429)
+        answer, keys, _ = await self.ask(CAT_USER, [limited, Response(chat_reply('Hi'))])
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Hi')
+        self.assertEqual(sorted(keys), ['key-a', 'key-b'])
+        rows = sorted(await self.rows(UsageEvent), key=lambda row: row.status)
+        self.assertEqual([(row.status, row.tier) for row in rows], [('limited', 'pool'), ('ok', 'pool')])
+        # Both slots were given back, the refused attempt's too.
+        await account_slots.flush()
+        self.assertEqual([await account_slots.active(None, key.id) for key in (self.a, self.b)], [0, 0])
+
+    async def test_an_owner_whose_account_is_limited_goes_to_the_pool(self):
+        limited = Response({'error': {'code': 'rate_limit_exceeded'}}, status=429)
+        _, keys, _ = await self.ask(OWNER, [limited, Response(chat_reply('Hi'))])
+        self.assertEqual(keys, ['key-a', 'key-b'])
+        rows = sorted(await self.rows(UsageEvent), key=lambda row: row.status)
+        self.assertEqual([(row.status, row.tier) for row in rows], [('limited', 'reserve'), ('ok', 'pool')])
+
+    async def test_an_empty_pool_says_when_and_offers_a_worker_elsewhere(self):
+        # Each key is used up to its owner's locked reserve.
+        await self.spent(self.a, OTHER.id, 15)
+        await self.spent(self.b, OWNER.id, 15)
+        await self.create_account(
+            provider='anthropic_api',
+            owner_user_id=None,
+            external_account_id='c',
+            budget=None,
+            models=[{'id': 'claude-haiku-5-5', 'name': 'Claude Haiku 5.5'}],
+        )
+        with self.assertRaises(HTTPException) as caught:
+            await self.ask(CAT_USER, [])
+        self.assertEqual(caught.exception.status_code, 429)
+        self.assertIn('no room left for you', caught.exception.detail)
+        self.assertIn('frees up in', caught.exception.detail)
+        self.assertIn('Claude Haiku 5.5 (Anthropic)', caught.exception.detail)
+        # Its owner still has their locked reserve.
+        _, keys, _ = await self.ask(OWNER, [Response(chat_reply('Hi'))])
+        self.assertEqual(keys, ['key-a'])
+
+    async def test_a_full_account_hands_the_request_to_another_and_then_waits(self):
+        self.config_patch.stop()
+        self.config_patch = patch(
+            'open_webui.models.config.Config.get', settings(**{'mologate.max_account_requests': 1})
+        )
+        self.config_patch.start()
+        self.assertTrue(await account_slots.take(None, self.a.id, 'someone', 1))
+        _, keys, _ = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        self.assertEqual(keys, ['key-b'])
+        # Its slot was given back once the answer was.
+        await account_slots.flush()
+        self.assertEqual(await account_slots.active(None, self.b.id), 0)
+        self.assertTrue(await account_slots.take(None, self.b.id, 'someone', 1))
+        with patch.object(account_slots, 'WAIT_SECONDS', 0.6), self.assertRaises(HTTPException) as caught:
+            await self.ask(CAT_USER, [])
+        self.assertEqual(caught.exception.status_code, 429)
+        self.assertIn('busy', caught.exception.detail)
+
+    async def test_a_stream_holds_its_slot_until_it_ends(self):
+        events = [
+            {'choices': [{'index': 0, 'delta': {'content': 'Hi'}, 'finish_reason': None}]},
+            {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]},
+            '[DONE]',
+        ]
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), state=SimpleNamespace())
+        session = SimpleNamespace(post=AsyncMock(return_value=Response(events=events)))
+        form = {'model': 'account:openai_api:gpt-6', 'messages': [], 'stream': True}
+        with patch.object(proxy, 'get_session', AsyncMock(return_value=session)):
+            answer = await proxy.account_completion(request, form, OWNER)
+            self.assertEqual(await account_slots.active(None, self.a.id), 1)
+            await read_stream(answer.body_iterator)
+        await account_slots.flush()
+        self.assertEqual(await account_slots.active(None, self.a.id), 0)
+        await usage_ledger.flush()
+
+    async def test_a_broken_gate_lets_the_request_go_ahead(self):
+        with patch.object(allowance_gate, 'decide', AsyncMock(side_effect=RuntimeError('broken'))):
+            answer, keys, _ = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        self.assertEqual(answer['choices'][0]['message']['content'], 'Hi')
+        self.assertEqual(len(keys), 1)
+
+    async def test_an_override_extends_the_share_and_is_audited(self):
+        from open_webui.models.limit_overrides import LimitOverrides
+        from open_webui.routers import provider_accounts as routes
+
+        await self.spent(self.b, CAT, 12)
+        # 10 points of a 150-unit pool are 15 more units: 65 past 60 used, so credit tier.
+        granted = await routes.grant_override(
+            routes.OverrideForm(user_id=None, extra_points=10, reason='Release week'), user=ADMIN
+        )
+        allowance_gate._cache.clear()
+        _, _, models = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        self.assertEqual(models, ['gpt-6'])
+        row = max(await self.rows(UsageEvent), key=lambda row: row.ts)
+        self.assertEqual((row.tier, row.decision['windows']['budget']['extra']), ('credit', 15))
+        # Revoked: past the share again, and the grant stays on record.
+        await routes.revoke_override(granted['id'], user=ADMIN)
+        _, _, models = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        self.assertEqual(models, ['gpt-luna-6'])
+        [entry] = await LimitOverrides.list()
+        self.assertEqual(
+            (entry['granted_by'], entry['revoked_by'], entry['reason']), (ADMIN.id, ADMIN.id, 'Release week')
+        )
+        # A member's own override counts only for them, and only until it ends.
+        await LimitOverrides.grant(CAT, ADMIN.id, 5, self.now + 3600, 'Deadline')
+        await LimitOverrides.grant(CAT, ADMIN.id, 7, self.now - 1, 'Over')
+        self.assertEqual(await LimitOverrides.active_points(CAT), 5)
+        self.assertEqual(await LimitOverrides.active_points(OWNER.id), 0)
+        with self.assertRaises(HTTPException):
+            await routes.grant_override(
+                routes.OverrideForm(user_id=None, extra_points=5, until=self.now - 10, reason='Late'), user=ADMIN
+            )
+
+    async def test_the_member_sees_their_share_and_its_pace(self):
+        from open_webui.utils.provider_limits import period_start
+
+        # $9 through B in the last minutes: 45 of Cat's 50 units, at 9 units a minute.
+        await self.spent(self.b, CAT, 9)
+        standing = await allowance_gate.standing(CAT_USER, 'openai_api', 'gpt-6')
+        window = standing['windows']['budget']
+        self.assertEqual((standing['tier'], standing['mode'], standing['credits']), ('pool', 'enforce', 0))
+        self.assertEqual((window['percent'], window['level'], window['minutes_left']), (90, 'low', 1))
+        self.assertEqual(window['resets_at'], period_start('monthly', period_start('monthly', self.now) + 32 * 86400))
+        # Past it: the worker, by name.
+        await self.spent(self.b, CAT, 2)
+        allowance_gate._cache.clear()
+        standing = await allowance_gate.standing(CAT_USER, 'openai_api', 'gpt-6')
+        self.assertEqual(
+            (standing['tier'], standing['model_name'], standing['windows']['budget']['level']),
+            ('worker', 'GPT Luna', 'empty'),
+        )
+
+    async def test_observe_serves_as_before(self):
+        self.config_patch.stop()
+        self.config_patch = patch(
+            'open_webui.models.config.Config.get', settings(**{'mologate.limits_mode': 'observe'})
+        )
+        self.config_patch.start()
+        await self.spent(self.b, CAT, 12)
+        answer, keys, models = await self.ask(CAT_USER, [Response(chat_reply('Hi'))])
+        # The model asked for, nothing said; the decision is recorded beside it.
+        self.assertEqual((len(keys), models), (1, ['gpt-6']))
+        self.assertNotIn('mologate', answer)
+        row = next(row for row in await self.rows(UsageEvent) if row.ts >= self.now)
+        self.assertEqual((row.tier, row.decision['tier'], row.decision['mode']), ('pool', 'worker', 'observe'))
+
+
+class RouteTests(unittest.TestCase):
+    def test_override_routes_are_for_admins(self):
+        from open_webui.routers import provider_accounts as routes
+        from open_webui.utils.auth import get_admin_user
+
+        paths = [route for route in routes.router.routes if route.path.startswith('/overrides')]
+        self.assertEqual(len(paths), 3)
+        for route in paths:
+            self.assertIn(get_admin_user, [dependency.call for dependency in route.dependant.dependencies])
+
+
 class MigrationTests(unittest.TestCase):
     def test_private_accounts_become_shared(self):
         accounts = importlib.import_module('open_webui.migrations.versions.b1a7c9e4d205_add_provider_accounts')
@@ -589,6 +866,20 @@ class MigrationTests(unittest.TestCase):
             # Paused stays paused: the owner's switch.
             self.assertEqual(rows, {'a': 'shared', 'b': 'shared', 'c': 'paused'})
             accounts.downgrade()
+        engine.dispose()
+
+    def test_override_migration_round_trip(self):
+        from open_webui.models.limit_overrides import LimitOverride
+
+        migration = importlib.import_module('open_webui.migrations.versions.a3f6c9d2b8e4_add_limit_override')
+        self.assertEqual(migration.down_revision, 'e1b4c7a9d3f6')
+        engine = create_engine('sqlite://')
+        with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            columns = {column['name'] for column in inspect(connection).get_columns('limit_override')}
+            self.assertEqual(columns, set(LimitOverride.__table__.columns.keys()))
+            migration.downgrade()
+            self.assertNotIn('limit_override', inspect(connection).get_table_names())
         engine.dispose()
 
     def test_decision_migration_round_trip(self):

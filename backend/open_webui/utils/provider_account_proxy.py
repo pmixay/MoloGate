@@ -11,10 +11,12 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
-from open_webui.utils import allowance_gate, codex_lb
+from open_webui.utils import account_slots, allowance_gate, codex_lb
 from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
 from open_webui.utils.provider_accounts import (
     auto_reset_enabled,
+    can_use,
+    model_id as account_model_id,
     refresh_limits_soon,
     select_accounts,
     split_model_id,
@@ -58,6 +60,8 @@ class AccountExhausted(Exception):
         self.credit = credit
         self.retry_after = retry_after
         self.message = message
+        # The account that was found used up (enforce, phase 4).
+        self.account = None
 
 
 def chat_session(request, form_data):
@@ -444,6 +448,24 @@ def wait_text(seconds):
     return f'{hours} h {minutes} min' if minutes else f'{hours} h'
 
 
+async def ready_at(redis, accounts, failures=None):
+    """When the first of these used-up accounts can serve again, from its limits or its 429."""
+    now = time.time()
+    failures = failures or {}
+    times = []
+    for account in accounts:
+        windows = [
+            window
+            for window in ((await get_provider_limits(redis, account.id)) or {}).get('windows', [])
+            if window_exhausted(window, now)
+        ]
+        if windows and all(window.get('resets_at') for window in windows):
+            times.append(max(window['resets_at'] for window in windows))
+        elif account.id in failures and failures[account.id].retry_after:
+            times.append(now + failures[account.id].retry_after)
+    return int(min(times)) if times else None
+
+
 async def limit_error(redis, accounts, resets_enabled, failures=None):
     now = time.time()
     failures = failures or {}
@@ -493,13 +515,24 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     metadata = metadata or getattr(getattr(request, 'state', None), 'metadata', None)
     provider, upstream_id = split_model_id(model)
     meter = Meter(request, user, metadata, upstream_id)
+    # Mologate: in enforce the allowance engine decides first and the request is served as decided
+    # (phase 4); a decision that cannot be made lets it go ahead as in observe.
+    if await allowance_gate.limits_mode() == 'enforce':
+        chat_id = (metadata or {}).get('chat_id') if isinstance(metadata, dict) else None
+        decision = await allowance_gate.decide_now(user.id, provider, upstream_id, chat_id)
+        if decision is not None:
+            return await enforced_completion(
+                request, form_data, user, endpoint, metadata, meter, decision, accounts, redis
+            )
     # Mologate: the allowance engine decides every request; observe records it (phase 3).
     meter.decision = allowance_gate.observe(user, provider, upstream_id, metadata)
 
     async def attempt(account):
         written = meter.rows
+        # Mologate: counted against the account's cap; observe never waits (utils/account_slots.py).
+        slot = (await account_slots.acquire(redis, [account.id], enforce=False) or (None, None))[1]
         try:
-            return await account_request(request, account, form_data, endpoint, user, meter)
+            return await account_request(request, account, form_data, endpoint, user, meter, slot)
         except AccountExhausted:
             meter.record(account, 'limited')
             raise
@@ -508,6 +541,10 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
             if meter.rows == written:
                 meter.record(account, 'error')
             raise
+        finally:
+            # A failed attempt may end before its answer could free the slot; freeing twice is harmless.
+            if slot is not None and not slot.streaming:
+                slot.release()
 
     exhausted = []
     failures = {}
@@ -530,7 +567,127 @@ async def account_completion(request, form_data, user, endpoint='chat/completion
     raise await limit_error(redis, exhausted, resets_enabled, failures)
 
 
-async def account_request(request, account, form_data, endpoint, user, meter=None):
+async def tell_member(metadata, text, user_id):
+    """A status line under the chat's reply, kept with the chat. API clients read it from the answer."""
+    if not isinstance(metadata, dict) or not (metadata.get('chat_id') and metadata.get('message_id')):
+        return
+    try:
+        from open_webui.socket.main import get_event_emitter
+
+        emitter = await get_event_emitter({**metadata, 'user_id': metadata.get('user_id') or user_id})
+        if emitter:
+            await emitter({'type': 'status', 'data': {'action': 'limits', 'description': text, 'done': True}})
+    except Exception as e:
+        log.debug('Could not show a limits notice: %s', e)
+
+
+def with_notice(result, text):
+    """The notice on the answer itself, for clients that are not the chat page."""
+    if isinstance(result, dict):
+        result.setdefault('mologate', {})
+        if isinstance(result['mologate'], dict):
+            result['mologate']['notice'] = text
+    elif isinstance(result, StreamingResponse):
+        result.headers['X-Mologate-Notice'] = text.encode('ascii', 'replace').decode('ascii')
+    return result
+
+
+async def enforced_completion(request, form_data, user, endpoint, metadata, meter, decision, accounts, redis):
+    """Serve the request as the allowance engine decided (phase 4).
+
+    The decided account first, then the other accounts of the same tier; an account that turns out
+    to be used up or rate-limited is left out and the request decided again, so it moves on within
+    its tier, or to the next one when none is left. Past the share the reply uses the provider's
+    worker model, and the member is told. When the pool has no room, a limit error says when it
+    frees up and which worker on another provider still has room.
+    """
+    provider, asked = split_model_id(form_data.get('model', ''))
+    rows = {row.id: row for row in await ProviderAccounts.list() if row.provider == provider and can_use(row, user)}
+    for row in accounts:
+        rows.setdefault(row.id, row)
+    chat_id = metadata.get('chat_id') if isinstance(metadata, dict) else None
+    excluded, exhausted, failures = set(), [], {}
+    reset_tried = False
+    while decision is not None:
+        if decision.tier != 'empty':
+            usable = [rows[account_id] for account_id in decision.candidates if account_id in rows]
+            if usable:
+                try:
+                    account, answer = await serve_decided(
+                        request, form_data, user, endpoint, meter, decision, usable, redis, asked
+                    )
+                except AccountExhausted as error:
+                    excluded.add(error.account.id)
+                    exhausted.append(error.account)
+                    failures[error.account.id] = error
+                else:
+                    if decision.swapped:
+                        text = allowance_gate.swap_notice(decision, asked, list(rows.values()))
+                        await tell_member(metadata, text, user.id)
+                        answer = with_notice(answer, text)
+                    return answer
+            else:
+                # Accounts this member cannot use (paused or signed out since the pool was read).
+                excluded.update(decision.candidates)
+        else:
+            # Tier 5. A reset coupon can refill an account only when the provider itself found it
+            # used up; the rules' own limits are not the provider's to lift.
+            candidates = [row for row in exhausted if row.provider == 'codex']
+            if reset_tried or not candidates or not await auto_reset_enabled():
+                break
+            reset_tried = True
+            account = await auto_reset(candidates, user.id, redis)
+            if account is None:
+                break
+            # Its new reading counts at once.
+            allowance_gate._cache.pop(provider, None)
+            excluded.discard(account.id)
+        decision = await allowance_gate.decide_now(user.id, provider, asked, chat_id, frozenset(excluded))
+    resets_enabled = await auto_reset_enabled()
+    if decision is None or (failures and all(failure.credit for failure in failures.values())):
+        if not exhausted:
+            raise HTTPException(429, 'Every account for this model has reached its usage limit.')
+        raise await limit_error(redis, exhausted, resets_enabled, failures)
+    if not decision.resets_at and exhausted:
+        # The provider's own reset times, when the rules know none.
+        decision.resets_at = await ready_at(redis, exhausted, failures)
+    raise HTTPException(429, await allowance_gate.empty_error(user, provider, decision))
+
+
+async def serve_decided(request, form_data, user, endpoint, meter, decision, usable, redis, asked):
+    """One attempt on the first of the tier's accounts with a free slot. Returns (account, answer)."""
+    try:
+        held = await account_slots.acquire(redis, [row.id for row in await order_by_headroom(redis, usable)], True)
+    except account_slots.Busy:
+        raise HTTPException(
+            429, 'Every account that can serve you is busy with other requests. Try again in a minute.'
+        ) from None
+    account = next((row for row in usable if held and row.id == held[0]), usable[0])
+    slot = held[1] if held else None
+    form = form_data
+    if decision.model != asked:
+        form = {**form_data, 'model': account_model_id(account.provider, decision.model)}
+    meter.model_id = decision.model
+    meter.tier = decision.tier
+    meter.decision = decision.as_dict() | {'mode': 'enforce'}
+    written = meter.rows
+    try:
+        return account, await account_request(request, account, form, endpoint, user, meter, slot)
+    except AccountExhausted as error:
+        meter.record(account, 'limited')
+        error.account = account
+        raise
+    except HTTPException:
+        if meter.rows == written:
+            meter.record(account, 'error')
+        raise
+    finally:
+        # A stream frees its slot when it ends; anything else is done with it now.
+        if slot is not None and not slot.streaming:
+            slot.release()
+
+
+async def account_request(request, account, form_data, endpoint, user, meter=None, slot=None):
     model = form_data.get('model', '')
     _, upstream_id = split_model_id(model)
     # Each attempt gets its own copy: the Responses conversion consumes the messages.
@@ -569,6 +726,8 @@ async def account_request(request, account, form_data, endpoint, user, meter=Non
     streaming = False
 
     def ended(usage, finished):
+        if slot is not None:
+            slot.release()
         if meter is not None:
             meter.record(account, 'ok' if finished else 'error', usage)
 
@@ -600,6 +759,8 @@ async def account_request(request, account, form_data, endpoint, user, meter=Non
         ):
             if endpoint != 'chat/completions':
                 streaming = True
+                if slot is not None:
+                    slot.streaming = True
                 return StreamingResponse(metered_passthrough(response, ended), media_type='text/event-stream')
             # Read up to the first real event: a used-up quota there still goes to the next account.
             events = response_events(response)
@@ -608,6 +769,8 @@ async def account_request(request, account, form_data, endpoint, user, meter=Non
                 raise exhausted
             stream = codex_chat_stream if account.provider == 'codex' else chat_stream
             streaming = True
+            if slot is not None:
+                slot.streaming = True
             return StreamingResponse(
                 stream(response, model, replay(opened, events), on_end=ended), media_type='text/event-stream'
             )
@@ -629,4 +792,7 @@ async def account_request(request, account, form_data, endpoint, user, meter=Non
         raise HTTPException(502, 'The provider request failed. Try again shortly.') from None
     finally:
         if not streaming:
+            # Mologate: the account's slot is free once the answer is (a stream frees it when it ends).
+            if slot is not None:
+                slot.release()
             await cleanup_response(response)

@@ -376,6 +376,23 @@
 						bind:value={adminConfig.MAX_CONCURRENT_CHATS}
 					/>
 				</AdminSettingField>
+				<!-- Mologate: the per-account cap on requests at once (utils/account_slots.py). -->
+				<AdminSettingField
+					label={$i18n.t('Requests at once, per provider account')}
+					description={$i18n.t(
+						'Up to 20. Keeps each shared account at the pace of one person. Past it, a request goes to another account in the member’s tier, or waits for one. Applies when limits are enforced.'
+					)}
+				>
+					<input
+						class={inputClass}
+						type="number"
+						min="1"
+						max="20"
+						step="1"
+						placeholder="4"
+						bind:value={adminConfig.MAX_ACCOUNT_REQUESTS}
+					/>
+				</AdminSettingField>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.userWebhooks.label')}
 					description={$i18n.t('settings.admin.general.userWebhooks.description')}

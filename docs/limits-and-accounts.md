@@ -247,8 +247,10 @@ Unique: (`provider`, `external_account_id`), which is what stops credit farming.
 `id`, `user_id`, `delta`, `reason` (`grant` | `spend` | `forfeit` | `admin`), `usage_event_id`,
 `ts`.
 
-**`limit_override`**
-`id`, `user_id`, `granted_by`, `extra_points`, `until`, `reason`.
+**`limit_override`** (migration `a3f6c9d2b8e4`)
+`id`, `user_id` (empty for a team override: every member gets it), `granted_by`, `extra_points`,
+`until` (empty: until revoked), `reason`, `revoked_at`, `revoked_by`. Rows are never deleted, so
+the table is the audit log of every override.
 
 **`limit_reset_event`** (one automatic redemption; kept after the account is removed)
 `id`, `account_id`, `provider`, `triggered_by` (the member whose request found every account
@@ -365,7 +367,7 @@ Where this section is silent, the engine does the following:
   Haiku for Anthropic, Flash for Z.ai, Luna for OpenRouter (the newest of the family, as the
   default system model is found). The `mologate.worker_models` setting, `{provider: family}`,
   changes them. A worker model asked for within the share is plain pool use.
-- Credits (Phase 5) and overrides (Phase 4) are zero until those phases.
+- Credits are zero until Phase 5. Overrides in force add their points to `extra_u` (§7.7).
 
 `utils/allowance_gate.py` runs it on every request a provider account serves, beside the
 request: it never slows or fails one. The pool's numbers are shared for 15 seconds. The decision
@@ -387,6 +389,63 @@ refused; Dan, who works without a break, got about 570 big-model requests within
 her share; Ann used her reserve, then the pool; Bob's own Pro account always had room. Throughout,
 big models went to the pool only within the share, the pool never took more than one request
 from an owner's locked reserve, and an owner with reserve left always got it.
+
+### 7.7 Enforcement (Phase 4)
+
+With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_proxy.py`,
+`enforced_completion`) decides each request before sending it and serves it as decided.
+`observe` works exactly as in Phase 3.
+
+- **Account order:** the decision lists every account that can serve its tier, the decided one
+  first (`Decision.candidates`), then the others by room for their size. Accounts known to be
+  empty go last, as before.
+- **Failover within a tier:** an account that answers 429 or a limit error is left out
+  (`Request.exclude`) and the request is decided again. It moves to another account in the same
+  tier, or to the next tier when none is left: an owner whose own account is rate-limited goes to
+  the pool. An account it found used up is never tried again for that request.
+- **Worker swap:** at tier 4 the request is sent with the provider's worker model and the member
+  is told, as a status line under the reply ("Your share is used up, so this reply uses GPT Luna.
+  Resets in 3 h 12 min."). API clients get the same text as `mologate.notice` in the answer, or
+  the `X-Mologate-Notice` header of a stream. The reset time is the first reset of a window the
+  member has used up. A model no account has room for, within the share, says so instead.
+- **Tier 5:** a 429 that says when the first account frees up and, when one has room, names a
+  worker model on another provider ("The team's shared ChatGPT accounts have no room left for you
+  right now. The first one frees up in 3 h 12 min. Meanwhile, pick Claude Haiku 5.5 (Anthropic):
+  it still has room."). An automatic reset (§10) is tried first, but only for accounts the
+  provider itself reported used up: the rules' own limits, such as an owner's locked reserve, are
+  not lifted by a coupon. When every account failed for lack of credit, the 402 from §10 stays.
+- **Ledger:** an enforced request's rows carry the decided tier in `tier`, the model actually
+  served in `model_id`, and the decision with `mode: enforce`.
+- **Per-account concurrency cap** (`utils/account_slots.py`): one account serves at most
+  `mologate.max_account_requests` requests at once (default 4, hard cap 20; admins set it under
+  Settings → General, env `MOLOGATE_MAX_ACCOUNT_REQUESTS`). A request holds its slot until its
+  answer, or its stream, ends. When the decided account is full, the request goes to the next
+  account of its tier; when all are full, it waits up to 2 minutes and is then refused as busy.
+  Slots are leases in Redis (memory without it), renewed while held. `observe` counts them and
+  logs a request that would have waited, but never waits.
+- **Failing open:** a decision that cannot be made within 10 seconds, or unreadable settings, let
+  the request go ahead as in `observe`; a broken gate never stops the team's work (§1).
+- **Overrides** (`limit_override`, §6): admins grant a member, or the whole team, extra pool
+  points until a date or until revoked, with a reason (Settings → Provider accounts →
+  Overrides; `GET`, `POST /api/v1/provider-accounts/overrides`, `DELETE …/overrides/{id}`). Points
+  in force add `extra_points / 100 × C` to the member's extra in every window, the same as
+  credits, so past the share an override puts them in tier 3. Revoked and ended overrides stay
+  listed with who granted and revoked them.
+- **What the member sees:** `GET /api/v1/models/model/limits` adds `allowance` for an account
+  model: the tier their next request would get, the model it would use, their credits, and per
+  window their share, extra, use, what is left, when it frees up and, at the last 30 minutes'
+  pace, about how many minutes of work are left. The context indicator's panel shows it under
+  "Fair use" beside the account windows, and the warning above the message box starts at 80% of
+  the share ("Weekly share: 84% used, about 40m of work at the recent pace. It frees up in 2d
+  3h.") and says when replies use a worker model. A member on their own account gets no share
+  warning: they are not drawing on the pool.
+- **Tested** (`test/limits/test_allowance.py`): `EnforceTests` runs the real proxy in `enforce`
+  with two keys and three members: the owner on their own account, the worker swap and its
+  notice, failover within the pool tier and from a limited own account to the pool, tier 5 with
+  its reset time and a worker on another provider, the per-account cap handing a request on and
+  then refusing it as busy, a stream holding its slot to the end, a broken gate, overrides, the
+  member's standing and observe unchanged. The simulated week now also fails one request in 20
+  over: it never returns to an account that refused it and never moves to an earlier tier.
 
 ---
 
@@ -413,7 +472,7 @@ from an owner's locked reserve, and an owner with reserve left always got it.
   pace, give the minutes of work left (`limit_outlook` in `utils/provider_limits.py`, returned by
   `GET /api/v1/models/model/limits`). A window is low at 20% left or an hour of work, critical at
   10% or 15 minutes, unless it resets first. The chat shows it above the message box
-  (`LimitsWarning.svelte`) and on the limits ring.
+  (`LimitsWarning.svelte`), and the context indicator's panel shows the account windows.
 - **Readings (implemented, `utils/metering.py`):** every reading of an account's 5-hour and
   weekly windows, from answer headers, codex-lb's account summary or Z.ai's quota endpoint,
   updates `account_window` and, when the window rose or started a new period, adds an
@@ -676,20 +735,26 @@ acceptance check is two real Codex accounts serving chats.
 
 ### Phase 4: enforcement
 
-- [ ] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
-- [ ] Failover on 429 or limit errors to another account in the same tier. Account-level
-      failover already ships with §10; tier-aware selection remains.
+**Built: 2026-10-14** (§7.7). Waiting for `enforce` on the deployed site.
+
+- [x] Gate on: tiers, account choice, worker swap with a notice, limit errors with reset times.
+      Done: in `enforce` the request is decided first and served as decided; past the share the
+      reply uses the worker model and says so; tier 5 answers with when the pool frees up and a
+      worker on another provider.
+- [x] Failover on 429 or limit errors to another account in the same tier. Done: the account
+      is left out and the request decided again, so it stays in its tier while one is left.
 - [x] Per-user concurrency cap (3 chats generating, from ROADMAP.md): `utils/chat_slots.py`.
       Past the cap a chat waits in line and shows its place; sub-agents, background results,
       timers, automations and channel replies take no slot. Admins set it under Settings →
       General (hard cap 10). It waits only in `enforce`; `observe` logs a chat that would have.
-- [ ] Per-account concurrency cap.
-- [ ] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
-      the share with an estimate of minutes left from the last 30 minutes of use. Started: the
-      limits ring beside the model selector shows the account windows of every account that can
-      serve the model and warns, with minutes left at the last 30 minutes' pace, when they run
-      low (§8). Tier, share and credits need the allowance engine.
-- [ ] Admin and team overrides (`limit_override`), with an audit log.
+- [x] Per-account concurrency cap. Done: `utils/account_slots.py`, 4 requests per account at
+      once by default (admins change it under Settings → General).
+- [x] Context indicator shows tier, share left, credits and the account windows; warning at 80% of
+      the share with an estimate of minutes left from the last 30 minutes of use. Done: "Fair
+      use" in the context indicator's panel (the limits ring was folded into the panel in
+      PR #7), and the share warning above the message box.
+- [x] Admin and team overrides (`limit_override`), with an audit log. Done: Settings → Provider
+      accounts → Overrides, for admins; revoked overrides stay listed.
 - [ ] Done when: in `enforce`, the §7.5 scenarios behave as written on the deployed site.
 
 ### Phase 5: credits and resets
@@ -788,6 +853,11 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   accounts become shared. Owners keep their reserve and can pause their account. A member's own
   account is used first. API keys earn credits by the dollars actually spent through them, by
   anyone, for their owner (0.5 per dollar); free keys and free models earn none.
+- 2026-10-14: Phase 4 choices where the spec was silent: failover re-decides without the account
+  that refused, so a request may move to a later tier (an owner's limited account sends them to
+  the pool); a coupon reset is tried at tier 5 only for accounts the provider reported used up;
+  a team override is a `limit_override` without a member and applies to everyone; a request
+  waits up to 2 minutes for a busy account; a gate that cannot decide lets the request through.
 - 2026-10-11: the staging server was removed; the VPS hosts production only. The VPS port-check
   workflow and the original project plan (`PLAN.md`) were removed from the repository.
 

@@ -852,7 +852,17 @@ async def get_model_limits(request: Request, id: str, user=Depends(get_verified_
         windows = (snapshots[-1] or {}).get('windows', [])
         pool.append({'weight': weight, 'windows': windows, 'rates': await account_rates(redis, account_id)})
     snapshot = snapshots[0] or {'windows': [], 'updated_at': None}
-    return {**snapshot, 'account': about, 'accounts': len(entries), 'outlook': limit_outlook(pool)}
+    result = {**snapshot, 'account': about, 'accounts': len(entries), 'outlook': limit_outlook(pool)}
+    if base_model_id.startswith('account:'):
+        # Mologate: the member's share of the team pool for this model (phase 4).
+        from open_webui.utils import allowance_gate
+        from open_webui.utils.provider_accounts import split_model_id
+
+        try:
+            result['allowance'] = await allowance_gate.standing(user, *split_model_id(base_model_id))
+        except Exception as e:
+            log.debug('No allowance for the limits panel: %s', e)
+    return result
 
 
 ###########################

@@ -123,6 +123,8 @@ ADMIN_CONFIG_KEYS = {
     'AUTOMATION_MIN_INTERVAL': 'automations.min_interval',
     # Mologate: chats one member can have generating at once (utils/chat_slots.py).
     'MAX_CONCURRENT_CHATS': 'mologate.max_concurrent_chats',
+    # Mologate: requests one provider account serves at once (utils/account_slots.py).
+    'MAX_ACCOUNT_REQUESTS': 'mologate.max_account_requests',
     'ENABLE_AUTOMATIONS': 'automations.enable',
     'ENABLE_CHANNELS': 'channels.enable',
     'CHANNEL_MODEL_RESPONSE_MODE': 'channels.model_response_mode',
@@ -1229,6 +1231,7 @@ class AdminConfig(BaseModel):
     AUTOMATION_MAX_COUNT: int | str | None = None
     AUTOMATION_MIN_INTERVAL: int | str | None = None
     MAX_CONCURRENT_CHATS: int | None = None
+    MAX_ACCOUNT_REQUESTS: int | None = None
     ENABLE_AUTOMATIONS: bool
     ENABLE_CHANNELS: bool
     CHANNEL_MODEL_RESPONSE_MODE: str = 'thread'
@@ -1288,6 +1291,10 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('mologate.max_concurrent_chats', None)
     else:
         updates['mologate.max_concurrent_chats'] = max(1, min(10, form_data.MAX_CONCURRENT_CHATS))
+    if form_data.MAX_ACCOUNT_REQUESTS is None:
+        updates.pop('mologate.max_account_requests', None)
+    else:
+        updates['mologate.max_account_requests'] = max(1, min(20, form_data.MAX_ACCOUNT_REQUESTS))
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:
         updates.pop('ui.default_user_role', None)

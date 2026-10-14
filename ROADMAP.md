@@ -79,8 +79,14 @@ The full design and phased plan for accounts, limits, credits and personal API k
     see their own use under "Your use", admins the calibration report. The allowance engine
     (phase 3) decides every request's tier, account and model, and records it beside the request
     in observe mode; admins see the decisions and a replay of the last days under the rules.
-    Missing: a week of real use to check the fit against the 10% bar and replay the rules,
-    enforcing them with the swap to worker models (phase 4), and credits (phase 5).
+    With `MOLOGATE_LIMITS_MODE=enforce` (phase 4) requests are served as decided: the member's
+    own account first, failing over within their tier; past their share the reply uses the
+    provider's worker model and says so; when the pool has no room, the error says when it frees
+    up and offers a worker on another provider. Each account serves at most 4 requests at once.
+    The context indicator's panel shows the member's tier, share and credits, and the warning
+    above the message box starts at 80% of the share. Admins grant overrides with a reason,
+    kept as an audit log. Missing: a week of real use to check the fit and replay the rules
+    before switching the site to `enforce`, and credits (phase 5).
 - [x] **Per-user concurrency limit:** cap how many chats one user can have generating at the same
       time. Requests over the cap wait in a visible queue. Subagents, workflow agents, background tasks
       and scheduled runs don't count toward it; each is held to its own limits instead. Proposed

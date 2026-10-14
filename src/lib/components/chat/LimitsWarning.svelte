@@ -4,13 +4,16 @@
 	// left, about how many minutes of work that is at the recent pace, and when it resets
 	// (utils/provider_limits.py, `outlook`). The context indicator loads the limits; this reads
 	// them from the same store. A dismissed warning comes back when it gets
-	// worse or the window resets.
+	// worse or the window resets. Mologate, phase 4: it also warns from 80% of the member's own
+	// share of the team pool, and says when their replies use a worker model.
 	import { getContext } from 'svelte';
 	import { slide } from 'svelte/transition';
 
 	import { modelLimits } from '$lib/stores';
 	import {
 		lowWindows,
+		shareWarnings,
+		shareWarningText,
 		stillDismissed,
 		warningText,
 		type DismissedWarning,
@@ -40,11 +43,24 @@
 	$: modelId = selectedModels?.[0] ?? '';
 	$: t = (key: string, values?: Record<string, string | number>) => $i18n.t(key, values);
 	$: outlook = $modelLimits.modelId === modelId ? ($modelLimits.limits?.outlook ?? []) : [];
-	$: shown = lowWindows(outlook).filter(
-		(item) => !stillDismissed(item, dismissed[`${modelId}:${item.id}`])
-	);
+	// Mologate: the member's own share of the team pool warns too, from 80% of it (phase 4).
+	$: allowance = $modelLimits.modelId === modelId ? ($modelLimits.limits?.allowance ?? null) : null;
+	$: shown = [
+		...shareWarnings(allowance).map((item) => ({
+			id: item.id,
+			level: (item.level === 'empty' ? 'critical' : 'low') as Outlook['level'],
+			resets_at: item.resets_at,
+			text: shareWarningText(item, allowance!, t)
+		})),
+		...lowWindows(outlook).map((item) => ({
+			id: item.id,
+			level: item.level,
+			resets_at: item.resets_at,
+			text: warningText(item, t)
+		}))
+	].filter((item) => !stillDismissed(item, dismissed[`${modelId}:${item.id}`]));
 
-	const dismiss = (item: Outlook) => {
+	const dismiss = (item: { id: string; level: Outlook['level']; resets_at: number | null }) => {
 		const now = Date.now() / 1000;
 		dismissed = Object.fromEntries(
 			Object.entries({
@@ -82,7 +98,7 @@
 						clip-rule="evenodd"
 					/>
 				</svg>
-				<span class="min-w-0 flex-1 leading-4">{warningText(item, t)}</span>
+				<span class="min-w-0 flex-1 leading-4">{item.text}</span>
 				<button
 					type="button"
 					class="-m-1 shrink-0 rounded-md p-1 opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"

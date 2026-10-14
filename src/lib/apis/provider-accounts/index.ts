@@ -119,3 +119,20 @@ export const providerAccountRequest = async <T>(
 	}
 	return response.json();
 };
+
+// Mologate: extra pool points an admin grants a member or the whole team (phase 4). Revoked
+// ones stay listed: the list is the audit log.
+export type LimitOverride = {
+	id: string;
+	user_id: string | null;
+	user_name: string;
+	granted_by: string;
+	granted_by_name: string;
+	extra_points: number;
+	until: number | null;
+	reason: string;
+	revoked_at: number | null;
+	revoked_by: string | null;
+	revoked_by_name: string | null;
+	created_at: number;
+};

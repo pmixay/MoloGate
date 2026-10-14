@@ -86,8 +86,10 @@ class Meter:
         self.chat_id = metadata.get('chat_id') or None
         self.request_id = metadata.get('message_id') or None
         self.rows = 0
-        # Mologate: the allowance engine's decision, computed beside the request (phase 3).
+        # Mologate: the allowance engine's decision, computed beside the request (phase 3), or
+        # before it and acted on (phase 4, enforce: then `tier` is the decision's tier).
         self.decision = None
+        self.tier = None
 
     def record(self, account, status: str, usage: dict | None = None) -> None:
         self.rows += 1
@@ -101,8 +103,8 @@ class Meter:
             provider=account.provider,
             model_id=self.model_id,
             source=self.source,
-            # Observe: who the account belongs to, until the allowance engine assigns tiers.
-            tier='reserve' if account.owner_user_id == self.user_id else 'pool',
+            # Enforce: the tier the request was served in. Observe: whose account served it.
+            tier=self.tier or ('reserve' if account.owner_user_id == self.user_id else 'pool'),
             input_tokens=numbers['input_tokens'],
             output_tokens=numbers['output_tokens'],
             cached_tokens=numbers['cached_tokens'],

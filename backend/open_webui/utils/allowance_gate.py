@@ -1,10 +1,15 @@
-"""Mologate: the allowance gate, phase 3: decide every request and record it (observe).
+"""Mologate: the allowance gate: decide every request, record it, and in ``enforce`` act on it.
 
 Each request to a provider account is decided by the allowance engine (utils/allowance.py) from
 what metering knows: every account window's latest reading and each member's tokens and outside
 use since the window last reset (utils/metering.py, the usage ledger). The decision is written on
-the request's ledger rows. Nothing is blocked, swapped or delayed: enforcing the decisions is
-phase 4. Deciding runs beside the request and never slows or fails it.
+the request's ledger rows.
+
+In ``observe`` (phase 3) nothing is blocked, swapped or delayed: deciding runs beside the request
+and never slows or fails it. In ``enforce`` (phase 4) the account proxy decides first and serves
+the request as decided (utils/provider_account_proxy.py): the decided account, failing over to
+the others of the same tier, the worker model past the share, and a limit error when the pool is
+empty. A decision that cannot be made in time lets the request go ahead as in observe.
 
 ``replay`` decides a stretch of past requests again, as the rules would have, for the admin
 report (docs/limits-and-accounts.md, Phase 3).
@@ -19,6 +24,7 @@ from open_webui.models.metering import Metering
 from open_webui.models.provider_accounts import ProviderAccounts
 from open_webui.models.usage_events import UsageEvents
 from open_webui.utils import allowance, metering
+from open_webui.utils import calibration as fitting
 from open_webui.utils.model_ids import _family_rank, find_latest_model_in_family, normalize_model_name
 from open_webui.utils.provider_limits import period_start
 
@@ -96,13 +102,15 @@ async def pool_snapshot(provider: str, now: float | None = None) -> dict:
         for name in account.windows:
             if name == 'budget':
                 since, current = period_start('monthly', now), None
+                # A budget starts over with the month.
+                resets_at = period_start('monthly', since + 32 * 86400)
             else:
                 current = latest.get((account.id, name))
                 since = metering.window_since(current, name, now)
             usage = await UsageEvents.tokens_by_user_model(account.id, since)
             periods.setdefault(account.id, {})[name] = allowance.Period(
                 used=current.used_percent if current is not None else None,
-                resets_at=current.resets_at if current is not None else None,
+                resets_at=resets_at if name == 'budget' else current.resets_at if current is not None else None,
                 tokens=usage['tokens'],
                 cost=usage['cost'],
                 outside=await UsageEvents.outside_by_user(account.id, name, since) if name != 'budget' else {},
@@ -125,8 +133,16 @@ async def pool_snapshot(provider: str, now: float | None = None) -> dict:
     return snapshot
 
 
-async def decide(user_id: str, provider: str, model: str, chat_id: str | None = None) -> allowance.Decision:
+async def extras(user_id: str) -> tuple[float, float]:
+    """The member's credit balance (phase 5) and their active overrides in pool points (phase 4)."""
+    from open_webui.models.limit_overrides import LimitOverrides
+
+    return 0.0, await LimitOverrides.active_points(user_id)
+
+
+async def member_state(user_id: str, provider: str) -> tuple[dict, allowance.State]:
     snapshot = await pool_snapshot(provider)
+    credits, extra_points = await extras(user_id)
     state = allowance.build_state(
         user_id,
         provider,
@@ -135,17 +151,206 @@ async def decide(user_id: str, provider: str, model: str, chat_id: str | None = 
         snapshot['owner_active'],
         snapshot['members'],
         snapshot['calibrations'],
-        # Credits are phase 5 and overrides phase 4: none yet.
+        credits=credits,
+        extra_points=extra_points,
         worker_models=snapshot['worker_models'],
     )
+    return snapshot, state
+
+
+async def decide(
+    user_id: str, provider: str, model: str, chat_id: str | None = None, exclude: frozenset = frozenset()
+) -> allowance.Decision:
+    snapshot, state = await member_state(user_id, provider)
     request = allowance.Request(
         user_id=user_id,
         provider=provider,
         model=model,
         previous_account=await UsageEvents.last_account(user_id, chat_id) if chat_id else None,
         worker_model=snapshot['worker_model'],
+        exclude=frozenset(exclude),
     )
     return allowance.decide(request, state)
+
+
+async def limits_mode() -> str:
+    """The mode a request is served in. Unreadable settings never stop a request: observe then."""
+    try:
+        return await Config.get('mologate.limits_mode', 'observe')
+    except Exception as e:
+        log.warning('Could not read the limits mode; observing: %s', e)
+        return 'observe'
+
+
+async def decide_now(
+    user_id: str, provider: str, model: str, chat_id: str | None = None, exclude: frozenset = frozenset()
+) -> allowance.Decision | None:
+    """Enforce: decide before the request is sent. None when the engine cannot answer in time; the
+    request then goes ahead as in observe, since a broken gate must not stop the team's work."""
+    try:
+        return await asyncio.wait_for(decide(user_id, provider, model, chat_id, exclude), DECISION_TIMEOUT_SECONDS)
+    except Exception as e:
+        log.warning('Could not decide a request; it goes ahead unenforced: %s', e)
+        return None
+
+
+def wait_text(seconds: float) -> str:
+    """'3 h 12 min', '45 min', '2 d 4 h'."""
+    minutes = max(1, -(-int(seconds) // 60))
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f'{days} d {hours} h' if hours else f'{days} d'
+    if not hours:
+        return f'{minutes} min'
+    return f'{hours} h {minutes} min' if minutes else f'{hours} h'
+
+
+def model_name(model_id: str, rows: list) -> str:
+    """A model's display name from the accounts' catalogs, else its id."""
+    for row in rows:
+        for model in row.models or []:
+            if model.get('id') == model_id and model.get('name'):
+                return model['name']
+    return model_id
+
+
+def swap_notice(decision: allowance.Decision, asked: str, rows: list, now: float | None = None) -> str:
+    """What the member reads when their reply uses a worker model instead of the one they picked."""
+    now = time.time() if now is None else now
+    worker = model_name(decision.model, rows)
+    if decision.reason.startswith('No account has room'):
+        return f'No account has room for {model_name(asked, rows)} right now, so this reply uses {worker}.'
+    text = f'Your share is used up, so this reply uses {worker}.'
+    if decision.resets_at and decision.resets_at > now:
+        text += f' Resets in {wait_text(decision.resets_at - now)}.'
+    return text
+
+
+PROVIDER_NAMES = {
+    'codex': 'ChatGPT',
+    'openai_api': 'OpenAI',
+    'anthropic_api': 'Anthropic',
+    'openrouter': 'OpenRouter',
+    'zai': 'Z.ai',
+}
+
+
+async def worker_elsewhere(user, provider: str) -> tuple[str, str] | None:
+    """A worker model on another provider that would serve the member now: (model id, its name)."""
+    from open_webui.utils.provider_accounts import can_use, model_id
+
+    rows = await ProviderAccounts.list()
+    for other in sorted({row.provider for row in rows} - {provider}):
+        usable = [row for row in rows if row.provider == other and can_use(row, user)]
+        if not usable:
+            continue
+        worker, _ = await worker_models(other, [to_account(row) for row in usable])
+        if not worker:
+            continue
+        decision = await decide_now(user.id, other, worker)
+        if decision is not None and decision.tier != 'empty' and decision.model == worker:
+            return model_id(other, worker), f'{model_name(worker, usable)} ({PROVIDER_NAMES.get(other, other)})'
+    return None
+
+
+async def empty_error(user, provider: str, decision: allowance.Decision, now: float | None = None) -> str:
+    """Tier 5: the pool has no room. When it frees up, and a worker on another provider meanwhile."""
+    now = time.time() if now is None else now
+    name = PROVIDER_NAMES.get(provider, provider)
+    text = f"The team's shared {name} accounts have no room left for you right now."
+    if decision.resets_at and decision.resets_at > now:
+        text += f' The first one frees up in {wait_text(decision.resets_at - now)}.'
+    try:
+        elsewhere = await worker_elsewhere(user, provider)
+    except Exception as e:
+        log.debug('Could not find a worker on another provider: %s', e)
+        elsewhere = None
+    if elsewhere:
+        text += f' Meanwhile, pick {elsewhere[1]}: it still has room.'
+    return text
+
+
+# Section 8's pace: the last 30 minutes of the member's use, counted from their first request in
+# it (at least 5 minutes, so one request does not read as a sprint).
+PACE_SECONDS = 30 * 60
+MIN_PACE_SECONDS = 5 * 60
+# The share warning starts at 80% of it.
+WARN_SHARE = 0.8
+
+
+def _weighted(tokens: dict) -> float:
+    """Tokens weighted by typical price ratios, the same as metering's before calibration."""
+    return fitting._dot(fitting.PRIOR, fitting.features(tokens))
+
+
+async def standing(user, provider: str, model: str, now: float | None = None) -> dict:
+    """The member's place in the pool for a model, for the context indicator and the warning.
+
+    Per window: their share and extra, what they used, what is left, the level (`ok`, `low` from
+    80% of share and extra, `empty`), when it frees up and, at the last 30 minutes' pace, about how
+    many minutes of work are left. Also the tier their next request would get and their credits.
+    """
+    now = time.time() if now is None else now
+    snapshot, state = await member_state(user.id, provider)
+    decision = allowance.decide(
+        allowance.Request(user.id, provider, model, worker_model=snapshot['worker_model']), state
+    )
+    own = {account.id for account in snapshot['accounts'] if account.owner == user.id}
+    # The member's tokens (or dollars, for a budget) in each window's period, and in the last 30 minutes.
+    period_amount: dict = {}
+    for account_id, windows in snapshot['periods'].items():
+        if account_id in own:
+            continue
+        for name, period in windows.items():
+            if name == 'budget':
+                amount = period.cost.get(user.id, 0.0)
+            else:
+                amount = sum(_weighted(tokens) for tokens in period.tokens.get(user.id, {}).values())
+            period_amount[name] = period_amount.get(name, 0.0) + amount
+    recent = [
+        row
+        for row in await UsageEvents.member_tokens(user.id, int(now - PACE_SECONDS))
+        if row['provider'] == provider and row['account_id'] not in own
+    ]
+    rows = {row.id: row for row in await ProviderAccounts.list() if row.provider == provider}
+    windows = {}
+    for name, item in decision.windows.items():
+        allowed = item['share'] + item['extra']
+        percent = item['used'] / allowed * 100 if allowed > 0 else 100.0
+        level = 'empty' if item['left'] <= 0 else 'low' if percent >= WARN_SHARE * 100 else 'ok'
+        resets = [
+            window.resets_at
+            for account_windows in state.windows.values()
+            for window_name, window in account_windows.items()
+            if window_name == name and window.resets_at and window.resets_at > now
+        ]
+        minutes_left = None
+        if recent and period_amount.get(name):
+            amount = sum((row['cost'] or 0.0) if name == 'budget' else _weighted(row) for row in recent)
+            used_recently = item['used'] * min(1.0, amount / period_amount[name])
+            span = max(MIN_PACE_SECONDS, now - min(row['ts'] for row in recent)) / 60
+            if used_recently > 0:
+                minutes_left = max(0, round(max(0.0, item['left']) / (used_recently / span)))
+        windows[name] = {
+            **item,
+            'percent': round(min(100.0, max(0.0, percent)), 1),
+            'level': level,
+            'resets_at': min(resets) if resets else None,
+            'minutes_left': minutes_left,
+        }
+    credits, extra_points = await extras(user.id)
+    return {
+        'mode': await limits_mode(),
+        'tier': decision.tier,
+        'model': decision.model,
+        'model_name': model_name(decision.model, list(rows.values())),
+        'swapped': decision.swapped,
+        'reason': decision.reason,
+        'credits': round(credits, 2),
+        'extra_points': extra_points,
+        'windows': windows,
+    }
 
 
 async def _observe(user_id: str, provider: str, model: str, chat_id: str | None) -> dict | None:
@@ -172,9 +377,9 @@ def observe(user, provider: str, model: str, metadata: dict | None) -> asyncio.T
     return task
 
 
-async def decision_of(task: asyncio.Task | None) -> dict | None:
-    if task is None:
-        return None
+async def decision_of(task: asyncio.Task | dict | None) -> dict | None:
+    if task is None or isinstance(task, dict):
+        return task
     try:
         return await asyncio.wait_for(asyncio.shield(task), DECISION_TIMEOUT_SECONDS)
     except Exception:

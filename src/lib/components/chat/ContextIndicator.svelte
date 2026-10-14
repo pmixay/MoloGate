@@ -3,7 +3,8 @@
 	// how full the selected model's context window is; opening it shows what fills the window
 	// (see utils/contextBreakdown.ts) and the usage limits the model's provider account reported
 	// (utils/provider_limits.py on the server). The limits go to a store, so the low-limit
-	// warning above the message box (LimitsWarning) reads them from here too.
+	// warning above the message box (LimitsWarning) reads them from here too. Mologate, phase 4:
+	// the panel also shows the member's share of the team pool, their tier and credits.
 	import { getContext, onMount, tick } from 'svelte';
 	import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom';
 
@@ -17,7 +18,12 @@
 	} from '$lib/utils/contextBreakdown';
 	import { flyAndScale } from '$lib/utils/transitions';
 
-	import { formatPercent } from '$lib/utils/providerLimits';
+	import {
+		formatDuration,
+		formatPercent,
+		shareWindowName,
+		tierLabel
+	} from '$lib/utils/providerLimits';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import ProviderLimitsList from './ProviderLimitsList.svelte';
@@ -122,6 +128,10 @@
 	});
 
 	$: limits = $modelLimits.modelId === modelId ? $modelLimits.limits : null;
+	$: allowance = limits?.allowance && limits.allowance.mode !== 'off' ? limits.allowance : null;
+	$: t = (key: string, values?: Record<string, string | number>) => $i18n.t(key, values);
+	const shareLevel = (level: string) =>
+		level === 'empty' ? 'critical' : level === 'low' ? 'warning' : 'normal';
 
 	const portal = (node: HTMLElement) => {
 		document.body.appendChild(node);
@@ -330,6 +340,63 @@
 						{/if}
 					</div>
 
+					{#if allowance}
+						<!-- Mologate: the member's share of the team pool (docs/limits-and-accounts.md §7). -->
+						<div class="h-px bg-gray-100 dark:bg-gray-800"></div>
+
+						<div class="flex flex-col gap-2">
+							<div class="flex items-baseline justify-between gap-3">
+								<div class="text-[13px] font-medium text-gray-900 dark:text-gray-100">
+									{$i18n.t('Fair use')}
+								</div>
+								<div class="truncate text-[11.5px] text-gray-500 dark:text-gray-400">
+									{tierLabel(allowance, t)}
+								</div>
+							</div>
+							{#each Object.entries(allowance.windows) as [name, window] (name)}
+								<div class="flex flex-col gap-1">
+									<div class="flex items-baseline justify-between gap-3 text-[12px]">
+										<span>{shareWindowName(name, t)}</span>
+										<span class="font-mono"
+											>{$i18n.t('{{PERCENT}} used', {
+												PERCENT: formatPercent(window.percent)
+											})}</span
+										>
+									</div>
+									<div class="ring-track-fill h-1.5 w-full overflow-hidden rounded-full">
+										<div
+											class="h-full rounded-full bar-{shareLevel(window.level)}"
+											style="width: {Math.min(100, window.percent)}%"
+										></div>
+									</div>
+									{#if window.resets_at || window.minutes_left !== null}
+										<div class="text-[11px] text-gray-500 dark:text-gray-400">
+											{#if window.minutes_left !== null && window.level !== 'empty'}
+												{$i18n.t('About {{DURATION}} of work left at the recent pace.', {
+													DURATION: formatDuration(window.minutes_left * 60)
+												})}
+											{/if}
+											{#if window.resets_at}
+												{$i18n.t('Frees up in {{DURATION}}.', {
+													DURATION: formatDuration(window.resets_at - Date.now() / 1000)
+												})}
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/each}
+							<div class="flex items-baseline justify-between gap-3 text-[12px]">
+								<span>{$i18n.t('Credits')}</span>
+								<span class="font-mono">{allowance.credits}</span>
+							</div>
+							{#if allowance.swapped}
+								<div class="text-[11.5px] text-gray-500 dark:text-gray-400">
+									{$i18n.t('Replies use {{MODEL}}.', { MODEL: allowance.model_name })}
+								</div>
+							{/if}
+						</div>
+					{/if}
+
 					{#if limits?.windows?.length}
 						<div class="h-px bg-gray-100 dark:bg-gray-800"></div>
 
@@ -409,5 +476,14 @@
 	}
 	.ring-critical {
 		stroke: var(--critical);
+	}
+	.bar-normal {
+		background: var(--value);
+	}
+	.bar-warning {
+		background: var(--warning);
+	}
+	.bar-critical {
+		background: var(--critical);
 	}
 </style>

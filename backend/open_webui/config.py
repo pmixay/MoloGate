@@ -3151,6 +3151,9 @@ DEFAULT_CONFIG = {
     'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
     # Mologate: chats one member can have generating at once (hard cap 10; utils/chat_slots.py).
     'mologate.max_concurrent_chats': int(os.getenv('MOLOGATE_MAX_CONCURRENT_CHATS', '3')),
+    # Mologate: requests one provider account serves at once, to keep it at a person's pace (hard
+    # cap 20; utils/account_slots.py).
+    'mologate.max_account_requests': int(os.getenv('MOLOGATE_MAX_ACCOUNT_REQUESTS', '4')),
     # Mologate: each chat's own container, on these container nodes (docs/container-nodes.md).
     'containers.enable': os.getenv('MOLOGATE_CONTAINERS', 'True').lower() == 'true',
     'containers.nodes': MOLOGATE_CONTAINER_NODES,

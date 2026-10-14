@@ -73,6 +73,9 @@ class Request:
     previous_account: str | None = None
     # The provider's worker model, swapped in at tier 4.
     worker_model: str | None = None
+    # Accounts this request already tried and found used up or rate-limited (phase 4 failover):
+    # they still count towards the pool's size, but are not chosen again.
+    exclude: frozenset = frozenset()
 
 
 @dataclass
@@ -99,6 +102,11 @@ class Decision:
     reason: str
     # Per window: pool capacity, the requester's share, extra, use and what is left.
     windows: dict = field(default_factory=dict)
+    # Every account that can serve this tier, the chosen one first: where the request fails over
+    # to when an account turns out to be used up or busy (phase 4).
+    candidates: tuple = ()
+    # When the share that ran out (worker tier) or the first account (empty) frees up again.
+    resets_at: int | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -108,6 +116,7 @@ class Decision:
             'swapped': self.swapped,
             'reason': self.reason,
             'windows': self.windows,
+            'resets_at': self.resets_at,
         }
 
 
@@ -190,14 +199,46 @@ def pool_numbers(state: State, provider: str) -> dict:
     return numbers
 
 
-def _pick(candidates: list, previous: str | None, room) -> Account | None:
-    """The chat's previous account when it qualifies, else the one with the most room for its size."""
-    if not candidates:
-        return None
-    for account in candidates:
-        if account.id == previous:
-            return account
-    return max(candidates, key=lambda account: (room(account) * (account.weight or 1.0), account.id))
+def _rank(candidates: list, previous: str | None, room) -> list:
+    """The chat's previous account first when it qualifies, then the most room for its size."""
+    ranked = sorted(candidates, key=lambda account: (-room(account) * (account.weight or 1.0), account.id))
+    ranked.sort(key=lambda account: account.id != previous)
+    return ranked
+
+
+def _decision(tier, ranked, model, swapped, reason, numbers, resets_at=None) -> Decision:
+    return Decision(
+        tier,
+        ranked[0].id if ranked else None,
+        model,
+        swapped,
+        reason,
+        numbers,
+        tuple(account.id for account in ranked),
+        resets_at,
+    )
+
+
+def _share_resets_at(state: State, accounts: list, numbers: dict) -> int | None:
+    """When the requester's share frees up: the first reset of a window they have used up."""
+    full = {name for name, item in numbers.items() if item['used'] >= item['share'] + item['extra']}
+    times = [
+        window.resets_at
+        for account in accounts
+        for name, window in state.windows.get(account.id, {}).items()
+        if name in full and window.resets_at
+    ]
+    return min(times) if times else None
+
+
+def _pool_resets_at(accounts: list, windows_of) -> int | None:
+    """When the first account the pool may use has room again: once every window it is full in resets."""
+    times = []
+    for account in accounts:
+        full = [window for window in windows_of(account).values() if 100.0 - lock(account, window) - window.used <= 0]
+        if full and all(window.resets_at for window in full):
+            times.append(max(window.resets_at for window in full))
+    return min(times) if times else None
 
 
 def decide(request: Request, state: State) -> Decision:
@@ -211,26 +252,28 @@ def decide(request: Request, state: State) -> Decision:
         return windows
 
     numbers = pool_numbers(state, request.provider)
+    # Accounts this request already found used up are tried no more.
+    usable = [account for account in accounts if account.id not in request.exclude]
 
     # 1. Reserve: the requester's own account, within their half.
     own = [
         account
-        for account in accounts
+        for account in usable
         if account.owner == request.user_id
         and account.status == 'ok'
         and account.sharing != 'paused'
         and serves(account, request.model)
         and owner_room(account, windows_of(account)) > 0
     ]
-    if account := _pick(own, request.previous_account, lambda item: owner_room(item, windows_of(item))):
-        return Decision('reserve', account.id, request.model, False, 'Your own account.', numbers)
+    if ranked := _rank(own, request.previous_account, lambda item: owner_room(item, windows_of(item))):
+        return _decision('reserve', ranked, request.model, False, 'Your own account.', numbers)
 
     # Accounts the pool may still use: shared and healthy (one cooling down counts towards the
     # pool's size but is not chosen). An owner past their half draws on the pool like anyone,
     # their own account included.
     open_accounts = [
         account
-        for account in accounts
+        for account in usable
         if account.sharing == 'shared' and account.status == 'ok' and pool_room(account, windows_of(account)) > 0
     ]
 
@@ -239,31 +282,50 @@ def decide(request: Request, state: State) -> Decision:
 
     within_share = all(item['used'] < item['share'] for item in numbers.values())
     within_extra = all(item['used'] < item['share'] + item['extra'] for item in numbers.values())
-    for_model = [account for account in open_accounts if serves(account, request.model)]
+    for_model = _rank(
+        [account for account in open_accounts if serves(account, request.model)], request.previous_account, room
+    )
 
     # 2. Pool, and 3. credit: any model.
-    if within_share and (account := _pick(for_model, request.previous_account, room)):
-        return Decision('pool', account.id, request.model, False, 'Within your share of the team pool.', numbers)
-    if within_extra and (account := _pick(for_model, request.previous_account, room)):
-        return Decision('credit', account.id, request.model, False, 'Past your share: uses your credits.', numbers)
+    if within_share and for_model:
+        return _decision('pool', for_model, request.model, False, 'Within your share of the team pool.', numbers)
+    if within_extra and for_model:
+        return _decision('credit', for_model, request.model, False, 'Past your share: uses your credits.', numbers)
 
     # 4. Worker: past the share, or no room left for the model asked for.
     worker = request.model if request.model in state.worker_models else request.worker_model
-    if worker and (
-        account := _pick(
-            [account for account in open_accounts if serves(account, worker)], request.previous_account, room
-        )
-    ):
+    for_worker = (
+        _rank([account for account in open_accounts if serves(account, worker)], request.previous_account, room)
+        if worker
+        else []
+    )
+    if for_worker:
         swapped = worker != request.model
+        resets_at = _share_resets_at(state, accounts, numbers) if not within_extra else None
         reason = (
             f'Your share of the pool is used up, so this reply uses {worker}.'
             if not within_extra
             else f'No account has room for {request.model}, so this reply uses {worker}.'
         )
-        return Decision('worker', account.id, worker, swapped, reason if swapped else 'A worker model.', numbers)
+        return _decision(
+            'worker', for_worker, worker, swapped, reason if swapped else 'A worker model.', numbers, resets_at
+        )
 
     # 5. Empty.
-    return Decision('empty', None, request.model, False, 'Every shared account of this provider is used up.', numbers)
+    pooled = [
+        account
+        for account in accounts
+        if account.sharing == 'shared' and account.status in POOLED_STATUSES and serves(account, request.model)
+    ]
+    return _decision(
+        'empty',
+        [],
+        request.model,
+        False,
+        'Every shared account of this provider is used up.',
+        numbers,
+        _pool_resets_at(pooled, windows_of),
+    )
 
 
 def _active(window: Window) -> Window:

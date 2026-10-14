@@ -139,6 +139,7 @@ export type ModelLimits = {
 	account?: { label: string; provider: string; plan: string } | null;
 	accounts?: number;
 	outlook?: Outlook[];
+	allowance?: Allowance | null;
 };
 
 export const OUTLOOK_LEVELS: Outlook['level'][] = ['ok', 'low', 'critical', 'empty'];
@@ -186,8 +187,104 @@ export const warningText = (item: Outlook, t: Translate = plainText, now = Date.
 // A dismissed warning stays hidden for that window until it gets worse or the window resets.
 export type DismissedWarning = { level: Outlook['level']; resets_at: number | null };
 
-export const stillDismissed = (item: Outlook, dismissed?: DismissedWarning) =>
+export const stillDismissed = (
+	item: Pick<Outlook, 'level' | 'resets_at'>,
+	dismissed?: DismissedWarning
+) =>
 	!!dismissed &&
 	levelRank(item.level) <= levelRank(dismissed.level) &&
 	// Readings can move the reset time by seconds; a later window starts the warning over.
 	Math.abs((item.resets_at ?? 0) - (dismissed.resets_at ?? 0)) < 300;
+
+// Mologate: the member's share of the team pool for the selected model (phase 4; `allowance` from
+// GET /models/model/limits). A window warns from 80% of the share and is empty past it.
+export type ShareWindow = {
+	capacity: number;
+	share: number;
+	extra: number;
+	used: number;
+	left: number;
+	percent: number;
+	level: 'ok' | 'low' | 'empty';
+	resets_at: number | null;
+	minutes_left: number | null;
+};
+
+export type Allowance = {
+	mode: 'off' | 'observe' | 'enforce';
+	tier: 'reserve' | 'pool' | 'credit' | 'worker' | 'empty';
+	model: string;
+	model_name: string;
+	swapped: boolean;
+	reason: string;
+	credits: number;
+	extra_points: number;
+	windows: Record<string, ShareWindow>;
+};
+
+export const shareWindowName = (name: string, t: Translate = plainText) =>
+	name === '5h'
+		? t('5-hour share')
+		: name === 'weekly'
+			? t('Weekly share')
+			: name === 'budget'
+				? t('Monthly share')
+				: name;
+
+export const tierLabel = (allowance: Allowance, t: Translate = plainText) =>
+	({
+		reserve: t('Your own account'),
+		pool: t('Your share of the team pool'),
+		credit: t('Your credits'),
+		worker: t('Worker models only'),
+		empty: t('No room in the pool')
+	})[allowance.tier] ?? allowance.tier;
+
+export type ShareWarning = ShareWindow & { id: string; name: string };
+
+// The share windows worth a warning, the worst first. A member on their own account is not
+// drawing on the pool, so their share needs no warning then.
+export const shareWarnings = (allowance: Allowance | null | undefined): ShareWarning[] =>
+	!allowance || allowance.tier === 'reserve' || allowance.mode === 'off'
+		? []
+		: Object.entries(allowance.windows ?? {})
+				.filter(([, window]) => window.level !== 'ok')
+				.map(([name, window]) => ({ ...window, id: `share:${name}`, name }))
+				.sort((a, b) => b.percent - a.percent);
+
+// "Weekly share: 84% used, about 40m of work at the recent pace. It frees up in 2d 3h."
+export const shareWarningText = (
+	item: ShareWarning,
+	allowance: Allowance,
+	t: Translate = plainText,
+	now = Date.now()
+) => {
+	const values = {
+		WINDOW: shareWindowName(item.name, t),
+		PERCENT: formatPercent(item.percent),
+		DURATION: item.minutes_left !== null ? formatDuration(item.minutes_left * 60) : '',
+		RESET: item.resets_at ? formatDuration(item.resets_at - now / 1000) : '',
+		MODEL: allowance.model_name
+	};
+	if (item.level === 'empty') {
+		if (allowance.tier === 'worker') {
+			return values.RESET
+				? t('{{WINDOW}} is used up, so replies use {{MODEL}}. It frees up in {{RESET}}.', values)
+				: t('{{WINDOW}} is used up, so replies use {{MODEL}}.', values);
+		}
+		return values.RESET
+			? t('{{WINDOW}} is used up. It frees up in {{RESET}}.', values)
+			: t('{{WINDOW}} is used up.', values);
+	}
+	if (item.minutes_left !== null) {
+		return values.RESET
+			? t(
+					'{{WINDOW}}: {{PERCENT}} used, about {{DURATION}} of work at the recent pace. It frees up in {{RESET}}.',
+					values
+				)
+			: t('{{WINDOW}}: {{PERCENT}} used, about {{DURATION}} of work at the recent pace.', values);
+	}
+	return values.RESET
+		? t('{{WINDOW}}: {{PERCENT}} used. It frees up in {{RESET}}.', values)
+		: t('{{WINDOW}}: {{PERCENT}} used.', values);
+};

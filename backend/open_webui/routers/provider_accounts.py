@@ -97,6 +97,15 @@ class AccountUpdateForm(BaseModel):
     plan: Literal['lite', 'pro', 'max'] | None = None
 
 
+class OverrideForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # Empty: the whole team.
+    user_id: str | None = None
+    extra_points: float = Field(gt=0, le=100, allow_inf_nan=False)
+    until: int | None = Field(default=None, gt=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class AutoResetForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
     enabled: bool
@@ -174,6 +183,60 @@ async def allowance_report(days: int = 7, user=Depends(get_admin_user)):
         'decided': await allowance_gate.summary(days),
         'replay': await allowance_gate.replay(days),
     }
+
+
+@router.get('/overrides')
+async def list_overrides(user=Depends(get_admin_user)):
+    """Mologate: every override ever granted, newest first, revoked ones included (the audit log)."""
+    from open_webui.models.limit_overrides import LimitOverrides
+
+    names = {}
+    result = []
+    for item in await LimitOverrides.list():
+        for key in ('user_id', 'granted_by', 'revoked_by'):
+            if item[key] and item[key] not in names:
+                found = await Users.get_user_by_id(item[key])
+                names[item[key]] = found.name if found else 'Former member'
+        result.append(
+            item
+            | {
+                'user_name': names[item['user_id']] if item['user_id'] else 'Team',
+                'granted_by_name': names[item['granted_by']],
+                'revoked_by_name': names.get(item['revoked_by']),
+            }
+        )
+    return {'data': result}
+
+
+@router.post('/overrides')
+async def grant_override(form: OverrideForm, user=Depends(get_admin_user)):
+    """Mologate: extra pool points for a member, or for every member (phase 4)."""
+    from open_webui.models.limit_overrides import LimitOverrides
+
+    if form.user_id and not await Users.get_user_by_id(form.user_id):
+        raise HTTPException(404, 'Member not found.')
+    if form.until is not None and form.until <= time.time():
+        raise HTTPException(400, 'Pick an end in the future.')
+    granted = await LimitOverrides.grant(form.user_id, user.id, form.extra_points, form.until, form.reason.strip())
+    log.info(
+        'Limit override %s: %s extra points for %s, granted by %s.',
+        granted['id'],
+        form.extra_points,
+        form.user_id or 'the team',
+        user.id,
+    )
+    return granted
+
+
+@router.delete('/overrides/{override_id}')
+async def revoke_override(override_id: str, user=Depends(get_admin_user)):
+    from open_webui.models.limit_overrides import LimitOverrides
+
+    revoked = await LimitOverrides.revoke(override_id, user.id)
+    if revoked is None:
+        raise HTTPException(404, 'Override not found.')
+    log.info('Limit override %s revoked by %s.', override_id, user.id)
+    return revoked
 
 
 @router.get('')

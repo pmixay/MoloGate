@@ -37,6 +37,7 @@ from open_webui.models.provider_accounts import (
     seal_secret,
 )
 from open_webui.models.usage_events import UsageEvent
+from open_webui.models.limit_overrides import LimitOverride
 from open_webui.routers import openai, provider_accounts as routes
 from open_webui.utils import codex_accounts, codex_lb, provider_account_proxy as proxy, usage_ledger
 from open_webui.utils.codex_lb import CodexLBError
@@ -70,7 +71,13 @@ OTHER = SimpleNamespace(id='other', role='user', name='Other')
 ADMIN = SimpleNamespace(id='admin', role='admin', name='Admin')
 GENERATED_NAME = re.compile(r'Account #[0-9A-Za-z]{6}')
 CALLBACK = 'http://localhost:1455/auth/callback'
-TABLES = (ProviderLogin.__table__, ProviderAccount.__table__, LimitResetEvent.__table__, UsageEvent.__table__)
+TABLES = (
+    ProviderLogin.__table__,
+    ProviderAccount.__table__,
+    LimitResetEvent.__table__,
+    UsageEvent.__table__,
+    LimitOverride.__table__,
+)
 
 
 def account(**overrides):
