@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { decode } from 'html-entities';
+	import { getToolPreview } from './toolPreview';
+	import ToolElapsed from './ToolElapsed.svelte';
 	import { v4 as uuidv4 } from 'uuid';
 
 	import { getContext } from 'svelte';
@@ -88,26 +90,8 @@
 		}
 	}
 
-	// Mologate: a short live preview of what the tool is doing, Claude-Code style — the first
-	// line of a command (or its main argument for other tools), not just the tool's name.
-	const previewFromArgs = (name: string, args: Record<string, unknown> | null): string => {
-		if (!args) return '';
-		const firstLine = (value: unknown): string => {
-			const text = typeof value === 'string' ? value : '';
-			return text.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
-		};
-		if (typeof args.command === 'string') return firstLine(args.command);
-		if (typeof args.cmd === 'string') return firstLine(args.cmd);
-		for (const key of ['query', 'url', 'path', 'file_path', 'pattern', 'searchQuery']) {
-			if (typeof args[key] === 'string' && (args[key] as string).trim()) {
-				return `${key}: ${firstLine(args[key])}`;
-			}
-		}
-		if (typeof args.task === 'string' && args.task.trim()) return firstLine(args.task);
-		return '';
-	};
-
-	$: toolPreview = previewFromArgs(attributes?.name ?? '', parsedArgs);
+	// Decode independently of the expanded body so collapsed rows have a preview too.
+	$: toolPreview = getToolPreview(parseArguments(decode(attributes?.arguments ?? '')));
 
 	function parseArguments(str: string): Record<string, unknown> | null {
 		try {
@@ -299,28 +283,28 @@
 
 				<!-- Label -->
 				<div class="flex-1 min-w-0 line-clamp-1">
-					<!-- Short label (below md) -->
-					<span class="@md:hidden text-black dark:text-white">{attributes.name}</span>
-					<!-- Full label (md and above) -->
-					<span class="hidden @md:inline font-normal">
-						{#if isRejected}
-							{$i18n.t('Denied {{NAME}}', { NAME: attributes.name })}
-						{:else if isDone}
-							{$i18n.t('View Result from {{NAME}}', { NAME: attributes.name })}
-						{:else if needsInput}
-							{$i18n.t('Input needed')}
-						{:else if needsApproval}
-							{$i18n.t('Allow {{NAME}}?', { NAME: attributes.name })}
-						{:else if isPreparing}
-							{$i18n.t('Preparing {{NAME}}...', { NAME: attributes.name })}
-						{:else if toolPreview}
-							<span class="opacity-60">{$i18n.t('Executing')} </span>{$i18n.t(attributes.name)}
-							<span class="opacity-60">·</span>
-							<code class="font-mono text-[0.9em] px-1 rounded bg-gray-100 dark:bg-gray-800">{toolPreview}</code>
-						{:else}
-							{$i18n.t('Executing {{NAME}}...', { NAME: attributes.name })}
-						{/if}
-					</span>
+					{#if toolPreview && !needsApproval && !needsInput && !isRejected}
+						<code class="block truncate font-mono text-[0.9em]">{toolPreview}</code>
+					{:else}
+						<!-- Short label (below md) -->
+						<span class="@md:hidden text-black dark:text-white">{attributes.name}</span>
+						<!-- Full label (md and above) -->
+						<span class="hidden @md:inline font-normal">
+							{#if isRejected}
+								{$i18n.t('Denied {{NAME}}', { NAME: attributes.name })}
+							{:else if isDone}
+								{$i18n.t('View Result from {{NAME}}', { NAME: attributes.name })}
+							{:else if needsInput}
+								{$i18n.t('Input needed')}
+							{:else if needsApproval}
+								{$i18n.t('Allow {{NAME}}?', { NAME: attributes.name })}
+							{:else if isPreparing}
+								{$i18n.t('Preparing {{NAME}}...', { NAME: attributes.name })}
+							{:else}
+								{$i18n.t('Executing {{NAME}}...', { NAME: attributes.name })}
+							{/if}
+						</span>
+					{/if}
 				</div>
 
 				{#if isDelegate && subagentChatId}
@@ -344,6 +328,13 @@
 						{$i18n.t('Show in Tasks')}
 					</button>
 				{/if}
+
+				<ToolElapsed
+					startedAt={attributes?.started_at}
+					endedAt={attributes?.ended_at}
+					duration={attributes?.duration}
+					done={isDone || isRejected}
+				/>
 
 				<!-- Chevron -->
 				<div class="flex shrink-0 self-center translate-y-[1px]">

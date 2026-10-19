@@ -1138,14 +1138,12 @@
 	// can show how long each command/search/tool ran. Carries over the previous entry's
 	// start when the backend reports the same action continuing (e.g. queue position).
 	const stampStatus = (data, previous) => {
-		if (!data || typeof data !== 'object') {
-			return data;
-		}
+		if (!data || typeof data !== 'object') return data;
 		const now = Date.now();
-		const continuing = previous?.action === data.action && !previous?.done;
+		const continuing = previous?.action === data.action && previous?.done !== true;
 		const startedAt = continuing ? (previous?.startedAt ?? now) : now;
-		const endedAt = data.done === true ? (previous?.action === data.action ? now : undefined) : undefined;
-		return { ...data, startedAt, endedAt };
+		if (previous?.startedAt && !previous.endedAt) previous.endedAt = now;
+		return { ...data, startedAt, endedAt: data.done === true ? now : undefined };
 	};
 
 	const chatEventHandler = async (event, cb) => {

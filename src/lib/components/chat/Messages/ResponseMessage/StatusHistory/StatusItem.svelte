@@ -1,5 +1,6 @@
 <script>
-	import { getContext, onDestroy } from 'svelte';
+	import { getContext } from 'svelte';
+	import ToolElapsed from '$lib/components/common/ToolElapsed.svelte';
 	const i18n = getContext('i18n');
 	import WebSearchResults from '../WebSearchResults.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
@@ -9,39 +10,10 @@
 	/** @type {Record<string, any> | null} */
 	export let status = null;
 	export let done = false;
-
-	// Mologate: live elapsed timer for this command/search/tool; stops when it ends.
-	$: running = status?.startedAt && (done || status?.done) !== true;
-	let now = Date.now();
-	const interval = setInterval(() => {
-		if (running) now = Date.now();
-	}, 1000);
-	onDestroy(() => clearInterval(interval));
-
-	$: elapsedMs = running ? Math.max(0, now - (status?.startedAt ?? now)) : status?.endedAt && status?.startedAt ? Math.max(0, status.endedAt - status.startedAt) : null;
-
-	const formatElapsed = (ms) => {
-		const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-		if (totalSeconds < 60) return `${totalSeconds}s`;
-		const minutes = Math.floor(totalSeconds / 60);
-		const seconds = totalSeconds % 60;
-		if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
-		const hours = Math.floor(minutes / 60);
-		return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`;
-	};
 </script>
 
 {#if !status?.hidden}
 	<div class="status-description flex items-center gap-2 py-0.5 w-full text-left">
-		<!-- Mologate: how long this command/search/tool ran (live while running) -->
-		{#if elapsedMs !== null && elapsedMs >= 1000}
-			<span
-				class="ml-auto shrink-0 self-center font-mono text-xs text-gray-400 dark:text-gray-500 tabular-nums"
-				title={running ? 'Running' : 'Finished'}
-			>
-				{formatElapsed(elapsedMs)}
-			</span>
-		{/if}
 		{#if status?.action === 'web_search' && (status?.urls || status?.items)}
 			<WebSearchResults {status}>
 				<div class="flex flex-col justify-center -space-y-0.5">
@@ -198,5 +170,12 @@
 				</div>
 			</div>
 		{/if}
+		<div class="ml-auto shrink-0">
+			<ToolElapsed
+				startedAt={status?.startedAt ? status.startedAt / 1000 : undefined}
+				endedAt={status?.endedAt ? status.endedAt / 1000 : undefined}
+				done={done || status?.done === true}
+			/>
+		</div>
 	</div>
 {/if}

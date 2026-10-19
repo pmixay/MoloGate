@@ -51,9 +51,7 @@
 	</div>
 
 	<!-- Mologate: elapsed working time; monospace + tabular digits avoid jitter -->
-	<span
-		class="working-timer pb-2 font-mono text-xs text-gray-500 dark:text-gray-400 tabular-nums"
-	>
+	<span class="working-timer pb-2 font-mono text-xs text-gray-500 dark:text-gray-400 tabular-nums">
 		{formatElapsed(elapsedMs)}
 	</span>
 </div>

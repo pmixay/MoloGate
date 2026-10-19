@@ -19,6 +19,8 @@ export type OutputItem = {
 	code?: string;
 	lang?: string;
 	duration?: number | string | null;
+	started_at?: number | string | null;
+	ended_at?: number | string | null;
 	action?: Record<string, unknown>;
 	actions?: Array<Record<string, unknown>>;
 	queries?: unknown[];
@@ -34,6 +36,8 @@ export type OutputDetailToken = {
 		name?: string;
 		done?: string;
 		duration?: string;
+		started_at?: string;
+		ended_at?: string;
 		arguments?: string;
 		files?: string;
 		embeds?: string;
@@ -250,6 +254,9 @@ function buildToolCallToken(item: OutputItem, toolOutputByCallId: Record<string,
 			name,
 			done: isDone ? 'true' : 'false',
 			status,
+			started_at: stringifyAttribute(item.started_at),
+			ended_at: stringifyAttribute(item.ended_at),
+			duration: stringifyAttribute(item.duration),
 			arguments: stringifyAttribute(item.arguments ?? ''),
 			files: stringifyAttribute(resultItem?.files),
 			embeds: stringifyAttribute(resultItem?.embeds),

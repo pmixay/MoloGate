@@ -406,7 +406,8 @@
 									{#if (message?.content ?? '') === ''}
 										<!-- Mologate: hammer animation + live elapsed timer while the merged response is working -->
 										<WorkingIndicator
-											startedAt={(message.timestamp ?? history.messages[messageId]?.timestamp) * 1000}
+											startedAt={(message.timestamp ?? history.messages[messageId]?.timestamp) *
+												1000}
 										/>
 									{:else}
 										<div class="markdown-prose">
