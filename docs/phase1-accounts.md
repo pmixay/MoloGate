@@ -10,9 +10,9 @@ Deployed to production on 2026-10-11 from `limits-and-accounts` image commit `05
 passed on both architectures. The live image is pinned to
 `ghcr.io/pmixay/mologate@sha256:d983bdc3081560bc0312f46591b5f72d2646dc44a7960bcbf8bb555582716abd`.
 Existing production users, provider connections, data and registration policy are retained.
-Later commits on the branch are not deployed yet: automatic account switching and limit resets,
+Later commits on the branch are not deployed yet: automatic account switching and manual limit resets,
 admin-only account creation, ChatGPT link sign-in, full-text uploads, and ChatGPT accounts through
-codex-lb with generated account names and a single team-wide auto-reset switch, and team accounts
+codex-lb with generated account names and explicit owner/admin manual resets, and team accounts
 (admin connections to a supported provider move into them on the first start). They add
 migrations `c3d9e7a5b1f0`, `d8e2b6c4a9f3`, `e5a3c1f8d2b7` and `f7c2a9d4b8e1`, and a `codex-lb`
 service in the compose file.
@@ -39,8 +39,8 @@ login, and DELETE `/codex/logins/{id}` cancels it. One pending login per member 
 connection at a time across the team are allowed. Login attempts expire after 15 minutes. The UI
 remembers the attempt ID so reopening Settings can resume. Accounts are named by the server
 (`Account #1n9Dk5`); members do not set labels. PATCH `/{id}` takes `sharing`, `budget` and
-`capacity_weight` only; automatic resets are switched on or off for the whole team at
-`/auto-reset`, never per account.
+`capacity_weight` only. Owners/admins explicitly reset a selected ChatGPT account with
+`POST /api/v1/provider-accounts/{account_id}/reset`; no global reset switch remains.
 
 With a link login, the member opens OpenAI's sign-in page, signs in, and pastes back the address
 their browser opens at `http://localhost:1455/auth/callback`. Only the `code` and `state` of that
@@ -58,7 +58,7 @@ and duplicate ChatGPT account IDs are rejected by a database uniqueness constrai
 Models use `account:{provider}:{upstream_model_id}`. Model IDs remain stable when members connect,
 disconnect, or reorder accounts. Each request selects an eligible owned account first, then a
 healthy shared account. An empty account, or one that answers 429, hands the request to the
-next one ([automatic limit reset](limits-and-accounts.md#10-automatic-limit-reset)). Private
+next one ([manual limit reset](limits-and-accounts.md#10-manual-limit-reset)). Private
 access is checked again during inference, including for admins, direct OpenAI routes, API-key
 requests, and model presets. Admin management permission does not
 permit inference through another member's private account.
@@ -175,7 +175,7 @@ fake codex-lb (link and device code, one connection at a time, reconnects), sing
 scoping, legacy account import, SSE chunk boundaries/Unicode/tools/usage, provider errors
 (messages, key redaction, credit and limit failover, refusals, interrupted and cut-off answers),
 OpenRouter key verification, header/quota parsing, migration up/down, account failover and
-automatic resets, the owner and team usage split, generated account names, sign-up refusal, and
+manual resets and no automatic coupon spend on exhaustion, the owner and team usage split, generated account names, sign-up refusal, and
 the full-text upload migration. `test_usage_limits.py` covers OpenRouter key limits, the limit
 outlook and pace, the per-member chat queue (in memory, and in Redis with `TEST_REDIS_URL` or
 `fakeredis[lua]`, otherwise skipped), the usage ledger with its cost estimates, and the

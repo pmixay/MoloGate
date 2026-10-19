@@ -25,7 +25,6 @@ from open_webui.utils import allowance_gate, codex_accounts, credits, metering
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.provider_accounts import (
     TEAM,
-    auto_reset_enabled,
     can_manage,
     key_fingerprint,
     require_accounts_enabled,
@@ -112,11 +111,6 @@ class MultipliersForm(BaseModel):
     multipliers: dict[str, dict[str, float]]
 
 
-class AutoResetForm(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    enabled: bool
-
-
 async def owned_account(account_id, user):
     account = await ProviderAccounts.get(account_id)
     if not account or not can_manage(account, user):
@@ -132,30 +126,6 @@ def require_team_admin(team: bool, user):
 async def check_rate(request, user):
     if await verification_limiter.is_limited(getattr(request.app.state, 'redis', None), 'provider-connect:' + user.id):
         raise HTTPException(429, 'Too many connection attempts. Try again in a few minutes.')
-
-
-async def auto_reset_view():
-    changed = await Config.get('mologate.auto_reset_changed', None)
-    changed = changed if isinstance(changed, dict) else {}
-    return {'enabled': await auto_reset_enabled(), 'changed_by': changed.get('by'), 'changed_at': changed.get('at')}
-
-
-@router.get('/auto-reset')
-async def get_auto_reset(user=Depends(get_verified_user)):
-    return await auto_reset_view()
-
-
-@router.put('/auto-reset')
-async def set_auto_reset(form: AutoResetForm, user=Depends(get_verified_user)):
-    # The roadmap lets any approved member switch automatic resets off, or back on, for everyone.
-    await Config.upsert(
-        {
-            'mologate.auto_reset': form.enabled,
-            'mologate.auto_reset_changed': {'by': user.name, 'by_id': user.id, 'at': int(time.time())},
-        }
-    )
-    log.info('Automatic limit resets turned %s by user %s.', 'on' if form.enabled else 'off', user.id)
-    return await auto_reset_view()
 
 
 @router.get('/usage')
@@ -299,7 +269,7 @@ async def list_accounts(request: Request, user=Depends(get_verified_user)):
             can_manage=managed,
             limits=with_ledger_budget(account, limits, usage),
             usage=usage,
-            last_auto_reset_at=last_resets.get(account.id),
+            last_reset_at=last_resets.get(account.id),
         )
         result.append(item)
     return {'data': result}
@@ -444,3 +414,14 @@ async def delete_account(account_id: str, user=Depends(get_verified_user)):
     await credits.forfeit(account)
     await ProviderAccounts.delete(account.id)
     return True
+
+
+@router.post('/{account_id}/reset')
+async def reset_account(account_id: str, request: Request, user=Depends(get_verified_user)):
+    """Only the account owner or an admin may spend its reset coupon."""
+    account = await owned_account(account_id, user)
+    result = await codex_accounts.manual_reset(account, user.id, getattr(request.app.state, 'redis', None))
+    if result is None:
+        raise HTTPException(409, 'No reset was confirmed. Check the account limits before trying again.')
+    allowance_gate._cache.pop(account.provider, None)
+    return {'status': 'ok'}

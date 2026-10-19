@@ -22,7 +22,7 @@ export type ProviderAccount = {
 		windows: LimitWindow[];
 		reset_credits?: number;
 	} | null;
-	last_auto_reset_at: number | null;
+	last_reset_at: number | null;
 	// Mologate: each member's use from the usage ledger, this month (API keys) or this week.
 	usage?: {
 		period: 'month' | 'week';
@@ -67,12 +67,6 @@ export type MyUsage = {
 		cost: number | null;
 		windows: MeteredWindow[];
 	}[];
-};
-
-export type AutoReset = {
-	enabled: boolean;
-	changed_by: string | null;
-	changed_at: number | null;
 };
 
 export type DeviceLogin = {

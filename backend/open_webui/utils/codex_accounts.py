@@ -9,7 +9,6 @@ import asyncio
 import contextlib
 import hmac
 import logging
-import math
 import shutil
 import time
 import uuid
@@ -535,43 +534,30 @@ async def cancel_login(identifier, user):
     return True
 
 
-async def auto_reset(accounts, triggered_by: str | None, redis=None):
-    """Redeem one reset coupon once every eligible account is empty. Returns a usable account."""
-    # One team-wide switch decides whether coupons are spent; accounts have no switch of their own.
-    accounts = [account for account in accounts if account.provider == 'codex']
-    if not accounts:
-        return None
+async def manual_reset(account, triggered_by: str, redis=None):
+    """Explicitly redeem a coupon on this account only, never during inference."""
+    if account.provider != 'codex':
+        raise HTTPException(400, 'Only ChatGPT accounts support limit resets.')
     async with _reset_lock:
-        # Read again under the lock and past the cache: a concurrent request may have refilled one.
+        # Re-read past the cache: a concurrent manual request may already have refilled it.
         try:
-            summaries = await codex_lb.list_accounts(fresh=True)
+            lb_id = (await account_secret(account))['lb_account_id']
+            summary = (await codex_lb.list_accounts(fresh=True)).get(lb_id)
+        except (HTTPException, CodexLBError):
+            return None
+        if summary is None or summary.get('status') in ('paused', *codex_lb.REAUTH_STATUSES):
+            return None
+        await record_summary(redis, account.id, summary)
+        if not codex_lb.exhausted(summary):
+            return account
+        try:
+            coupons = codex_lb.available_credits(await codex_lb.reset_credits(lb_id))
         except CodexLBError:
             return None
-        coupons = []
-        for account in accounts:
-            try:
-                lb_id = (await account_secret(account))['lb_account_id']
-            except HTTPException:
-                continue
-            summary = summaries.get(lb_id)
-            if summary is None or summary.get('status') in ('paused', *codex_lb.REAUTH_STATUSES):
-                continue
-            await record_summary(redis, account.id, summary)
-            if not codex_lb.exhausted(summary):
-                return account
-            try:
-                credits = codex_lb.available_credits(await codex_lb.reset_credits(lb_id))
-            except CodexLBError:
-                continue
-            if credits:
-                coupons.append((credits[0], account, lb_id))
-        # The database also guards workers that do not share this lock.
+        # Retain the conservative cross-worker cooldown and single-send audit trail.
         if not coupons or await LimitResetEvents.recent('codex', RESET_COOLDOWN):
             return None
-        # Spend the coupon that would expire first; codex-lb redeems that account's soonest one.
-        credit, account, lb_id = min(
-            coupons, key=lambda coupon: math.inf if coupon[0]['expires_at'] is None else coupon[0]['expires_at']
-        )
+        credit = coupons[0]
         event = await LimitResetEvents.start(account, triggered_by, credit['id'])
         outcome = 'error'
         try:
@@ -583,7 +569,7 @@ async def auto_reset(accounts, triggered_by: str | None, redis=None):
                 outcome = 'refused'
         finally:
             await LimitResetEvents.finish(event.id, outcome)
-        log.info('Automatic limit reset on account %s: %s.', account.id, outcome)
+        log.info('Manual limit reset on account %s: %s.', account.id, outcome)
         if outcome not in ('reset', 'nothingToReset'):
             return None
         try:

@@ -177,7 +177,7 @@ Unique `(provider, external_account_id)` rejects concurrent duplicates. Because 
 account deletion, it does **not** enforce once-ever rewards. Only Phase 5's permanent
 `credit_grant` uniqueness does that. Grant `10 × multiplier` once when a verified account first
 becomes shared and eligible; private, failed and pending registrations earn nothing. Disconnect
-forfeits unused credits without deleting the grant history. Automatic resets are ChatGPT-only, so
+forfeits unused credits without deleting the grant history. Manual coupon resets are ChatGPT-only, so
 runner accounts never take part in them.
 
 Redis caches `mologate:<environment>:runners:<id>` with `state`, `last_event`, `busy` and last-used

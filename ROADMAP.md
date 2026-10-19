@@ -58,18 +58,14 @@ The full design and phased plan for accounts, limits, credits and personal API k
     connect, on Verify, when the page lists it and after use, at most once a minute), and the
     request and token limits in OpenAI, OpenRouter and Anthropic response headers, which appear
     once the account has served a request.
-- [x] **Account switching and limit resets:**
-  - When an account reaches 0%, switch automatically to another shared account that still has quota.
-  - Only when every account is empty, redeem one of the provider's limit-reset coupons (Codex supports
-    these).
-  - Any team member can turn coupon auto-reset off globally.
-  - Done: a request that finds an account empty, or gets a 429 from it, moves on to the next account
-    that can serve the model: the member's own first, then shared ones. When every one is empty,
-    Mologate redeems the Codex reset coupon that expires soonest and retries, at most once every
-    10 minutes. Any member turns this off for everyone with the Auto-reset switch in Settings →
-    Provider accounts; there is no per-account switch. Each ChatGPT account shows its coupon count,
-    with the last reset in the tooltip. ChatGPT limits and coupons come from codex-lb.
-    Details in [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-automatic-limit-reset).
+- [x] **Account switching and manual limit resets:**
+  - Automatically fail over to another eligible account when one is exhausted or rate-limited.
+  - Never spend reset coupons during inference, even when every account is empty.
+  - Owners/admins explicitly confirm **Reset limits** for a selected ChatGPT account in Settings →
+    Provider accounts. Coupon counts, last reset time and usage remain visible. Redemption is
+    audited and sent once; ambiguous outcomes and successful resets retain a 10-minute cooldown.
+  - No global automatic-reset switch remains. Details in
+    [docs/limits-and-accounts.md](docs/limits-and-accounts.md#10-manual-limit-reset).
 - [x] **Per-model limits:**
   - Show each model's own limits when it is selected.
   - In the message box, next to the model switcher, show a ring indicator with that model's 5-hour and

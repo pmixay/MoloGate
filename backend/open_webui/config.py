@@ -48,10 +48,9 @@ async def seed_registered_defaults():
 
 
 # Mologate: deployment switches. A value set in the environment wins at every start; left unset,
-# the stored one stays (for auto-reset, whatever a member last chose in the app).
+# the stored one stays.
 ENV_OVERRIDES = {
     'mologate.limits_mode': 'MOLOGATE_LIMITS_MODE',
-    'mologate.auto_reset': 'MOLOGATE_AUTO_RESET',
     'containers.enable': 'MOLOGATE_CONTAINERS',
     'containers.nodes': 'MOLOGATE_CONTAINER_NODES',
 }
@@ -64,8 +63,6 @@ async def apply_env_overrides():
         for key, name in ENV_OVERRIDES.items()
         if os.environ.get(name, '').strip() and await Config.get(key, None) != DEFAULT_CONFIG[key]
     }
-    if 'mologate.auto_reset' in updates:
-        updates['mologate.auto_reset_changed'] = {'by': 'Server settings', 'at': int(datetime.now().timestamp())}
     if updates:
         await Config.upsert(updates)
         log.info('Applied %s from the environment.', ', '.join(sorted(updates)))
@@ -3157,8 +3154,6 @@ DEFAULT_CONFIG = {
     'webui.url': WEBUI_URL,
     # Mologate: Phase 1 connects accounts without enforcing later quota rules.
     'mologate.limits_mode': os.getenv('MOLOGATE_LIMITS_MODE', 'observe'),
-    # Mologate: redeem a Codex reset coupon automatically once every eligible account is empty.
-    'mologate.auto_reset': os.getenv('MOLOGATE_AUTO_RESET', 'True').lower() == 'true',
     # Mologate: chats one member can have generating at once (hard cap 10; utils/chat_slots.py).
     'mologate.max_concurrent_chats': int(os.getenv('MOLOGATE_MAX_CONCURRENT_CHATS', '3')),
     # Mologate: requests one provider account serves at once, to keep it at a person's pace (hard

@@ -555,7 +555,6 @@ class GateTests(MeteringCase):
         form = {'model': 'account:openai_api:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
         with (
             patch.object(proxy, 'get_session', AsyncMock(return_value=session)),
-            patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)),
         ):
             await proxy.account_completion(request, form, OWNER, metadata={'chat_id': 'c1', 'message_id': 'm1'})
         await usage_ledger.flush()
@@ -584,7 +583,6 @@ class GateTests(MeteringCase):
         form = {'model': 'account:openai_api:test-model', 'messages': [{'role': 'user', 'content': 'Hi'}]}
         with (
             patch.object(proxy, 'get_session', AsyncMock(return_value=session)),
-            patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)),
             patch.object(allowance_gate, 'decide', AsyncMock(side_effect=RuntimeError('broken'))),
         ):
             answer = await proxy.account_completion(request, form, OWNER)
@@ -621,7 +619,6 @@ class EnforceCase(MeteringCase):
         self.config_patch.start()
         self.patches = [
             patch.object(allowance_gate, 'members', AsyncMock(return_value=3)),
-            patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)),
         ]
         for item in self.patches:
             item.start()

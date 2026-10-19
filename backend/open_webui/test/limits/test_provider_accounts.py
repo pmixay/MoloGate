@@ -935,7 +935,7 @@ class CodexLBTests(DatabaseCase):
             await ProviderAccounts.update(shared.id, {'created_at': order})
         self.fake.replies['lb-limited'] = (429, 'usage_limit_reached')
         self.fake.replies['lb-refused'] = (503, 'no_accounts')
-        with patch.object(proxy, 'auto_reset', AsyncMock()) as reset:
+        with patch.object(codex_lb, 'consume_reset_credit', AsyncMock()) as reset:
             answer = await proxy.account_completion(self.request(), self.form(), OWNER)
         self.assertEqual(answer['choices'][0]['message']['content'], 'Hello')
         # The empty account is skipped without a request; the others answer for themselves.
@@ -967,44 +967,45 @@ class CodexLBTests(DatabaseCase):
         self.assertEqual(gone.exception.status_code, 401)
         self.assertEqual((await ProviderAccounts.get(saved.id)).status, 'needs_login')
 
-    async def test_auto_reset_spends_soonest_coupon_once_under_concurrency(self):
+    async def test_manual_reset_targets_only_the_selected_account_once(self):
         first = await self.connected('lb-first', remaining=0, sharing='shared')
         second = await self.connected('lb-second', remaining=0, owner=OTHER.id, sharing='shared')
         self.fake.credits['lb-first'] = coupons(('first-coupon', 7200))
-        self.fake.credits['lb-second'] = coupons(('second-later', 9000), ('second-coupon', 600))
-        # Two requests find every account empty at once; only one coupon may be spent.
+        self.fake.credits['lb-second'] = coupons(('second-coupon', 600))
         results = await asyncio.gather(
-            codex_accounts.auto_reset([first, second], OWNER.id),
-            codex_accounts.auto_reset([first, second], OTHER.id),
+            codex_accounts.manual_reset(first, OWNER.id),
+            codex_accounts.manual_reset(first, OWNER.id),
         )
-        self.assertEqual([result.id for result in results], [second.id, second.id])
+        self.assertEqual([result.id for result in results], [first.id, first.id])
         self.assertEqual(len(self.fake.consumed), 1)
         lb_id, body = self.fake.consumed[0]
-        self.assertEqual(lb_id, 'lb-second')
+        self.assertEqual(lb_id, 'lb-first')
         async with get_async_db_context() as db:
             events = list((await db.execute(select(LimitResetEvent))).scalars())
         self.assertEqual(len(events), 1)
-        self.assertEqual((events[0].outcome, events[0].credit_id), ('reset', 'second-coupon'))
+        self.assertEqual((events[0].outcome, events[0].credit_id), ('reset', 'first-coupon'))
         self.assertEqual(body, {'redeemRequestId': events[0].idempotency_key})
-        self.assertIn(events[0].triggered_by, (OWNER.id, OTHER.id))
-        self.assertEqual(list(await LimitResetEvents.last_resets()), [second.id])
-        self.assertEqual((await get_provider_limits(None, second.id))['windows'][0]['used_percent'], 0)
+        self.assertEqual(events[0].triggered_by, OWNER.id)
+        self.assertEqual(list(await LimitResetEvents.last_resets()), [first.id])
+        self.assertEqual((await get_provider_limits(None, first.id))['windows'][0]['used_percent'], 0)
+        self.assertIsNone(await codex_accounts.manual_reset(second, OTHER.id))
+        self.assertEqual(len(self.fake.consumed), 1)
 
-    async def test_auto_reset_respects_cooldown_and_sends_once(self):
+    async def test_manual_reset_respects_cooldown_and_sends_once(self):
         empty = await self.connected('lb-empty', remaining=0)
         self.fake.credits['lb-empty'] = coupons(('coupon', 600))
         # codex-lb refused before reaching OpenAI: nothing was spent, so no cooldown.
         self.fake.consume_error = (409, 'no_available_reset_credit')
-        self.assertIsNone(await codex_accounts.auto_reset([empty], OWNER.id))
+        self.assertIsNone(await codex_accounts.manual_reset(empty, OWNER.id))
         self.assertEqual([lb_id for lb_id, _ in self.fake.consumed], ['lb-empty'])
         self.assertFalse(await LimitResetEvents.recent('codex', codex_accounts.RESET_COOLDOWN))
         # A lost answer may have spent the coupon: it is never sent again, and it blocks the next one.
         consume = AsyncMock(side_effect=CodexLBError())
         with patch.object(codex_lb, 'consume_reset_credit', consume):
-            self.assertIsNone(await codex_accounts.auto_reset([empty], OWNER.id))
+            self.assertIsNone(await codex_accounts.manual_reset(empty, OWNER.id))
             consume.assert_awaited_once()
             self.assertEqual(consume.await_args.args[0], 'lb-empty')
-            self.assertIsNone(await codex_accounts.auto_reset([empty], OWNER.id))
+            self.assertIsNone(await codex_accounts.manual_reset(empty, OWNER.id))
             consume.assert_awaited_once()
         async with get_async_db_context() as db:
             outcomes = [event.outcome for event in (await db.execute(select(LimitResetEvent))).scalars()]
@@ -1290,28 +1291,26 @@ class RouterTests(unittest.TestCase):
             with patch.object(ProviderAccounts, 'get', AsyncMock(return_value=fixed)):
                 self.assertEqual(self.client.patch('/accounts/id', json={'plan': 'pro'}).status_code, 400)
 
-    def test_any_member_switches_auto_reset_for_everyone(self):
-        stored = {}
+    def test_removed_global_reset_routes_are_unavailable(self):
+        self.assertEqual(self.client.get('/accounts/auto-reset').status_code, 405)
+        self.assertEqual(self.client.put('/accounts/auto-reset', json={'enabled': True}).status_code, 405)
 
-        async def get(key, default=None):
-            return stored.get(key, default)
-
-        async def upsert(values):
-            stored.update(values)
-
+    def test_manual_reset_requires_account_management(self):
+        reset = AsyncMock(return_value=account())
         with (
-            patch.object(routes.Config, 'get', AsyncMock(side_effect=get)),
-            patch.object(routes.Config, 'upsert', AsyncMock(side_effect=upsert)),
+            patch.object(ProviderAccounts, 'get', AsyncMock(return_value=account())),
+            patch.object(codex_accounts, 'manual_reset', reset),
         ):
-            self.assertTrue(self.client.get('/accounts/auto-reset').json()['enabled'])
-            response = self.client.put('/accounts/auto-reset', json={'enabled': False})
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()['enabled'], False)
-            self.assertEqual(response.json()['changed_by'], 'Owner')
-            self.assertIs(stored['mologate.auto_reset'], False)
-            self.assertEqual(
-                self.client.put('/accounts/auto-reset', json={'enabled': True, 'by': 'other'}).status_code, 422
-            )
+            self.assertEqual(self.client.post('/accounts/id/reset').status_code, 200)
+            reset.assert_awaited_once()
+            self.assertEqual(reset.await_args.args[1], OWNER.id)
+        with (
+            patch.object(ProviderAccounts, 'get', AsyncMock(return_value=account(owner_user_id=OTHER.id))),
+            patch.object(codex_accounts, 'manual_reset', reset),
+        ):
+            reset.reset_mock()
+            self.assertEqual(self.client.post('/accounts/id/reset').status_code, 404)
+            reset.assert_not_awaited()
 
     def test_budget_required_and_no_owner_spoofing(self):
         form = {'provider': 'openai_api', 'api_key': 'test-secret'}
@@ -1607,24 +1606,24 @@ class EnvOverrideTests(unittest.IsolatedAsyncioTestCase):
     async def test_switches_set_in_the_environment_win_at_every_start(self):
         from open_webui import config
 
-        stored = {'mologate.limits_mode': 'off', 'mologate.auto_reset': True}
+        stored = {'mologate.limits_mode': 'off'}
         upsert = AsyncMock(side_effect=stored.update)
-        defaults = {**config.DEFAULT_CONFIG, 'mologate.limits_mode': 'observe', 'mologate.auto_reset': False}
+        defaults = {**config.DEFAULT_CONFIG, 'mologate.limits_mode': 'observe'}
         with (
             patch.object(config, 'DEFAULT_CONFIG', defaults),
             patch.object(config.Config, 'get', AsyncMock(side_effect=lambda key, default=None: stored.get(key))),
             patch.object(config.Config, 'upsert', upsert),
         ):
-            # Unset in the environment: the stored values (a member's auto-reset choice) stay.
+            # Unset in the environment: the stored values stay.
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop('MOLOGATE_LIMITS_MODE', None)
-                os.environ.pop('MOLOGATE_AUTO_RESET', None)
                 await config.apply_env_overrides()
             upsert.assert_not_awaited()
-            with patch.dict(os.environ, {'MOLOGATE_LIMITS_MODE': 'observe', 'MOLOGATE_AUTO_RESET': 'false'}):
+            with patch.dict(os.environ, {'MOLOGATE_LIMITS_MODE': 'observe'}):
                 await config.apply_env_overrides()
-        self.assertEqual((stored['mologate.limits_mode'], stored['mologate.auto_reset']), ('observe', False))
-        self.assertEqual(stored['mologate.auto_reset_changed']['by'], 'Server settings')
+        self.assertEqual(stored['mologate.limits_mode'], 'observe')
+        self.assertNotIn('mologate.auto_reset', config.DEFAULT_CONFIG)
+        self.assertNotIn('mologate.auto_reset', config.ENV_OVERRIDES)
 
 
 class SignupTests(unittest.IsolatedAsyncioTestCase):
@@ -1946,7 +1945,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('ended before completion', result)
         self.assertTrue(response.closed)
 
-    def codex_patches(self, accounts, summaries, session, resets_enabled=True, reset=None):
+    def codex_patches(self, accounts, summaries, session):
         async def prepare(account):
             return 'key-' + account.id, summaries[account.id]
 
@@ -1955,8 +1954,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         stack.enter_context(patch.object(proxy, 'prepare_request', AsyncMock(side_effect=prepare)))
         stack.enter_context(patch.object(proxy.codex_lb, 'ensure_settings', AsyncMock()))
         stack.enter_context(patch.object(proxy.codex_lb, 'get_session', MagicMock(return_value=session)))
-        stack.enter_context(patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=resets_enabled)))
-        return stack, stack.enter_context(patch.object(proxy, 'auto_reset', reset or AsyncMock(return_value=None)))
+        return stack, stack.enter_context(patch.object(codex_lb, 'consume_reset_credit', AsyncMock()))
 
     def completed(self):
         result = {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'Hello'}]}]}
@@ -2029,37 +2027,52 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form['messages'], [{'role': 'user', 'content': 'Hi'}])
         self.assertTrue(limited.closed)
 
-    async def test_every_account_empty_redeems_a_reset_then_serves(self):
+    async def test_every_account_empty_never_redeems_and_reports_natural_reset(self):
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
-        only = account(id='refilled')
-        summaries = {'refilled': lb_summary('a', remaining=0)}
-
-        async def redeem(accounts, user_id, redis):
-            summaries['refilled'] = lb_summary('a', remaining=100)
-            return accounts[0]
-
-        session = SimpleNamespace(post=AsyncMock(return_value=self.completed()))
-        stack, reset = self.codex_patches([only], summaries, session, reset=AsyncMock(side_effect=redeem))
-        with stack:
-            await proxy.account_completion(request, {'model': 'account:codex:test-model', 'messages': []}, OWNER)
-        reset.assert_awaited_once_with([only], OWNER.id, None)
-        session.post.assert_awaited_once()
-
-    async def test_every_account_empty_with_resets_off_reports_the_wait(self):
-        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
-        only = account(id='empty-no-resets')
+        only = account(id='empty-with-coupons')
         session = SimpleNamespace(post=AsyncMock())
-        stack, reset = self.codex_patches(
-            [only], {only.id: lb_summary('a', remaining=0)}, session, resets_enabled=False
-        )
+        stack, reset = self.codex_patches([only], {only.id: lb_summary('a', remaining=0, credits=3)}, session)
         with stack:
             with self.assertRaises(HTTPException) as error:
                 await proxy.account_completion(request, {'model': 'account:codex:test-model', 'messages': []}, OWNER)
         self.assertEqual(error.exception.status_code, 429)
         self.assertIn('resets in 1 h.', error.exception.detail)
-        self.assertIn('turned off', error.exception.detail)
+        self.assertNotIn('turned off', error.exception.detail)
         reset.assert_not_awaited()
         session.post.assert_not_awaited()
+
+    async def test_enforced_provider_exhaustion_never_consumes_a_reset_credit(self):
+        from open_webui.utils.allowance import Decision
+
+        only = account(id='empty-enforced')
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+        failure = proxy.AccountExhausted()
+        failure.account = only
+        decision = Decision('reserve', only.id, 'test-model', False, '', candidates=(only.id,))
+        empty = Decision('empty', None, 'test-model', False, '', resets_at=int(time.time()) + 3600)
+        with (
+            patch.object(ProviderAccounts, 'list', AsyncMock(return_value=[only])),
+            patch.object(proxy, 'serve_decided', AsyncMock(side_effect=failure)) as serve,
+            patch.object(proxy.allowance_gate, 'decide_now', AsyncMock(return_value=empty)),
+            patch.object(proxy.allowance_gate, 'empty_error', AsyncMock(return_value='Wait for the provider reset.')),
+            patch.object(codex_lb, 'consume_reset_credit', AsyncMock()) as consume,
+        ):
+            with self.assertRaises(HTTPException) as error:
+                await proxy.enforced_completion(
+                    request,
+                    {'model': 'account:codex:test-model'},
+                    OWNER,
+                    'chat/completions',
+                    None,
+                    SimpleNamespace(),
+                    decision,
+                    [only],
+                    None,
+                )
+        self.assertEqual(error.exception.status_code, 429)
+        self.assertIn('provider reset', error.exception.detail)
+        serve.assert_awaited_once()
+        consume.assert_not_awaited()
 
     def key_account(self, identifier, provider='openrouter'):
         secret = seal_secret({'api_key': f'sk-test-{identifier}-secret', 'base_url': 'https://provider.example/v1'})
@@ -2070,7 +2083,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         stack = contextlib.ExitStack()
         stack.enter_context(patch.object(proxy, 'select_accounts', AsyncMock(return_value=accounts)))
         stack.enter_context(patch.object(proxy, 'get_session', AsyncMock(return_value=session)))
-        stack.enter_context(patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)))
         return stack, session
 
     def chat_form(self, provider='openrouter', stream=False):

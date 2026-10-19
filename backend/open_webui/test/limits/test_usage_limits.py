@@ -604,7 +604,6 @@ class LedgerTests(DatabaseCase):
         stack = contextlib.ExitStack()
         stack.enter_context(patch.object(proxy, 'select_accounts', AsyncMock(return_value=accounts)))
         stack.enter_context(patch.object(proxy, 'get_session', AsyncMock(return_value=session)))
-        stack.enter_context(patch.object(proxy, 'auto_reset_enabled', AsyncMock(return_value=False)))
         return stack
 
     async def rows(self):

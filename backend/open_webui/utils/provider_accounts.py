@@ -157,11 +157,6 @@ async def select_account(value: str, user):
     return (await select_accounts(value, user))[0]
 
 
-async def auto_reset_enabled() -> bool:
-    """Any approved member can turn automatic coupon resets off for the whole team."""
-    return await Config.get('mologate.auto_reset', True) is not False
-
-
 async def account_models(user=None):
     if await Config.get('mologate.limits_mode', 'observe') == 'off':
         return []

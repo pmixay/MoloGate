@@ -31,6 +31,11 @@ export type ContextBreakdown = {
 
 const IMAGE_TOKENS = 1000;
 const MESSAGE_OVERHEAD_TOKENS = 4;
+// Model-only text limits in tool_context.py, converted with the four-char token estimate.
+const TOOL_RESULT_MAX_TOKENS = 6000;
+const TOOL_RESULTS_MAX_TOKENS = 24000;
+
+type ToolResultBudget = { tokens: number };
 // A calibration far outside this range means the estimate and the usage describe different things.
 const MIN_CALIBRATION = 0.4;
 const MAX_CALIBRATION = 2.5;
@@ -85,12 +90,22 @@ const outputText = (parts: unknown) =>
 			? parts
 			: '';
 
+const outputImageTokens = (parts: unknown) =>
+	Array.isArray(parts)
+		? parts.filter((part: any) => ['image_url', 'input_image'].includes(part?.type)).length *
+			IMAGE_TOKENS
+		: 0;
+
 const hasToolCalls = (message: any) =>
 	Array.isArray(message?.output) &&
 	message.output.some((item: any) => item?.type === 'function_call');
 
 // What one message adds to the next prompt.
-export const addMessageTokens = (categories: ContextCategories, message: any) => {
+export const addMessageTokens = (
+	categories: ContextCategories,
+	message: any,
+	toolResults: ToolResultBudget = { tokens: 0 }
+) => {
 	if (!message) {
 		return;
 	}
@@ -99,11 +114,23 @@ export const addMessageTokens = (categories: ContextCategories, message: any) =>
 		for (const item of message.output) {
 			if (item?.type === 'message') {
 				categories.messages += estimateTokens(outputText(item.content));
+				categories.images += outputImageTokens(item.content);
 			} else if (item?.type === 'function_call') {
 				categories.tool_activity += estimateTokens(item.arguments) + estimateTokens(item.name);
 			} else if (item?.type === 'function_call_output') {
-				categories.tool_activity +=
-					MESSAGE_OVERHEAD_TOKENS + estimateTokens(outputText(item.output));
+				// Saved output is deliberately full fidelity, not the bounded model payload.
+				// Approximate its projection without modifying history: unlike the backend's
+				// recent-first allocation with older excerpts, only the shared subtotal matters
+				// here. Base framing consumes a few text-budget tokens conservatively; new
+				// framing remains outside the text cap. Arguments and images are never capped.
+				const textTokens = Math.min(
+					estimateTokens(outputText(item.output)),
+					TOOL_RESULT_MAX_TOKENS,
+					Math.max(0, TOOL_RESULTS_MAX_TOKENS - toolResults.tokens)
+				);
+				toolResults.tokens += textTokens;
+				categories.tool_activity += MESSAGE_OVERHEAD_TOKENS + textTokens;
+				categories.images += outputImageTokens(item.output);
 			}
 		}
 		categories.messages += MESSAGE_OVERHEAD_TOKENS;
@@ -159,8 +186,13 @@ export const buildContextBreakdown = (
 	for (const category of CONTEXT_CATEGORIES) {
 		categories[category] = toCount(recorded[category]);
 	}
+	// This field is a subset of tool_activity, not an extra category. Older records
+	// cannot distinguish results from arguments: start their incremental budget at
+	// zero rather than guessing that arguments have exhausted it. Subsequent raw
+	// outputs are still bounded, while the recorded prompt estimate remains intact.
+	const toolResults = { tokens: toCount(messages[baseIdx].context_breakdown.tool_result_tokens) };
 	for (const message of messages.slice(baseIdx)) {
-		addMessageTokens(categories, message);
+		addMessageTokens(categories, message, toolResults);
 	}
 
 	const calibration = getCalibration(messages);

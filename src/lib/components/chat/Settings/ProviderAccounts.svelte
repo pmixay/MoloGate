@@ -6,7 +6,6 @@
 	import {
 		ProviderAccountError,
 		providerAccountRequest,
-		type AutoReset,
 		type ProviderAccount,
 		type DeviceLogin,
 		type MyUsage,
@@ -62,7 +61,6 @@
 	];
 
 	let accounts: ProviderAccount[] = [];
-	let autoReset: AutoReset | null = null;
 	let myUsage: MyUsage | null = null;
 	let loading = true;
 	let busy = false;
@@ -154,16 +152,15 @@
 		account.sharing === 'paused' ? 'Paused' : account.status !== 'ok' ? statusOf(account).text : '';
 	const couponTitle = (account: ProviderAccount) => {
 		const count = account.limits?.reset_credits ?? 0;
-		const last = account.last_auto_reset_at
-			? ` Last used ${new Date(account.last_auto_reset_at * 1000).toLocaleDateString()}.`
+		const last = account.last_reset_at
+			? ` Last used ${new Date(account.last_reset_at * 1000).toLocaleDateString()}.`
 			: '';
-		return `${count} reset ${count === 1 ? 'coupon' : 'coupons'} for auto-reset.${last}`;
+		return `${count} reset ${count === 1 ? 'coupon' : 'coupons'} for manual reset.${last}`;
 	};
 
 	const refresh = async (refreshModels = false) => {
-		[accounts, autoReset, myUsage] = await Promise.all([
+		[accounts, myUsage] = await Promise.all([
 			request<{ data: ProviderAccount[] }>().then((result) => result.data),
-			request<AutoReset>('/auto-reset'),
 			// Mologate: numbers only; the page works without them.
 			request<MyUsage>('/usage').catch(() => null)
 		]);
@@ -284,13 +281,14 @@
 			busy = false;
 		}
 	};
-	// Mologate: any approved member can switch automatic resets for the whole team.
-	const setAutoReset = async (enabled: boolean) => {
+	const resetAccount = async (account: ProviderAccount) => {
+		if (!confirm('Spend a reset coupon on this account? This cannot be undone.')) return;
 		busy = true;
 		error = '';
 		try {
-			autoReset = await request<AutoReset>('/auto-reset', 'PUT', { enabled });
-			toast.success(enabled ? 'Auto-reset limits is on.' : 'Auto-reset limits is off.');
+			await request(`/${account.id}/reset`, 'POST');
+			await refresh(true);
+			toast.success('Account limits reset.');
 		} catch (err) {
 			error = message(err);
 			await refresh().catch(() => {});
@@ -352,21 +350,6 @@
 	<div class="mb-4 flex items-center justify-between gap-3">
 		<h2 class="text-sm font-medium text-gray-900 dark:text-white">Provider accounts</h2>
 		<div class="flex shrink-0 items-center gap-3">
-			{#if autoReset}
-				<label
-					class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"
-					title={`Redeem a ChatGPT reset coupon when every account is out of quota. Applies to the whole team.${
-						autoReset.changed_by ? ` Last changed by ${autoReset.changed_by}.` : ''
-					}`}
-				>
-					Auto-reset
-					<Switch
-						state={autoReset.enabled}
-						ariaLabel="Auto-reset limits"
-						on:change={(event) => setAutoReset(event.detail)}
-					/>
-				</label>
-			{/if}
 			<button
 				type="button"
 				class="flex shrink-0 items-center gap-1 rounded-full bg-gray-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100"
@@ -663,6 +646,14 @@
 
 							{#if expanded[account.id]}
 								<div class="space-y-3 px-3 pb-3 pt-1 text-xs">
+									{#if account.can_manage && account.provider === 'codex'}
+										<button
+											type="button"
+											class={buttonClass}
+											disabled={busy || !account.limits?.reset_credits}
+											on:click={() => resetAccount(account)}>Reset limits</button
+										>
+									{/if}
 									{#if account.last_error}
 										<p class="text-amber-700 dark:text-amber-300">{account.last_error}</p>
 									{/if}

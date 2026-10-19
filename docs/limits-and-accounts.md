@@ -88,9 +88,9 @@ These come from the team and are not up for redesign. Numbers are defaults an ad
 
 8. **No credit farming.** Credits are tied to the provider's own account ID. One provider account
    earns credits once, ever, no matter how many times or by whom it is re-added.
-9. **Automatic reset.** Only when every account that can serve a request is empty, Mologate
-   redeems a provider limit-reset coupon on one of them by itself, through codex-lb. There is no
-   button. Any team member can turn this off for everyone.
+9. **Manual reset only.** An owner/admin explicitly confirms a coupon redemption for a selected
+   ChatGPT account through codex-lb. Exhausted requests never spend reset credits; automatic
+   failover to another account remains available.
 
 ---
 
@@ -195,8 +195,8 @@ ID: codex-lb's account ID for ChatGPT, or a SHA-256 fingerprint of an API key), 
 name such as `Account #1n9Dk5`; members do not choose labels), `secret` (Fernet-encrypted JSON; for
 ChatGPT, the codex-lb account ID and a key scoped to that one account), `sharing` (`shared` |
 `paused`; migration `e1b4c7a9d3f6` made every private account shared), `capacity_weight`, `budget` (API keys: amount and currency per month), `status` (`ok` |
-`needs_login` | `error` | `cooldown`), `last_error`. There is no per-account reset switch: the global
-auto-reset setting (§10) alone decides whether coupons are spent (migration `e5a3c1f8d2b7` dropped
+`needs_login` | `error` | `cooldown`), `last_error`. There is no automatic reset switch:
+manual owner/admin action (§10) alone decides whether coupons are spent (migration `e5a3c1f8d2b7` dropped
 `allow_team_resets`).
 Unique: (`provider`, `external_account_id`).
 
@@ -254,7 +254,7 @@ their entries.
 `until` (empty: until revoked), `reason`, `revoked_at`, `revoked_by`. Rows are never deleted, so
 the table is the audit log of every override.
 
-**`limit_reset_event`** (one automatic redemption; kept after the account is removed)
+**`limit_reset_event`** (one explicit redemption; kept after the account is removed)
 `id`, `account_id`, `provider`, `triggered_by` (the member whose request found every account
 empty), `credit_id` (provider's), `idempotency_key`, `outcome` (`pending` | `reset` |
 `nothingToReset` | `noCredit` | `alreadyRedeemed` | `error`), `created_at`, `updated_at`.
@@ -309,9 +309,8 @@ used_u   = units of u's pool use in this window (tiers pool, credit, worker, own
 4. **Worker:** past all of the above, but some account still has pool headroom. Only worker models.
    If a big model was asked for, the gate swaps to the provider's worker model and the UI says so
    ("Your share is used up, so this reply uses Luna. Resets in 3 h 12 min.").
-5. **Empty:** no account of this provider has pool headroom, and the automatic reset (§10) could
-   not refill one. Return a limit error with the reset time, and offer a worker on another
-   provider.
+5. **Empty:** no account of this provider has pool headroom. Return a limit error with the
+   natural reset time, and offer a worker on another provider. Never redeem a reset coupon.
 
 ### 7.4 Choosing the account (tiers 2 to 4)
 
@@ -417,9 +416,9 @@ With `MOLOGATE_LIMITS_MODE=enforce`, the account proxy (`utils/provider_account_
 - **Tier 5:** a 429 that says when the first account frees up and, when one has room, names a
   worker model on another provider ("The team's shared ChatGPT accounts have no room left for you
   right now. The first one frees up in 3 h 12 min. Meanwhile, pick Claude Haiku 5.5 (Anthropic):
-  it still has room."). An automatic reset (§10) is tried first, but only for accounts the
-  provider itself reported used up: the rules' own limits, such as an owner's locked reserve, are
-  not lifted by a coupon. When every account failed for lack of credit, the 402 from §10 stays.
+  it still has room."). No reset coupon is spent. An owner may explicitly redeem one (§10),
+  but the rules' own limits, such as a locked reserve, are not lifted by a coupon.
+  When every account failed for lack of credit, the 402 stays.
 - **Ledger:** an enforced request's rows carry the decided tier in `tier`, the model actually
   served in `model_id`, and the decision with `mode: enforce`.
 - **Per-account concurrency cap** (`utils/account_slots.py`): one account serves at most
@@ -648,14 +647,14 @@ and a request naming an old id is sent to the new one (`mologate.model_aliases`)
 
 **Account row:** collapsed by default to its generated name, provider, plan, owner, a note only
 when it matters (Team, Paused, Sign-in required), the 5-hour and weekly bars, and a coupon badge
-(count; the tooltip has the last automatic reset). On a shared account each of those windows is
+(count; the tooltip has the last successful reset). On a shared account each of those windows is
 two bars: the owner's reserve and the team pool, each out of 50 points (decision 2), with the
 owner's use past 50 shown as pool use. An API key's row shows its credit limit and budget
 instead. Expanded: every limit window, with "You · 8/50" and "Team · 15/50" under a shared
 window, an API key's budget left this month (estimated, §8, except OpenRouter's), each member's
 requests, tokens and cost from the ledger (this week for a subscription, this month for a key), a
-"Who can use" dropdown (Team, Paused), and Verify, budget and Disconnect buttons. Auto-reset has one switch for the whole team, in the page
-header. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
+"Who can use" dropdown (Team, Paused), and Verify, budget and Disconnect buttons. Manual limit reset
+is an explicit owner/admin action, never an automatic pool refill. The split is shown only: nothing enforces the reserve until Phase 4, and the idle-owner
 loan (decision 3) is not shown yet.
 
 **Disconnecting:** unspent credits from that account's grant are forfeited (a `forfeit` entry, §7.8).
@@ -663,39 +662,34 @@ Reconnecting the same account doesn't grant again.
 
 ---
 
-## 10. Automatic limit reset
+## 10. Manual limit reset
 
-Implemented on 2026-10-11 in `utils/provider_account_proxy.py` and `utils/codex_accounts.py`, with
-codex-lb for ChatGPT accounts. There is no reset button: members never redeem a coupon by hand.
+Account failover remains automatic, but inference never redeems reset coupons in either
+`observe` or `enforce` mode. When all usable accounts are exhausted, return a limit error with
+the natural provider reset time where known. Unknown quota never counts as empty.
 
-- **Account switching first.** A request tries the accounts that can serve its model: the
-  member's own, then shared ones, with accounts known to be empty last. A ChatGPT account is
-  skipped when codex-lb reports it `rate_limited`, `quota_exceeded` or paused, when a window is
-  used up and has not reset, or when codex-lb answers 429 or a 503 meaning the account cannot
-  serve the request. Other providers' accounts are skipped on 429. Unknown quota never counts as
-  empty.
-- **ChatGPT only.** No reset mechanism exists for the other providers. codex-lb lists an account's
-  coupons (`GET /api/accounts/{id}/rate-limit-reset-credits`) and redeems the soonest-expiring
-  one (`POST …/rate-limit-reset-credits/consume {redeemRequestId}`).
-- **When:** only after every ChatGPT account the member can use is empty. Any of their coupons
-  can be spent; there is no per-account opt-out. It runs in `observe` and `enforce`: an empty
-  account is provider availability, not an allowance decision.
-- **What it does:** under a lock, read every candidate again (a concurrent request may already
-  have refilled one), pick the account whose coupon expires soonest, write a pending
-  `limit_reset_event`, and redeem once with that event's idempotency key (redemption is not
-  idempotent upstream, so it is never retried). After a reset, read the account again and send
-  the request there.
-- **Guards:** a pending, successful or failed redemption blocks another one for 10 minutes on
-  every worker, so a refill that does not take never spends a second coupon. A refusal from
-  codex-lb before it contacts OpenAI does not block. If no reset is possible, the request gets a
-  limit error with the time until the first account resets.
-- **Global switch:** `mologate.auto_reset` (env `MOLOGATE_AUTO_RESET`, default on). Any approved
-  member turns it off or on for everyone with the **Auto-reset** switch in **Settings → Provider
-  accounts** (`GET`/`PUT /api/v1/provider-accounts/auto-reset`); its tooltip shows who changed it
-  last. It is the only reset switch. When `MOLOGATE_AUTO_RESET` is set in the environment, it
-  wins at every start; the switch then holds until the next start.
-- **Rules:** a redemption is irreversible and can't be transferred. The refilled window is split
-  50/50 like any other once the allowance engine ships.
+- **Account switching first:** requests try the member's own accounts and then shared accounts,
+  with known-empty accounts last. Provider exhaustion, 429 and applicable codex-lb 503 responses
+  cause failover to another eligible account, without spending any reset credits.
+- **Explicit action only:** in **Settings → Provider accounts**, an account owner or admin can
+  select **Reset limits** on a ChatGPT account and confirm the irreversible coupon spend.
+  `POST /api/v1/provider-accounts/{account_id}/reset` requires authentication and account management
+  permission. It targets that account only, never another owner's account in the pool. Non-ChatGPT
+  accounts return 400; unavailable coupons, cooldowns or unconfirmed outcomes return 409.
+- **Provider API:** codex-lb lists coupons with `GET /api/accounts/{id}/rate-limit-reset-credits`
+  and consumes the selected account's soonest-expiring coupon with
+  `POST …/rate-limit-reset-credits/consume {redeemRequestId}`. The account is re-read under a
+  lock first; an account already refilled needs no coupon. A pending `limit_reset_event` records
+  the acting user and idempotency key. Send redemption once, never automatically retry an
+  ambiguous outcome, then refresh the account's limits and invalidate allowance cache.
+- **Guards:** pending, successful and ambiguous/failed redemption events block another coupon
+  for 10 minutes. A codex-lb refusal before contacting OpenAI does not block. Audit history,
+  coupon counts, last reset time (`last_reset_at`) and credit/usage visibility remain available.
+- **No automation or global switch:** the former `/auto-reset` endpoints and
+  `MOLOGATE_AUTO_RESET` / `mologate.auto_reset` configuration are removed. Old stored settings
+  have no effect. No background job or exhausted inference request may consume a coupon.
+- A redeemed coupon cannot be transferred or undone. Normal allowance rules still apply to the
+  refilled window.
 
 ---
 
@@ -857,9 +851,9 @@ deployed site.
 - [x] Grants on connect (a subscription's), and for API keys as money is spent through them
       (decision 7); forfeit on disconnect, spending in tier 3, balance in the UI. Done
       (2026-10-14, §7.8): tested in the running app as well as by the suite.
-- [x] Automatic limit reset (§10), with a global off switch for any member.
-- [ ] Done when: an automatic reset is redeemed on a real account once every account is empty,
-      and the windows refill.
+- [x] Explicit owner/admin manual limit reset (§10), without a global automatic switch.
+- [ ] Done when: a confirmed manual reset refills a real account; exhausted inference never
+      spends a coupon.
 
 ### Phase 6: personal API keys (§11)
 
@@ -938,9 +932,8 @@ is built or scheduled. Codex's plan, with its open proposals and the step list h
   an internal codex-lb (accounts, limits, reset coupons and the Codex transport), with Mologate
   choosing the account per request through keys scoped to one account. This replaces the
   per-request `codex app-server` and direct calls to chatgpt.com. Accounts get generated names.
-- 2026-10-11: limit resets are automatic, as ROADMAP.md says, not a button. When every eligible
-  account is empty, redeem the Codex coupon that expires soonest; any member can turn this off
-  for the team.
+- Reset policy supersedes the 2026-10-11 automatic-redemption design: only explicit owner/admin
+  manual resets are permitted. Exhaustion still triggers account failover, not coupon spending.
 - 2026-10-12: Claude subscriptions are deferred and disabled. Codex's Phase 7 plan, including the
   two entries he wrote into this log on 2026-10-11, moved to [claude-runners.md](claude-runners.md)
   as proposals awaiting review; none of it is a decision.

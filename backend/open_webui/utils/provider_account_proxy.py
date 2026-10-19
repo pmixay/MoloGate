@@ -12,9 +12,8 @@ from fastapi.responses import StreamingResponse
 
 from open_webui.models.provider_accounts import ProviderAccounts, open_secret
 from open_webui.utils import account_slots, allowance_gate, api_key_limits, codex_lb
-from open_webui.utils.codex_accounts import auto_reset, prepare_request, record_summary
+from open_webui.utils.codex_accounts import prepare_request, record_summary
 from open_webui.utils.provider_accounts import (
-    auto_reset_enabled,
     can_use,
     model_id as account_model_id,
     refresh_limits_soon,
@@ -570,7 +569,7 @@ async def ready_at(redis, accounts, failures=None):
     return int(min(times)) if times else None
 
 
-async def limit_error(redis, accounts, resets_enabled, failures=None):
+async def limit_error(redis, accounts, failures=None):
     now = time.time()
     failures = failures or {}
     ready_at = []
@@ -603,8 +602,6 @@ async def limit_error(redis, accounts, resets_enabled, failures=None):
             detail = None
     if detail:
         message += f' The provider says: {detail}'
-    if not resets_enabled and any(account.provider == 'codex' for account in accounts):
-        message += ' Automatic limit resets are turned off.'
     return HTTPException(status, message)
 
 
@@ -676,16 +673,8 @@ async def serve_account_model(request, form_data, user, endpoint, metadata, acco
         except AccountExhausted as error:
             exhausted.append(account)
             failures[account.id] = error
-    # Only when every account is empty: redeem a reset coupon, unless a member turned this off.
-    resets_enabled = await auto_reset_enabled()
-    if resets_enabled:
-        account = await auto_reset(exhausted, user.id, redis)
-        if account is not None:
-            try:
-                return await attempt(account)
-            except AccountExhausted as error:
-                failures[account.id] = error
-    raise await limit_error(redis, exhausted, resets_enabled, failures)
+
+    raise await limit_error(redis, exhausted, failures)
 
 
 async def tell_member(metadata, text, user_id):
@@ -728,7 +717,6 @@ async def enforced_completion(request, form_data, user, endpoint, metadata, mete
         rows.setdefault(row.id, row)
     chat_id = metadata.get('chat_id') if isinstance(metadata, dict) else None
     excluded, exhausted, failures = set(), [], {}
-    reset_tried = False
     while decision is not None:
         if decision.tier != 'empty':
             usable = [rows[account_id] for account_id in decision.candidates if account_id in rows]
@@ -751,24 +739,13 @@ async def enforced_completion(request, form_data, user, endpoint, metadata, mete
                 # Accounts this member cannot use (paused or signed out since the pool was read).
                 excluded.update(decision.candidates)
         else:
-            # Tier 5. A reset coupon can refill an account only when the provider itself found it
-            # used up; the rules' own limits are not the provider's to lift.
-            candidates = [row for row in exhausted if row.provider == 'codex']
-            if reset_tried or not candidates or not await auto_reset_enabled():
-                break
-            reset_tried = True
-            account = await auto_reset(candidates, user.id, redis)
-            if account is None:
-                break
-            # Its new reading counts at once.
-            allowance_gate._cache.pop(provider, None)
-            excluded.discard(account.id)
+            # Exhaustion never spends reset credits; only an explicit owner action can.
+            break
         decision = await allowance_gate.decide_now(user.id, provider, asked, chat_id, frozenset(excluded))
-    resets_enabled = await auto_reset_enabled()
     if decision is None or (failures and all(failure.credit for failure in failures.values())):
         if not exhausted:
             raise HTTPException(429, 'Every account for this model has reached its usage limit.')
-        raise await limit_error(redis, exhausted, resets_enabled, failures)
+        raise await limit_error(redis, exhausted, failures)
     if not decision.resets_at and exhausted:
         # The provider's own reset times, when the rules know none.
         decision.resets_at = await ready_at(redis, exhausted, failures)

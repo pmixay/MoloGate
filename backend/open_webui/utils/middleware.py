@@ -85,12 +85,14 @@ from open_webui.utils import change_sources, containers, refusals
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
+from open_webui.utils.agent_messages import take_agent_messages
 from open_webui.utils.ask_user import stage_ask_user_tool_calls
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.context_compaction import compact_messages_for_request
 from open_webui.utils.context_window import build_context_breakdown
+from open_webui.utils.continuation import stateful_tool_messages
 from open_webui.utils.files import (
     convert_markdown_base64_images,
     get_file_url_from_base64,
@@ -107,7 +109,6 @@ from open_webui.utils.image_input import model_reads_images, strip_image_inputs
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.memory import add_memory_context, review_memory_after_turn
-from open_webui.utils.agent_messages import take_agent_messages
 from open_webui.utils.misc import (
     add_or_update_system_message,
     add_or_update_user_message,
@@ -119,8 +120,8 @@ from open_webui.utils.misc import (
     get_last_user_message_item,
     get_message_list,
     get_output_text,
-    get_response_error_detail,
     get_reasoning_details,
+    get_response_error_detail,
     get_system_message,
     is_raster_image_content_type,
     is_string_allowed,
@@ -145,8 +146,11 @@ from open_webui.utils.task import (
     rag_template,
     tools_function_calling_generation_template,
 )
+from open_webui.utils.tool_context import bound_tool_context
 from open_webui.utils.tool_permissions import (
     REVIEW_PARAM as TOOL_REVIEW_PARAM,
+)
+from open_webui.utils.tool_permissions import (
     chat_always_allows,
     is_always_allowed,
     mark_reviewed_tool_calls,
@@ -211,6 +215,7 @@ def _is_tool_result_error(value: Any) -> bool:
 def normalize_messages_for_model(form_data: dict) -> dict:
     form_data['messages'] = strip_empty_content_blocks(form_data.get('messages', []))
     form_data['messages'] = merge_system_messages(form_data.get('messages', []))
+    form_data['messages'] = bound_tool_context(form_data['messages'])
     return form_data
 
 
@@ -4917,6 +4922,10 @@ async def streaming_chat_response_handler(response, ctx):
                 prior_output, output = output, []
                 content_parts = []
 
+            # This prefix is already represented in the initial request messages.
+            # Keep it display-only across every tool round, not just the first.
+            continuation_prefix = list(prior_output)
+
             usage = None
             last_response_id = None
 
@@ -6005,6 +6014,9 @@ async def streaming_chat_response_handler(response, ctx):
                     max_tool_call_iterations is None or tool_call_iterations < max_tool_call_iterations
                 ):
                     tool_call_iterations += 1
+                    # The anchored provider already owns everything produced before
+                    # tool execution. Only newly supplied results/inputs are a delta.
+                    tool_result_start = len(output)
 
                     response_tool_calls = tool_calls.pop(0)
                     # Mologate: in a saved chat, ask_user pauses the turn until the user answers, however
@@ -6388,8 +6400,12 @@ async def streaming_chat_response_handler(response, ctx):
                             system_message = get_system_message(form_data['messages'])
                             new_form_data['messages'] = (
                                 [system_message] if system_message else []
-                            ) + convert_output_to_messages(
-                                output, raw=True, reasoning_format=get_reasoning_format(model)
+                            ) + stateful_tool_messages(
+                                output,
+                                tool_result_start,
+                                convert_output_to_messages,
+                                raw=True,
+                                reasoning_format=get_reasoning_format(model),
                             )
                             new_form_data['previous_response_id'] = last_response_id
                         else:
@@ -6462,6 +6478,7 @@ async def streaming_chat_response_handler(response, ctx):
                             # keeps indices aligned. The display prefix
                             # ensures the UI shows tool history during
                             # streaming.
+                            accumulated_output = list(output)
                             prior_output = list(full_output())
                             # Trim the trailing empty placeholder message
                             # so it doesn't persist as a ghost item once
@@ -6474,11 +6491,13 @@ async def streaming_chat_response_handler(response, ctx):
                                 msg_parts = prior_output[-1].get('content', [])
                                 if not msg_parts or (len(msg_parts) == 1 and not msg_parts[0].get('text', '').strip()):
                                     prior_output.pop()
+                                    if accumulated_output:
+                                        accumulated_output.pop()
                             output = []
                             output_start = len(prior_output)
                             await stream_body_handler(res, new_form_data)
-                            output = full_output()
-                            prior_output = []
+                            output = accumulated_output + output
+                            prior_output = list(continuation_prefix)
                         elif getattr(res, 'status_code', 200) >= 400:
                             await emit_message_error(get_message_error_content(get_response_error_detail(res)))
                             break

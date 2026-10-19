@@ -132,6 +132,7 @@ def _split_content(content: Any) -> tuple[str, int]:
 def build_context_breakdown(form_data: dict) -> dict:
     """Estimate, by category, the tokens of the prompt ``form_data`` is about to send."""
     categories = dict.fromkeys(CATEGORIES, 0)
+    tool_result_tokens = 0
     categories['tools'] = estimate_tokens(form_data.get('tools')) if form_data.get('tools') else 0
 
     for message in form_data.get('messages') or []:
@@ -148,10 +149,18 @@ def build_context_breakdown(form_data: dict) -> dict:
                 text = text[:summary_start]
             categories['system'] += estimate_tokens(text)
         elif role == 'tool':
-            categories['tool_activity'] += MESSAGE_OVERHEAD_TOKENS + estimate_tokens(text)
+            result_tokens = MESSAGE_OVERHEAD_TOKENS + estimate_tokens(text)
+            categories['tool_activity'] += result_tokens
+            tool_result_tokens += result_tokens
         else:
             categories['messages'] += MESSAGE_OVERHEAD_TOKENS + estimate_tokens(text)
             if message.get('tool_calls'):
                 categories['tool_activity'] += estimate_tokens(message['tool_calls'])
 
-    return {'categories': categories, 'estimated_tokens': sum(categories.values())}
+    return {
+        'categories': categories,
+        'estimated_tokens': sum(categories.values()),
+        # Separate results from call arguments so the frontend can apply the
+        # model-only replay budget without undercounting file edits/commands.
+        'tool_result_tokens': tool_result_tokens,
+    }

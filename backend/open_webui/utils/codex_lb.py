@@ -244,7 +244,7 @@ async def reset_credits(account_id: str) -> dict | None:
 
 
 async def consume_reset_credit(account_id: str, redeem_request_id: str) -> dict:
-    """Redeem the soonest-expiring coupon. Not idempotent upstream, so callers send it once."""
+    """Explicit manual reset only. Not idempotent upstream, so callers send it once."""
     result = await request(
         'POST',
         f'/api/accounts/{_path(account_id)}/rate-limit-reset-credits/consume',

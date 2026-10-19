@@ -60,7 +60,7 @@ class ProviderLogin(Base):
 
 
 class LimitResetEvent(Base):
-    """One automatic redemption of a provider reset coupon. Kept after the account is removed."""
+    """One explicit redemption of a provider reset coupon. Kept after the account is removed."""
 
     __tablename__ = 'limit_reset_event'
 
@@ -226,7 +226,7 @@ class LimitResetEventsTable:
             return result.first() is not None
 
     async def last_resets(self) -> dict[str, int]:
-        """The latest successful automatic reset per account."""
+        """The latest successful reset per account."""
         async with get_async_db_context() as db:
             result = await db.execute(
                 select(LimitResetEvent.account_id, func.max(LimitResetEvent.created_at))
