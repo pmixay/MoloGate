@@ -160,13 +160,18 @@ async def github(context: str, user_id: str, operation: str) -> dict:
         base, headers = await containers.route(context)
         command = 'python3 -c ' + shlex.quote(CONTROLLER) + ' ' + shlex.quote(operation) + (' 1' if network else ' 0')
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45, connect=5)) as session:
+
             async def request(method, path, **kwargs):
-                async with session.request(method, base + path, headers=headers, allow_redirects=False, **kwargs) as response:
+                async with session.request(
+                    method, base + path, headers=headers, allow_redirects=False, **kwargs
+                ) as response:
                     if response.status != 200:
                         raise HTTPException(502, 'The container could not complete the GitHub request.')
                     return await response.json()
 
-            result = await request('POST', '/execute', params={'wait': 1}, json={'command': command, 'cwd': '/home/user'})
+            result = await request(
+                'POST', '/execute', params={'wait': 1}, json={'command': command, 'cwd': '/home/user'}
+            )
             for _ in range(25):
                 if result.get('status') != 'running':
                     break
@@ -187,7 +192,9 @@ async def github(context: str, user_id: str, operation: str) -> dict:
                 'logout_failed': 'GitHub could not be disconnected. Try again.',
             }
             if value.get('error') in errors:
-                raise HTTPException(409 if value['error'] in ('missing_cli', 'network_off') else 502, errors[value['error']])
+                raise HTTPException(
+                    409 if value['error'] in ('missing_cli', 'network_off') else 502, errors[value['error']]
+                )
             return sanitized(value)
     except containers.NodeUnavailable:
         raise HTTPException(503, 'The chat container is unavailable right now.') from None

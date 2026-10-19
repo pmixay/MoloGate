@@ -16,12 +16,25 @@ import unittest
 
 SOURCE = Path(__file__).parents[1] / 'utils' / 'github.py'
 TREE = ast.parse(SOURCE.read_text())
-CONTROLLER = next(ast.literal_eval(n.value) for n in TREE.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'CONTROLLER' for t in n.targets))
+CONTROLLER = next(
+    ast.literal_eval(n.value)
+    for n in TREE.body
+    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'CONTROLLER' for t in n.targets)
+)
 namespace = {'re': re}
-exec(compile(ast.Module(body=[n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'sanitized'], type_ignores=[]), str(SOURCE), 'exec'), namespace)
+exec(
+    compile(
+        ast.Module(
+            body=[n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'sanitized'], type_ignores=[]
+        ),
+        str(SOURCE),
+        'exec',
+    ),
+    namespace,
+)
 sanitized = namespace['sanitized']
 
-FAKE_GH = '''#!/usr/bin/env python3
+FAKE_GH = """#!/usr/bin/env python3
 import os, pathlib, sys, time
 root = pathlib.Path(os.environ['FAKE_GH_ROOT'])
 args = sys.argv[1:]
@@ -39,7 +52,7 @@ if args[:2] == ['auth', 'login']:
     (root / 'authorized').touch()
 if args[:2] == ['auth', 'logout']:
     (root / 'authorized').unlink(missing_ok=True)
-'''
+"""
 
 
 class ControllerTests(unittest.TestCase):
@@ -49,13 +62,28 @@ class ControllerTests(unittest.TestCase):
         gh = self.root / 'gh'
         gh.write_text(FAKE_GH.replace('#!/usr/bin/env python3', '#!' + sys.executable))
         gh.chmod(0o755)
-        self.env = {**os.environ, 'PATH': str(self.root) + ':' + os.environ['PATH'],
-                    'FAKE_GH_ROOT': str(self.root), 'GH_TOKEN': 'host-token', 'GITHUB_TOKEN': 'host-token'}
-        self.program = CONTROLLER.replace('/home/user/.local/state/mologate-github', str(self.root / 'state')).replace('/usr/bin/gh', str(gh)).replace('/home/user/.config/gh', str(self.root / 'config')).replace("['" + str(gh) + "',", "[sys.executable, '" + str(gh) + "',")
+        self.env = {
+            **os.environ,
+            'PATH': str(self.root) + ':' + os.environ['PATH'],
+            'FAKE_GH_ROOT': str(self.root),
+            'GH_TOKEN': 'host-token',
+            'GITHUB_TOKEN': 'host-token',
+        }
+        self.program = (
+            CONTROLLER.replace('/home/user/.local/state/mologate-github', str(self.root / 'state'))
+            .replace('/usr/bin/gh', str(gh))
+            .replace('/home/user/.config/gh', str(self.root / 'config'))
+            .replace("['" + str(gh) + "',", "[sys.executable, '" + str(gh) + "',")
+        )
 
     def call(self, operation, network=True):
-        p = subprocess.run([sys.executable, '-c', self.program, operation, '1' if network else '0'],
-                           env=self.env, capture_output=True, text=True, timeout=20)
+        p = subprocess.run(
+            [sys.executable, '-c', self.program, operation, '1' if network else '0'],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn('never-forward', p.stdout)
         return json.loads(p.stdout)
@@ -66,16 +94,26 @@ class ControllerTests(unittest.TestCase):
 
     def test_connect_reuses_code_then_poll_sets_up_git(self):
         a = self.call('connect')
-        self.assertEqual(a, {'connected': False, 'pending': True, 'code': 'ABCD-1234', 'verification_uri': 'https://github.com/login/device'})
+        self.assertEqual(
+            a,
+            {
+                'connected': False,
+                'pending': True,
+                'code': 'ABCD-1234',
+                'verification_uri': 'https://github.com/login/device',
+            },
+        )
         self.assertEqual(self.call('connect'), a)
         self.assertEqual(self.call('status'), a)
         calls = (self.root / 'calls').read_text()
         self.assertEqual(calls.count('auth login'), 1)
         (self.root / 'approve').touch()
         import time
+
         for _ in range(100):
-            if (self.root / 'authorized').exists(): break
-            time.sleep(.02)
+            if (self.root / 'authorized').exists():
+                break
+            time.sleep(0.02)
         self.assertEqual(self.call('poll'), {'connected': True, 'pending': False, 'login': 'octocat'})
         self.assertIn('auth setup-git --hostname github.com', (self.root / 'calls').read_text())
         self.assertEqual(self.call('status', False)['login'], 'octocat')
@@ -90,7 +128,8 @@ class ControllerTests(unittest.TestCase):
     def test_expired_flow_cleans_up_and_can_restart(self):
         self.call('connect')
         path = self.root / 'state' / 'state'
-        state = json.loads(path.read_text()); state['started'] = 0
+        state = json.loads(path.read_text())
+        state['started'] = 0
         path.write_text(json.dumps(state))
         self.assertEqual(self.call('poll'), {'connected': False, 'pending': False})
         self.assertFalse(path.exists())
@@ -106,18 +145,30 @@ class ControllerTests(unittest.TestCase):
         (self.root / 'fail').touch()
         self.call('connect')
         import time
-        time.sleep(.1)
+
+        time.sleep(0.1)
         self.assertEqual(self.call('poll'), {'connected': False, 'pending': False})
 
 
 class ContractTests(unittest.TestCase):
     def test_output_is_allowlisted(self):
-        self.assertEqual(sanitized({'connected': True, 'login': 'octocat', 'token': 'secret', 'logs': 'secret'}),
-                         {'connected': True, 'pending': False, 'login': 'octocat'})
-        self.assertEqual(sanitized({'connected': True, 'login': 'secret\nTOKEN', 'pending': False}),
-                         {'connected': False, 'pending': False})
-        self.assertEqual(sanitized({'pending': True, 'code': 'ABCD-1234', 'verification_uri': 'https://evil.test'}),
-                         {'connected': False, 'pending': True, 'code': 'ABCD-1234', 'verification_uri': 'https://github.com/login/device'})
+        self.assertEqual(
+            sanitized({'connected': True, 'login': 'octocat', 'token': 'secret', 'logs': 'secret'}),
+            {'connected': True, 'pending': False, 'login': 'octocat'},
+        )
+        self.assertEqual(
+            sanitized({'connected': True, 'login': 'secret\nTOKEN', 'pending': False}),
+            {'connected': False, 'pending': False},
+        )
+        self.assertEqual(
+            sanitized({'pending': True, 'code': 'ABCD-1234', 'verification_uri': 'https://evil.test'}),
+            {
+                'connected': False,
+                'pending': True,
+                'code': 'ABCD-1234',
+                'verification_uri': 'https://github.com/login/device',
+            },
+        )
         self.assertNotIn('code', sanitized({'pending': False, 'code': 'ABCD-1234'}))
 
     def test_routes_share_ownership_and_enabled_gate(self):
