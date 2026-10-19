@@ -611,6 +611,9 @@ def container_prompt(row: dict, status: dict | None, new_file_ids: list[str]) ->
         'This chat has its own Linux container (Debian, Python 3.12, Node.js, git, build tools and common '
         f'command-line tools). Your terminal tools run there as root, starting in {WORKSPACE}. Its files stay '
         'between turns: it pauses when idle and is deleted after 7 days without use.',
+        'Storage: /tmp is a small memory-backed tmpfs that counts against the memory limit. Never store '
+        'worktrees or repositories there. Keep durable work under /home/user (worktrees in '
+        '/home/user/worktrees) and caches in /home/user/.cache; use the disk-backed TMPDIR for temporary files.',
     ]
     limits = (status or {}).get('limits') or {}
     if limits:

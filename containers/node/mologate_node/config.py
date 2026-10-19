@@ -60,7 +60,7 @@ class Settings:
     memory: int = 1024**3
     pids: int = 512
     disk: int = 10 * 1024**3
-    tmp_size: int = 256 * 1024**2
+    tmp_size: int = 512 * 1024**2
     bandwidth: str = '100mibps'
     nofile: int = 4096
     # Guards for the whole node.
@@ -153,7 +153,7 @@ def load_settings() -> Settings:
         memory=memory,
         pids=int(_env('NODE_CONTAINER_PIDS', '512')),
         disk=parse_size(_env('NODE_CONTAINER_DISK', '10g')),
-        tmp_size=parse_size(_env('NODE_CONTAINER_TMP', '256m')),
+        tmp_size=parse_size(_env('NODE_CONTAINER_TMP', '512m')),
         bandwidth=bandwidth,
         nofile=int(_env('NODE_CONTAINER_NOFILE', '4096')),
         max_active=max_active,
