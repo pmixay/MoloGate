@@ -1,6 +1,6 @@
 import pytest
 
-from mologate_node.config import Settings, auto_max_active, parse_size
+from mologate_node.config import Settings, auto_max_active, load_settings, parse_size
 from mologate_node.guards import (
     bandwidth_script,
     burst_bytes,
@@ -22,6 +22,18 @@ def test_parse_size():
     assert parse_size(42) == 42
     with pytest.raises(ValueError):
         parse_size('lots')
+
+
+def test_tmp_size_defaults(monkeypatch):
+    monkeypatch.setattr('os.environ', {'NODE_API_KEY': 'x' * 32})
+    assert SETTINGS.tmp_size == 512 * 1024**2
+    assert load_settings().tmp_size == 512 * 1024**2
+
+
+@pytest.mark.parametrize('value, expected', [('256m', 256 * 1024**2), ('1g', 1024**3)])
+def test_tmp_size_override(monkeypatch, value, expected):
+    monkeypatch.setattr('os.environ', {'NODE_API_KEY': 'x' * 32, 'NODE_CONTAINER_TMP': value})
+    assert load_settings().tmp_size == expected
 
 
 def test_auto_max_active():

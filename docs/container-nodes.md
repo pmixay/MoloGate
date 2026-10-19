@@ -91,7 +91,7 @@ Each container, by default (`NODE_CONTAINER_*` settings below):
 | Memory               | 1 GiB, no swap             | cgroup limit; the kernel kills sandbox processes first     |
 | Processes            | 512                        | pids limit                                                 |
 | Open files           | 4,096                      | ulimit                                                     |
-| `/tmp`               | 256 MiB                    | tmpfs (counts towards memory)                              |
+| `/tmp`               | 512 MiB                    | tmpfs (counts towards memory)                              |
 | Disk                 | 10 GiB                     | Docker quota where supported, else watched (see below)     |
 | Bandwidth            | 100 MiB/s up and down      | `tc` token bucket up, policing (or host-side shaping) down |
 | Logs                 | 1 MiB                      | json-file rotation                                         |
@@ -200,7 +200,7 @@ empty to manage nodes in the app. `MOLOGATE_CONTAINERS=false` switches chat cont
 | `NODE_CONTAINER_MEMORY`           | `1g`                                     |                                               |
 | `NODE_CONTAINER_PIDS`             | `512`                                    |                                               |
 | `NODE_CONTAINER_DISK`             | `10g`                                    |                                               |
-| `NODE_CONTAINER_TMP`              | `256m`                                   |                                               |
+| `NODE_CONTAINER_TMP`              | `512m`                                   | `/tmp` tmpfs size cap (uses container memory) |
 | `NODE_CONTAINER_BANDWIDTH`        | `100mibps`                               | `tc` rate; empty switches the cap off         |
 | `NODE_CONTAINER_DNS`              | `1.1.1.1,8.8.8.8`                        |                                               |
 | `NODE_IDLE_PAUSE_SECONDS`         | `120`                                    | 0 never pauses                                |
@@ -215,6 +215,31 @@ empty to manage nodes in the app. `MOLOGATE_CONTAINERS=false` switches chat cont
 | `NODE_GUARDS`                     | `true`                                   | Firewall rules for the sandbox bridge         |
 | `NODE_RUNTIME`                    | Docker's default                         | e.g. `runsc` for gVisor                       |
 | `NODE_MAX_UPLOAD`                 | `1g`                                     | Largest attachment copied in                  |
+
+### Sandbox temporary files and durable storage
+
+`/tmp` is a small tmpfs (512 MiB by default), not workspace disk. Its contents count against the
+container's memory limit; the size is a cap, not preallocated memory. Do not put repositories,
+worktrees, package caches or large build outputs there. Keep durable work under `/home/user`,
+worktrees under `/home/user/worktrees`, and caches under `/home/user/.cache` (the sandbox image sets
+`XDG_CACHE_HOME` there). These paths use the sandbox's disk allowance and survive pause/stop until
+the container is deleted; they are not a substitute for external backups.
+
+The sandbox entrypoint sets `TMPDIR`, `TMP` and `TEMP` to the disk-backed
+`/home/user/.local/state/open-terminal/tmp` before starting Open Terminal. This keeps Python and
+framework temporary files usable even when a command fills `/tmp`, which could otherwise produce
+HTTP 500 errors in terminal/file tools. Commands and interactive shells inherit these defaults,
+so tools honoring `TMPDIR` also use disk. Explicit nonempty temp environment overrides are preserved
+(`TMPDIR` takes precedence, followed by `TMP`, then `TEMP`, when selecting the default). `/tmp`
+itself is not redirected; tools hardcoding it still use tmpfs. Open Terminal logs already default to
+`/home/user/.local/state/open-terminal/logs`; `OPEN_TERMINAL_LOG_DIR` and upstream log configuration
+remain supported. Disk exhaustion can still break temporary files and logs, and exhausting shared node disk can affect other sandboxes. The workspace volume is not covered by writable-layer quotas; this change is not a hard per-workspace disk quota.
+
+Changing `NODE_CONTAINER_TMP` or updating the node does **not** resize existing containers
+automatically. The new cap applies only to newly created containers. Likewise, the entrypoint/cache
+changes require containers created from the updated sandbox image; pulling it does not update an
+existing container. Preserve needed work before recreating containers (including old warm spares).
+A manual tmpfs remount is only an operational workaround, not deployment of these defaults.
 
 ## Node API
 

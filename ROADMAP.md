@@ -7,21 +7,21 @@ are not in priority order. Tick an item off when it ships.
 
 See [October development updates](docs/development-updates-2026-10.md) for the detailed scope,
 review status, deployment checks and safe rollback procedure. **Merged is not the same as deployed**;
-open PRs below are not shipped.
+PRs #8–#12 are merged; PR #13 is awaiting its integration build. Production deployment is separate.
 
 - [x] **GitHub connection and working-model animation:** [PR #8](https://github.com/pmixay/MoloGate/pull/8)
       merged into main (`3dea56a`): GitHub device authorization button and one `hammer-c` working-model animation.
       The follow-up catalog fix is on main as `c334456`.
-- [ ] **Default context compaction:** [PR #9](https://github.com/pmixay/MoloGate/pull/9) is open.
+- [x] **Default context compaction:** [PR #9](https://github.com/pmixay/MoloGate/pull/9) is merged.
       Enable by default when no saved choice exists; preserve an explicit saved `enable: false`.
       Trigger at 75% of a known model context **or the 80,000-token safety threshold, whichever comes
       first**. For a 128k context, 80k triggers before 75% (96k); this is not a pure 75% trigger.
-- [ ] **Tool-use display and timing:** [PR #10](https://github.com/pmixay/MoloGate/pull/10) is open:
+- [x] **Tool-use display and timing:** [PR #10](https://github.com/pmixay/MoloGate/pull/10) is merged:
       live `hammer-c` elapsed time, actual persisted server tool start/end times, collapsed code
       snippets, mobile layout and grouped tool calls. Hide timing when timestamps are missing.
-- [ ] **Delete all chats:** [PR #11](https://github.com/pmixay/MoloGate/pull/11) is open: sidebar
+- [x] **Delete all chats:** [PR #11](https://github.com/pmixay/MoloGate/pull/11) is merged: sidebar
       action with confirmation and permission enforcement.
-- [ ] **Sandbox temporary storage:** [PR #12](https://github.com/pmixay/MoloGate/pull/12) is open:
+- [x] **Sandbox temporary storage:** [PR #12](https://github.com/pmixay/MoloGate/pull/12) is merged:
       512 MiB `/tmp`, server `TMPDIR` on disk under `/home/user`, preserving explicit overrides;
       document `XDG_CACHE_HOME` and rebuilding both images without destroying existing workspaces.
 - [ ] **Accurate, visible file changes:** [PR #13](https://github.com/pmixay/MoloGate/pull/13)

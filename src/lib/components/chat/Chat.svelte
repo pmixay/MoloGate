@@ -1134,6 +1134,18 @@
 		}
 	};
 
+	// Mologate: stamp every status entry with its start, and end when done, so StatusItem
+	// can show how long each command/search/tool ran. Carries over the previous entry's
+	// start when the backend reports the same action continuing (e.g. queue position).
+	const stampStatus = (data, previous) => {
+		if (!data || typeof data !== 'object') return data;
+		const now = Date.now();
+		const continuing = previous?.action === data.action && previous?.done !== true;
+		const startedAt = continuing ? (previous?.startedAt ?? now) : now;
+		if (previous?.startedAt && !previous.endedAt) previous.endedAt = now;
+		return { ...data, startedAt, endedAt: data.done === true ? now : undefined };
+	};
+
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
 
@@ -1165,11 +1177,11 @@
 					// (utils/chat_slots.py); only the latest is kept.
 					const last = message?.statusHistory?.at(-1);
 					if (last?.action === 'queue' && data?.action === 'queue') {
-						message.statusHistory[message.statusHistory.length - 1] = data;
+						message.statusHistory[message.statusHistory.length - 1] = stampStatus(data, last);
 					} else if (message?.statusHistory) {
-						message.statusHistory.push(data);
+						message.statusHistory.push(stampStatus(data, last));
 					} else {
-						message.statusHistory = [data];
+						message.statusHistory = [stampStatus(data, null)];
 					}
 				} else if (type === 'context_compaction') {
 					handleContextCompactionStatus(data);

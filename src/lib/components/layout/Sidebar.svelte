@@ -40,6 +40,7 @@
 	const i18n: any = getContext('i18n');
 
 	$: canImportChats = $user?.role === 'admin' || ($user?.permissions?.chat?.import ?? true);
+	$: canDeleteChats = $user?.role === 'admin' || ($user?.permissions?.chat?.delete ?? true);
 
 	import {
 		getAllTags,
@@ -91,6 +92,8 @@
 	import Dropdown from '../common/Dropdown.svelte';
 	import DropdownMenu from '../common/DropdownMenu.svelte';
 	import CheckIcon from '../icons/Check.svelte';
+	import TrashIcon from '../icons/Trash.svelte';
+	import ConfirmDialog from '../common/ConfirmDialog.svelte';
 	import MoreHorizontalIcon from './Sidebar/icons/MoreHorizontal.svelte';
 	import MobileSwipePanel from '../common/MobileSwipePanel.svelte';
 
@@ -129,6 +132,7 @@
 	let showFolders = false;
 	let showSharedFolders = false;
 	let showChatsMenu = false;
+	let showDeleteAllConfirmDialog = false;
 
 	let folders = {};
 	type SelectedSidebarFolder = { id: string } | null;
@@ -461,6 +465,20 @@
 				folder?.setChatReadAt?.(data.chat_id, data.last_read_at);
 			}
 		}
+	};
+
+	// Mologate: delete every chat from the sidebar ⋯ menu, with a confirm dialog first.
+	const deleteAllChatsHandler = async () => {
+		await goto('/');
+		const success = await deleteAllChats(localStorage.token).catch((error) => {
+			toast.error(`${error}`);
+			return false;
+		});
+		if (!success) return;
+
+		showChatsMenu = false;
+		await refreshChatRows();
+		toast.success($i18n.t('All chats deleted'));
 	};
 
 	const markAllChatsReadHandler = async () => {
@@ -849,6 +867,17 @@
 	const activeRowClass =
 		'bg-white text-gray-900 ring-1 ring-inset ring-gray-200 dark:bg-[#1a1b25] dark:text-gray-100 dark:ring-gray-700/60';
 </script>
+
+<!-- Mologate: confirmation for Delete all chats in the sidebar ⋯ menu -->
+<ConfirmDialog
+	title={$i18n.t('Delete all chats')}
+	message={$i18n.t('Are you sure you want to delete all chats? This action cannot be undone.')}
+	bind:show={showDeleteAllConfirmDialog}
+	on:confirm={deleteAllChatsHandler}
+	on:cancel={() => {
+		showDeleteAllConfirmDialog = false;
+	}}
+/>
 
 <ChannelModal
 	bind:show={showCreateChannel}
@@ -1522,6 +1551,19 @@
 											<CheckIcon className="size-3.5" />
 											<div class="flex items-center">{$i18n.t('Mark all as read')}</div>
 										</button>
+
+										{#if canDeleteChats}
+											<button
+												class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] select-none cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900"
+												on:click={() => {
+													showChatsMenu = false;
+													showDeleteAllConfirmDialog = true;
+												}}
+											>
+												<TrashIcon className="size-3.5" />
+												<div class="flex items-center">{$i18n.t('Delete all chats')}</div>
+											</button>
+										{/if}
 									</DropdownMenu>
 								</div>
 							</Dropdown>

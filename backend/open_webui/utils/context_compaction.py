@@ -19,6 +19,11 @@ from open_webui.utils.task import (
 
 log = logging.getLogger(__name__)
 
+# Mologate: compaction can also trigger as a share of the responding model's own context window.
+# Default 75: compact once the chat reaches 75% of the model's context. 0 disables this basis;
+# the fixed token threshold still applies as a fallback for models without a known window.
+AUTO_COMPACT_PERCENT_DEFAULT = 75
+
 DEFAULT_CONTEXT_COMPACTION_PROMPT = """### Task:
 Summarize the conversation history that will be compacted out of the active chat context.
 
@@ -52,12 +57,17 @@ async def compact_messages_for_request(
     if not config['enable']:
         return messages, None, False
 
+    threshold = await _resolve_auto_threshold(config, model_id, models)
+
     system_messages = [messages[0]] if messages and messages[0].get('role') == 'system' else []
     messages = messages[1:] if system_messages else messages
 
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
     token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
-    if not _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or len(messages) <= 3:
+    # Trigger on whichever comes first: the auto percentage of the model's window, or the
+    # fixed threshold (still the fallback when the model's window is unknown).
+    thresholds = sorted({t for t in (threshold, token_threshold) if t and t > 0})
+    if not _exceeds_token_thresholds(messages, system_prompt, previous_summary, thresholds) or len(messages) <= 3:
         return [*system_messages, *messages], previous_summary, False
 
     boundary = _find_compaction_boundary(messages, config['retention_percentage'])
@@ -200,6 +210,7 @@ async def _load_config() -> dict:
         'chat.context_compaction.enable',
         'chat.context_compaction.token_threshold',
         'chat.context_compaction.token_cap',
+        'chat.context_compaction.auto_compact_percent',
         'chat.context_compaction.retention_percentage',
         'chat.context_compaction.prompt_template',
     )
@@ -208,6 +219,7 @@ async def _load_config() -> dict:
         'enable': bool(values.get('chat.context_compaction.enable', False)),
         'token_threshold': token_threshold,
         'token_cap': _parse_positive_int(values.get('chat.context_compaction.token_cap')) or token_threshold,
+        'auto_compact_percent': _clamp_auto_compact_percent(values.get('chat.context_compaction.auto_compact_percent')),
         'retention_percentage': _clamp_retention_percentage(values.get('chat.context_compaction.retention_percentage')),
         'prompt_template': values.get('chat.context_compaction.prompt_template', '') or '',
     }
@@ -227,6 +239,41 @@ def _clamp_retention_percentage(value: Any) -> int:
     except (TypeError, ValueError):
         parsed = 40
     return min(50, max(10, parsed))
+
+
+def _clamp_auto_compact_percent(value: Any) -> int:
+    """0 disables the auto-percentage basis; otherwise clamp to 10–95%."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = AUTO_COMPACT_PERCENT_DEFAULT
+    if parsed <= 0:
+        return 0
+    return min(95, max(10, parsed))
+
+
+async def _resolve_auto_threshold(config: dict, model_id: str | None, models: dict) -> int | None:
+    """The auto-compact trigger in tokens, or None when this basis is off/unknown."""
+    percent = config.get('auto_compact_percent') or 0
+    if percent <= 0 or not model_id:
+        return None
+    model = models.get(model_id) if isinstance(models, dict) else None
+    if not isinstance(model, dict):
+        return None
+    window = model.get('context_window') or model.get('max_context_length') or model.get('num_ctx')
+    window = _parse_positive_int(window) if not isinstance(window, int) or window <= 0 else window
+    if not window:
+        return None
+    return max(1000, int(window * percent / 100))
+
+
+def _exceeds_token_thresholds(
+    messages: list[dict], system_prompt: str, summary: str | None, thresholds: list[int]
+) -> bool:
+    if not thresholds:
+        return False
+    threshold = min(thresholds)
+    return _exceeds_token_threshold(messages, system_prompt, summary, threshold)
 
 
 def _resolve_token_threshold(global_threshold: int, global_cap: int, metadata: dict) -> int:
@@ -251,7 +298,7 @@ def _usage_token_count(usage: dict) -> int:
     return prompt_tokens + completion_tokens
 
 
-async def get_chat_context_usage(chat: Any, model_id: str | None = None) -> dict | None:
+async def get_chat_context_usage(chat: Any, model_id: str | None = None, models: dict | None = None) -> dict | None:
     chat_data = chat.chat or {}
     history = chat_data.get('history') or {}
     current_id = getattr(chat, 'current_message_id', None) or history.get('currentId')
@@ -274,7 +321,11 @@ async def get_chat_context_usage(chat: Any, model_id: str | None = None) -> dict
     params = ((chat.chat or {}).get('params') or {}).copy()
     if model_id:
         params['model'] = model_id
-    threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], {'params': params})
+    token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], {'params': params})
+    # The usage indicator measures against the same trigger auto-compaction would use.
+    auto_threshold = await _resolve_auto_threshold(config, model_id, models or {})
+    thresholds = [t for t in (auto_threshold, token_threshold) if t and t > 0]
+    threshold = min(thresholds) if thresholds else 0
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
 
     for idx in range(len(messages) - 1, -1, -1):

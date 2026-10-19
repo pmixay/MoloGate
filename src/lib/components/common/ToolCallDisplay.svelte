@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { decode } from 'html-entities';
+	import { getToolPreview } from './toolPreview';
+	import ToolElapsed from './ToolElapsed.svelte';
 	import { v4 as uuidv4 } from 'uuid';
 
 	import { getContext } from 'svelte';
@@ -87,6 +89,9 @@
 			return str;
 		}
 	}
+
+	// Decode independently of the expanded body so collapsed rows have a preview too.
+	$: toolPreview = getToolPreview(parseArguments(decode(attributes?.arguments ?? '')));
 
 	function parseArguments(str: string): Record<string, unknown> | null {
 		try {
@@ -278,24 +283,28 @@
 
 				<!-- Label -->
 				<div class="flex-1 min-w-0 line-clamp-1">
-					<!-- Short label (below md) -->
-					<span class="@md:hidden text-black dark:text-white">{attributes.name}</span>
-					<!-- Full label (md and above) -->
-					<span class="hidden @md:inline font-normal">
-						{#if isRejected}
-							{$i18n.t('Denied {{NAME}}', { NAME: attributes.name })}
-						{:else if isDone}
-							{$i18n.t('View Result from {{NAME}}', { NAME: attributes.name })}
-						{:else if needsInput}
-							{$i18n.t('Input needed')}
-						{:else if needsApproval}
-							{$i18n.t('Allow {{NAME}}?', { NAME: attributes.name })}
-						{:else if isPreparing}
-							{$i18n.t('Preparing {{NAME}}...', { NAME: attributes.name })}
-						{:else}
-							{$i18n.t('Executing {{NAME}}...', { NAME: attributes.name })}
-						{/if}
-					</span>
+					{#if toolPreview && !needsApproval && !needsInput && !isRejected}
+						<code class="block truncate font-mono text-[0.9em]">{toolPreview}</code>
+					{:else}
+						<!-- Short label (below md) -->
+						<span class="@md:hidden text-black dark:text-white">{attributes.name}</span>
+						<!-- Full label (md and above) -->
+						<span class="hidden @md:inline font-normal">
+							{#if isRejected}
+								{$i18n.t('Denied {{NAME}}', { NAME: attributes.name })}
+							{:else if isDone}
+								{$i18n.t('View Result from {{NAME}}', { NAME: attributes.name })}
+							{:else if needsInput}
+								{$i18n.t('Input needed')}
+							{:else if needsApproval}
+								{$i18n.t('Allow {{NAME}}?', { NAME: attributes.name })}
+							{:else if isPreparing}
+								{$i18n.t('Preparing {{NAME}}...', { NAME: attributes.name })}
+							{:else}
+								{$i18n.t('Executing {{NAME}}...', { NAME: attributes.name })}
+							{/if}
+						</span>
+					{/if}
 				</div>
 
 				{#if isDelegate && subagentChatId}
@@ -319,6 +328,13 @@
 						{$i18n.t('Show in Tasks')}
 					</button>
 				{/if}
+
+				<ToolElapsed
+					startedAt={attributes?.started_at}
+					endedAt={attributes?.ended_at}
+					duration={attributes?.duration}
+					done={isDone || isRejected}
+				/>
 
 				<!-- Chevron -->
 				<div class="flex shrink-0 self-center translate-y-[1px]">

@@ -628,8 +628,8 @@
 							{/if}
 
 							{#if !message.done && !message.error}
-								<!-- Mologate: hammer animation while the agent is working -->
-								<WorkingIndicator />
+								<!-- Mologate: hammer animation + live elapsed timer while the agent is working -->
+								<WorkingIndicator startedAt={message.timestamp * 1000} />
 							{/if}
 
 							{#if message?.error}

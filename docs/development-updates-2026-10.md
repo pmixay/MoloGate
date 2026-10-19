@@ -7,21 +7,20 @@ confirm a production deployment.**
 
 ## PR and commit status
 
-| Work                                                                               | Status            | Reference                                                                                                                |
-| ---------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| GitHub device authorization button and a single `hammer-c` working-model animation | Merged into main  | [PR #8](https://github.com/pmixay/MoloGate/pull/8), merge [`3dea56a`](https://github.com/pmixay/MoloGate/commit/3dea56a) |
-| Follow-up catalog fix                                                              | On main           | [`c334456`](https://github.com/pmixay/MoloGate/commit/c334456)                                                           |
-| Default context compaction                                                         | Open, not shipped | [PR #9](https://github.com/pmixay/MoloGate/pull/9)                                                                       |
-| Live hammer elapsed time and tool details                                          | Open, not shipped | [PR #10](https://github.com/pmixay/MoloGate/pull/10)                                                                     |
-| Sidebar delete-all action                                                          | Open, not shipped | [PR #11](https://github.com/pmixay/MoloGate/pull/11)                                                                     |
-| Sandbox temporary storage                                                          | Open, not shipped | [PR #12](https://github.com/pmixay/MoloGate/pull/12)                                                                     |
-| File-change tracking correctness                                                   | Open, not shipped | [PR #13](https://github.com/pmixay/MoloGate/pull/13)                                                                     |
+| Work                                                                               | Status                        | Reference                                                                                                                |
+| ---------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| GitHub device authorization button and a single `hammer-c` working-model animation | Merged into main              | [PR #8](https://github.com/pmixay/MoloGate/pull/8), merge [`3dea56a`](https://github.com/pmixay/MoloGate/commit/3dea56a) |
+| Follow-up catalog fix                                                              | On main                       | [`c334456`](https://github.com/pmixay/MoloGate/commit/c334456)                                                           |
+| Default context compaction                                                         | Merged; deployment unverified | [PR #9](https://github.com/pmixay/MoloGate/pull/9)                                                                       |
+| Live hammer elapsed time and tool details                                          | Merged; deployment unverified | [PR #10](https://github.com/pmixay/MoloGate/pull/10)                                                                     |
+| Sidebar delete-all action                                                          | Merged; deployment unverified | [PR #11](https://github.com/pmixay/MoloGate/pull/11)                                                                     |
+| Sandbox temporary storage                                                          | Merged; deployment unverified | [PR #12](https://github.com/pmixay/MoloGate/pull/12)                                                                     |
+| File-change tracking correctness                                                   | Open, not shipped             | [PR #13](https://github.com/pmixay/MoloGate/pull/13)                                                                     |
 
 ## Latest validation status
 
-- PR #10 and PR #11: latest CI checks are green; both PRs remain open, not merged or shipped.
-- PR #12: node and entrypoint tests and the node-image build pass; the sandbox-image build is
-  pending. This is not a completed two-image rollout or deployment.
+- PRs #9–#12 passed CI and merged into main. Production deployment is not confirmed.
+- PR #12: both image builds, node/entrypoint tests and frontend checks passed.
 
 ## GitHub authorization and working-model animation — merged
 
@@ -31,7 +30,7 @@ working indicators. It merged into main as `3dea56a`; the catalog follow-up is `
 Disconnecting GitHub in the application does **not** revoke the GitHub authorization grant. If
 revocation is needed, revoke that grant in GitHub as well. Do not describe disconnect as revocation.
 
-## Context compaction — PR #9 open
+## Context compaction — PR #9 merged
 
 - Enable automatic compaction by default when the user has no saved choice.
 - Preserve an existing explicit saved `enable: false`; do not silently turn it back on.
@@ -42,9 +41,9 @@ revocation is needed, revoke that grant in GitHub as well. Do not describe disco
   that the default always waits for 75% would be incorrect.
 
 Review should cover missing settings, saved disabled settings, known and unknown context sizes,
-and both sides of the safety threshold. This PR remains open, not a shipped capability.
+and both sides of the safety threshold. This PR is merged; deployment remains unverified.
 
-## Tool-use display and timing — PR #10 open
+## Tool-use display and timing — PR #10 merged
 
 - Show a live elapsed timer with the single `hammer-c` working-model animation while work runs.
 - Use actual server-recorded tool start and end timestamps, persisted with the tool result, for
@@ -56,13 +55,13 @@ and both sides of the safety threshold. This PR remains open, not a shipped capa
 Review should include live generation, completed calls, reload, older messages without timestamps,
 collapsed snippets, grouped calls and narrow screens. The PR remains open.
 
-## Delete all chats — PR #11 open
+## Delete all chats — PR #11 merged
 
 Add the sidebar delete-all action with explicit confirmation and permission enforcement. The UI
 must not substitute for server-side authorization. Review confirmation, cancel, permitted and denied
 users before merge. This is a destructive action; do not use it as a deployment or rollback step.
 
-## Sandbox temporary storage — PR #12 open
+## Sandbox temporary storage — PR #12 merged
 
 - Increase sandbox `/tmp` to **512 MiB** (the earlier roadmap baseline is 256 MiB).
 - Put the server's default `TMPDIR` on disk under `/home/user`, avoiding filling the memory-backed
@@ -75,7 +74,7 @@ users before merge. This is a destructive action; do not use it as a deployment 
   retroactively alter every existing container; plan any existing-container migration separately.
 
 Review new containers, explicit environment overrides, temporary/cache locations and continued
-access to existing workspaces. This PR remains open; 512 MiB is not claimed as deployed.
+access to existing workspaces. This PR is merged; 512 MiB is not claimed as deployed.
 
 ## File-change tracking — PR #13 open
 
