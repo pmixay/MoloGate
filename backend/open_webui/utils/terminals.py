@@ -273,6 +273,43 @@ def add_terminal_agents_md(messages: list[dict], agents_md: str) -> list[dict]:
     return messages
 
 
+async def get_terminal_skills(request, user, metadata: dict, extra_params: dict | None = None) -> list[dict]:
+    """Discover optional terminal skills without making an unavailable listing abort a chat."""
+    import aiohttp
+    from open_webui.env import AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+
+    try:
+        terminal_request = await get_terminal_request_info(request, user, metadata, extra_params)
+        if not terminal_request:
+            return []
+        base_url, headers, cookies = terminal_request
+        timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA)
+        async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+            async with session.get(
+                f'{base_url.rstrip("/")}/skills',
+                headers=headers,
+                cookies=cookies,
+                ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
+                allow_redirects=False,
+            ) as response:
+                response.raise_for_status()
+                listed = await response.json()
+        if not isinstance(listed, list):
+            return []
+        return [
+            skill
+            for skill in listed
+            if isinstance(skill, dict)
+            and isinstance(skill.get('id'), str)
+            and skill['id']
+            and isinstance(skill.get('name'), str)
+            and skill['name']
+        ]
+    except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+        log.warning('Skipping unavailable terminal skill listing (%s)', type(e).__name__)
+        return []
+
+
 async def get_terminal_skill(
     request, user, metadata: dict, skill_name: str, extra_params: dict | None = None
 ) -> dict | None:

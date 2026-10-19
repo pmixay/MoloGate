@@ -1758,7 +1758,13 @@ async def chat_completion(
             raise  # re-raise to ensure proper task cancellation handling
         except Exception as e:
             error_detail = e.detail if isinstance(e, HTTPException) else str(e)
-            log.error('Error processing chat payload: %s', error_detail)
+            if not error_detail:
+                error_detail = (
+                    'A service timed out while processing your message. Please try again.'
+                    if isinstance(e, TimeoutError)
+                    else 'An unexpected error prevented the message from being sent. Please try again.'
+                )
+            log.error('Error processing chat payload (%s): %s', type(e).__name__, error_detail)
             if metadata.get('chat_id') and metadata.get('message_id'):
                 # Mologate: a request the provider refused outright is flagged as a refusal too.
                 refusal = refusals.detect_error(error_detail)

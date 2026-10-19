@@ -25,6 +25,20 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  sandbox-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Open Terminal
+        run: |
+          version=$(sed -n 's/^ARG OPEN_TERMINAL_VERSION=//p' containers/sandbox/Dockerfile)
+          pip install "open-terminal==$version"
+      - name: Verify commands do not block file operations
+        run: python -m unittest discover -s containers/sandbox/tests -v
+
   node-tests:
     runs-on: ubuntu-latest
     steps:
@@ -40,7 +54,7 @@ jobs:
         run: python -m pytest tests -q
 
   build:
-    needs: node-tests
+    needs: [node-tests, sandbox-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: read

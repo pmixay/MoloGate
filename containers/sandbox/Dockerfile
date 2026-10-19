@@ -6,7 +6,7 @@
 # only on a Unix socket the container node mounts, so it works with the network switched off.
 FROM python:3.12-slim-bookworm
 
-ARG OPEN_TERMINAL_VERSION=0.14.0
+ARG OPEN_TERMINAL_VERSION=0.14.2
 ARG NODE_VERSION=24.21.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -66,6 +66,7 @@ COPY mologate-sandbox.sh /usr/local/bin/mologate-sandbox
 RUN chmod 755 /usr/local/bin/mologate-sandbox \
     && mkdir -p /home/user /run/mologate \
     && git config --system init.defaultBranch main \
+    && git config --system core.pager cat \
     && git config --system safe.directory '*'
 
 WORKDIR /home/user
