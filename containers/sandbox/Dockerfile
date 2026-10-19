@@ -24,7 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash bash-completion ca-certificates curl wget gnupg \
-        git git-lfs openssh-client \
+        git git-lfs gh openssh-client \
         jq ripgrep fd-find tree less nano vim-tiny \
         procps psmisc lsof file iproute2 \
         zip unzip xz-utils bzip2 \

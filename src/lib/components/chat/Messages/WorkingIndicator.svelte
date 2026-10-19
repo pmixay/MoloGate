@@ -4,15 +4,9 @@
 
 	const i18n = getContext('i18n');
 
-	// Mologate: one of three pixel-art hammer animations, picked at random for each reply. Each is
-	// shown at its own size in pixels, so one art pixel is one CSS pixel in all of them.
-	const variants = [
-		{ name: 'hammer-a', size: 48 },
-		{ name: 'hammer-b', size: 48 },
-		// The hammer jumps on a nail until it's driven in, then a new nail comes.
-		{ name: 'hammer-c', size: 64 }
-	];
-	const variant = variants[Math.floor(Math.random() * variants.length)];
+	// Molotych: a single hammer-and-nail animation for every working model.
+	// Theme variants are the same animation; still frames respect reduced motion.
+	const variant = { name: 'hammer-c', size: 64 };
 	const src = (theme: 'dark' | 'light', ext: 'gif' | 'png') =>
 		`${WEBUI_BASE_URL}/assets/working/${variant.name}-${theme}.${ext}`;
 </script>
