@@ -2255,7 +2255,9 @@ TASK_MODEL_PARAMS = task_model_params
 
 CONTEXT_COMPACTION_MODEL = os.getenv('CONTEXT_COMPACTION_MODEL', '')
 
-ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'False').lower() == 'true'
+# Mologate: compact long contexts by default; admins can switch it off in Interface settings
+# or with ENABLE_CONTEXT_COMPACTION=False. A persisted admin setting always wins.
+ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'True').lower() == 'true'
 
 # Mologate: permission prompts. Tool calls run without asking; this model (then the fallback)
 # flags the critical or very dangerous ones for the user to confirm. See utils/tool_permissions.py.
