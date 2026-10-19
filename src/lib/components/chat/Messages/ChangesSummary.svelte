@@ -17,6 +17,7 @@
 	const i18n: any = getContext('i18n');
 
 	export let changes: ChangeRecord;
+	export let live = false;
 
 	let open = (changes?.total ?? 0) <= 4;
 	let expanded: Record<string, boolean> = {};
@@ -42,6 +43,9 @@
 			<span class="font-mono tabular-nums text-green-600 dark:text-green-400">+{changes.added}</span
 			>
 			<span class="font-mono tabular-nums text-red-600 dark:text-red-400">−{changes.removed}</span>
+			{#if live}
+				<span class="text-gray-400 dark:text-gray-500">{$i18n.t('Working')}</span>
+			{/if}
 			<ChevronDown
 				className="ml-auto size-3.5 shrink-0 text-gray-400 transition-transform {open
 					? 'rotate-180'

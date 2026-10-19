@@ -1301,6 +1301,7 @@ async def terminal_event_handler(
     tool_function_params: dict,
     tool_result,
     event_emitter,
+    metadata: dict | None = None,
 ):
     """Emit terminal:* events for Open Terminal tools.
 
@@ -1351,6 +1352,14 @@ async def terminal_event_handler(
                 'data': {},
             }
         )
+
+    # Actual workspace diffs, not guesses from tool names. Also covers commands and custom
+    # tools that edit files indirectly, and refreshes after polling a background command.
+    await change_sources.publish_live_changes(
+        metadata or {},
+        event_emitter,
+        force=tool_function_name in ('write_file', 'replace_file_content'),
+    )
 
 
 async def chat_completion_tools_handler(
@@ -1503,6 +1512,7 @@ async def chat_completion_tools_handler(
                         tool_function_params,
                         tool_result,
                         event_emitter,
+                        metadata,
                     )
 
                     if tool_result_files:
@@ -3454,7 +3464,7 @@ async def execute_tool_call_for_output(request, form_data, user, metadata, event
         user,
     )
 
-    await terminal_event_handler(name, params, result, event_emitter)
+    await terminal_event_handler(name, params, result, event_emitter, metadata)
 
     return {
         'tool_call_id': tool_call.get('id', ''),
@@ -6112,6 +6122,7 @@ async def streaming_chat_response_handler(response, ctx):
                             if item is not None:
                                 item['ended_at'] = time.time()
                                 await emit_output()
+                            await change_sources.publish_live_changes(metadata, event_emitter)
 
                     async def execute_tool_call_inner(tool_call):
                         name = tool_call.get('function', {}).get('name', '')
@@ -6221,6 +6232,7 @@ async def streaming_chat_response_handler(response, ctx):
                             tool_function_params,
                             tool_result,
                             event_emitter,
+                            metadata,
                         )
 
                         # Extract citation sources from tool results
@@ -6693,7 +6705,7 @@ async def streaming_chat_response_handler(response, ctx):
                     'output': current_output,
                     'title': title,
                     **({'usage': usage} if usage else {}),
-                    **({'changes': changes} if changes else {}),
+                    **({'changes': changes} if changes is not None else {}),
                     'refusal': refusal,
                 }
 
@@ -6707,7 +6719,7 @@ async def streaming_chat_response_handler(response, ctx):
                             'done': True,
                             'output': current_output,
                             **({'usage': usage} if usage else {}),
-                            **({'changes': changes} if changes else {}),
+                            **({'changes': changes} if changes is not None else {}),
                             'refusal': refusal,
                         },
                     )

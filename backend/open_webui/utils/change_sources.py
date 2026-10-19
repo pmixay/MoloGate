@@ -26,7 +26,10 @@ Sources:
   from `git diff` against the base.
 """
 
+import asyncio
+import hashlib
 import logging
+import time
 import re
 from typing import Awaitable, Callable
 
@@ -82,3 +85,38 @@ async def collect(metadata: dict) -> dict | None:
         log.warning('Could not collect the changes from %s: %s', name, e)
         return None
     return {**record, 'source': name} if record else None
+
+
+async def publish_live_changes(metadata: dict, event_emitter, *, force: bool = False) -> None:
+    """Refresh the response's verified file changes after tools, without scanning on every token.
+
+    This is best effort: a broken/offline node must never turn a successful tool into an error.
+    Repeated records are deduplicated and a reverted workspace clears the previous live record.
+    """
+    if not event_emitter or not metadata.get('container_snapshot'):
+        return
+    now = time.monotonic()
+    if not force and now - metadata.get('_changes_checked_at', 0) < 2:
+        return
+    metadata['_changes_checked_at'] = now
+    try:
+        record = await asyncio.wait_for(collect(metadata), timeout=5)
+        # None also means tracking failed; do not clear verified changes on an unknown result.
+        if record is None:
+            return
+        from open_webui.utils.json_codec import JSONCodec
+
+        signature = hashlib.sha256(JSONCodec.dumps(record, sort_keys=True).encode()).hexdigest()
+        saved = not (metadata.get('chat_id') and metadata.get('message_id'))
+        if not saved and signature != metadata.get('_changes_saved_signature'):
+            result = await Chats.upsert_message_to_chat_by_id_and_message_id(
+                metadata['chat_id'], metadata['message_id'], {'changes': record}, touch=False
+            )
+            if result is not None:
+                metadata['_changes_saved_signature'] = signature
+        if signature != metadata.get('_changes_signature'):
+            await event_emitter({'type': 'chat:message:changes', 'data': {'changes': record}})
+            metadata['_changes_signature'] = signature
+
+    except Exception as error:
+        log.info('Could not publish live file changes: %s', error)
