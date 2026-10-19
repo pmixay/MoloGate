@@ -24,11 +24,10 @@ open PRs below are not shipped.
 - [ ] **Sandbox temporary storage:** [PR #12](https://github.com/pmixay/MoloGate/pull/12) is open:
       512 MiB `/tmp`, server `TMPDIR` on disk under `/home/user`, preserving explicit overrides;
       document `XDG_CACHE_HOME` and rebuilding both images without destroying existing workspaces.
-- [ ] **File-change tracking correctness — in progress:** on `fix/file-change-tracking`, exclude
-      newly cloned repository baselines, generated files and caches from false counts while keeping
-      real edits visible during generation and after it finishes. Backend/UI implementation now refreshes after tools return and at response end, deduplicated and throttled to at
-      least two seconds, with forced refresh for `write_file`/`replace_file_content`; this is not a
-      filesystem watcher. New PR and CI remain pending; no PR number is assigned before creation.
+- [ ] **Accurate, visible file changes:** [PR #13](https://github.com/pmixay/MoloGate/pull/13)
+      is open: Git-aware clone/import baselines, ignored dependency and cache filtering,
+      conservative partial scans, and verified change summaries while tools work and after completion.
+      This is tool-event-driven refresh, not a continuous filesystem watcher.
 
 ## Limits
 

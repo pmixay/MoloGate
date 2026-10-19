@@ -136,7 +136,10 @@ def read_entry(rel, st, previous):
     if old and old[0] == st.st_size and old[1] == st.st_mtime_ns:
         return old
     if st.st_size > MAX_HASH:
-        return None
+        # A known large artifact must not mark namespace traversal incomplete and hide
+        # unrelated additions. Metadata-only entries have no text diff or line counts.
+        digest = hashlib.sha1(f'large:{st.st_size}:{st.st_mtime_ns}'.encode()).hexdigest()
+        return [st.st_size, st.st_mtime_ns, digest, False]
     digest, head = hashlib.sha1(), b''
     try:
         with open(os.path.join(ROOT, rel), 'rb') as f:
@@ -304,15 +307,15 @@ def finish(hunks, created, deleted, rel):
     return added, removed, '\n'.join(header + hunks) if hunks else ''
 
 
-def imported_baseline(repo_rel):
+def imported_baseline(repo_rel, ref):
     """A newly discovered repository starts at HEAD, not at an empty directory.
 
     Read old blobs in one batch, rather than launching git once per file.
     """
     repo = os.path.join(ROOT, repo_rel)
-    changed = git(repo, 'diff', '--no-ext-diff', '--name-only', '-z', 'HEAD', '--')
+    changed = git(repo, 'diff', '--no-ext-diff', '--name-only', '-z', ref, '--')
     untracked = git(repo, 'ls-files', '-z', '-o', '--exclude-standard')
-    tree = git(repo, 'ls-tree', '-r', '-z', 'HEAD')
+    tree = git(repo, 'ls-tree', '-r', '-z', ref)
     if changed is None or untracked is None or tree is None:
         return None  # Unborn HEAD or failed git: conservatively import everything.
     names = set(changed.split(b'\0')) | set(untracked.split(b'\0'))
@@ -367,6 +370,7 @@ def changes(snap_id):
     before = dict(base['files'])
     after, truncated, repos = scan(before)
     suppressed = set()
+    imports = base.setdefault('imports', {})
     for repo in sorted(set(repos) - set(base.get('repos', {}))):
         prefix = '' if repo == '.' else repo + os.sep
         # A parent repo must not suppress a nested repo's dirty paths.
@@ -374,7 +378,13 @@ def changes(snap_id):
                     if child != repo and child.startswith(prefix)]
         def belongs(rel):
             return rel.startswith(prefix) and not any(rel.startswith(child) for child in children)
-        imported = imported_baseline(repo)
+        if repo not in imports:
+            head = git(os.path.join(ROOT, repo), 'rev-parse', '--verify', 'HEAD')
+            imports[repo] = head.decode().strip() if head else None
+            # Pin the first-observed commit for this response: later commits must not
+            # erase dirty edits already shown to the user.
+            save(f'snaps/{snap_id}.json', base)
+        imported = imported_baseline(repo, imports[repo]) if imports[repo] else None
         candidates = {rel for rel in after if belongs(rel) and rel not in before}
         if imported is None:
             suppressed.update(candidates)

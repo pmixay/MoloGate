@@ -7,15 +7,15 @@ confirm a production deployment.**
 
 ## PR and commit status
 
-| Work                                                                               | Status                                    | Reference                                                                                                                |
-| ---------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| GitHub device authorization button and a single `hammer-c` working-model animation | Merged into main                          | [PR #8](https://github.com/pmixay/MoloGate/pull/8), merge [`3dea56a`](https://github.com/pmixay/MoloGate/commit/3dea56a) |
-| Follow-up catalog fix                                                              | On main                                   | [`c334456`](https://github.com/pmixay/MoloGate/commit/c334456)                                                           |
-| Default context compaction                                                         | Open, not shipped                         | [PR #9](https://github.com/pmixay/MoloGate/pull/9)                                                                       |
-| Live hammer elapsed time and tool details                                          | Open, not shipped                         | [PR #10](https://github.com/pmixay/MoloGate/pull/10)                                                                     |
-| Sidebar delete-all action                                                          | Open, not shipped                         | [PR #11](https://github.com/pmixay/MoloGate/pull/11)                                                                     |
-| Sandbox temporary storage                                                          | Open, not shipped                         | [PR #12](https://github.com/pmixay/MoloGate/pull/12)                                                                     |
-| File-change tracking correctness                                                   | In progress on `fix/file-change-tracking` | New PR not yet assigned; do not assume #13                                                                               |
+| Work                                                                               | Status            | Reference                                                                                                                |
+| ---------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| GitHub device authorization button and a single `hammer-c` working-model animation | Merged into main  | [PR #8](https://github.com/pmixay/MoloGate/pull/8), merge [`3dea56a`](https://github.com/pmixay/MoloGate/commit/3dea56a) |
+| Follow-up catalog fix                                                              | On main           | [`c334456`](https://github.com/pmixay/MoloGate/commit/c334456)                                                           |
+| Default context compaction                                                         | Open, not shipped | [PR #9](https://github.com/pmixay/MoloGate/pull/9)                                                                       |
+| Live hammer elapsed time and tool details                                          | Open, not shipped | [PR #10](https://github.com/pmixay/MoloGate/pull/10)                                                                     |
+| Sidebar delete-all action                                                          | Open, not shipped | [PR #11](https://github.com/pmixay/MoloGate/pull/11)                                                                     |
+| Sandbox temporary storage                                                          | Open, not shipped | [PR #12](https://github.com/pmixay/MoloGate/pull/12)                                                                     |
+| File-change tracking correctness                                                   | Open, not shipped | [PR #13](https://github.com/pmixay/MoloGate/pull/13)                                                                     |
 
 ## Latest validation status
 
@@ -77,7 +77,7 @@ users before merge. This is a destructive action; do not use it as a deployment 
 Review new containers, explicit environment overrides, temporary/cache locations and continued
 access to existing workspaces. This PR remains open; 512 MiB is not claimed as deployed.
 
-## File-change tracking — implemented locally; PR/CI pending
+## File-change tracking — PR #13 open
 
 Working branch: `fix/file-change-tracking` in `/home/user/worktrees/file-changes`.
 
@@ -91,15 +91,12 @@ with a minimum two-second interval; `write_file` and `replace_file_content` forc
 are saved to the message, and the change summary is visible while work is running. Verification
 confirmed that an empty change record clears the summary after a revert.
 
-This is **tool-event-driven refresh, not a filesystem watcher**; do not claim continuous observation
-of arbitrary filesystem writes. The new PR and its CI are pending. Final exclusion rules and broader
-validation remain **implemented locally; PR/CI pending**: do not mark the fix merged, shipped or complete, or infer a PR
-number before one is created. Review must guard against overly broad filters hiding real source
-edits, changes to already tracked files, or legitimate new files.
-
-Remaining checks include clean clone baselines; generated/cache-only activity; real additions, edits
-and deletions; live updates during generation; and retained accurate changes after completion.
-Only the verification explicitly recorded above is confirmed here; broader results are not assumed.
+This is **tool-event-driven refresh, not a filesystem watcher**. The scanner respects Git ignore
+rules for untracked files while retaining tracked source edits, skips cache/virtual environments,
+and pins newly imported repository baselines at their first-observed commit. Committing an already
+observed edit does not erase it. Partial scans and large artifacts do not synthesize changes or
+hide unrelated additions. Live refresh has a five-second deadline and failures are nonfatal;
+final collection uses the normal tracking deadline. PR #13 is open and CI is running.
 
 ## Deployment and safe rollback
 
@@ -135,6 +132,5 @@ to the correct individual agent or turn.
 
 ## Local verification snapshot
 
-Reported local checks passed: 11 live-change tests, 14 backend container tests and an initial run of
-22 container-node tests. These are local test results, not final CI, merge or deployment claims.
-Broader validation and the new PR's CI remain pending.
+Reported local checks passed: 11 live-change tests, 14 backend container tests and 25 container-node tests. These are local test results, not final CI, merge or deployment claims.
+14 frontend unit tests also passed; deployment smoke tests and PR #13 CI remain pending.

@@ -145,3 +145,31 @@ def test_new_nested_repository_changes_not_suppressed_by_parent(tmp_path):
     result = run(tmp_path, 'changes')
     assert [f['path'] for f in result['files']] == ['project/child/source.py']
     assert result['files'][0]['status'] == 'modified'
+
+
+def test_large_artifact_does_not_hide_unrelated_additions(tmp_path):
+    home = tmp_path / 'home'
+    home.mkdir()
+    with (home / 'large.dat').open('wb') as stream:
+        stream.truncate(8 * 1024 * 1024 + 1)
+    (home / 'existing.txt').write_text('before')
+    assert not run(tmp_path, 'snapshot')['truncated']
+    (home / 'new.py').write_text('new source')
+    (home / 'existing.txt').write_text('after')
+    result = run(tmp_path, 'changes')
+    assert {f['path'] for f in result['files']} == {'existing.txt', 'new.py'}
+
+
+def test_observed_import_changes_survive_later_commit(tmp_path):
+    project = clone(tmp_path)
+    assert run(tmp_path, 'changes')['total'] == 0
+    (project / 'source.py').write_text('edited during turn\n')
+    assert run(tmp_path, 'changes')['total'] == 1
+    git(project, 'config', 'user.name', 'Test')
+    git(project, 'config', 'user.email', 'test@example.com')
+    git(project, 'add', '.')
+    git(project, 'commit', '-m', 'model edit')
+    result = run(tmp_path, 'changes')
+    assert result['total'] == 1
+    assert result['files'][0]['path'] == 'project/source.py'
+    assert (result['added'], result['removed']) == (1, 1)
