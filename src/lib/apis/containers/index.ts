@@ -48,10 +48,12 @@ const request = async <T>(
 	token: string,
 	path: string,
 	method = 'GET',
-	body?: object
+	body?: object,
+	signal?: AbortSignal
 ): Promise<T> => {
 	const response = await fetch(`${WEBUI_API_BASE_URL}/containers${path}`, {
 		method,
+		signal,
 		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 		...(body ? { body: JSON.stringify(body) } : {})
 	});
@@ -82,3 +84,48 @@ export const getContainerNodes = (token: string) =>
 
 export const setContainerNodes = (token: string, enable: boolean, nodes: ContainerNode[]) =>
 	request<{ enable: boolean; nodes: ContainerNode[] }>(token, '/nodes', 'POST', { enable, nodes });
+
+// GitHub device authorization belongs to this saved chat; access tokens stay server-side.
+export type ChatGitHubConnection = {
+	connected: boolean;
+	login?: string;
+	code?: string;
+	verification_uri?: string;
+	pending?: boolean;
+};
+
+export const getChatGitHub = (token: string, chatId: string, signal?: AbortSignal) =>
+	request<ChatGitHubConnection>(
+		token,
+		`/chats/${encodeURIComponent(chatId)}/github`,
+		'GET',
+		undefined,
+		signal
+	);
+
+export const connectChatGitHub = (token: string, chatId: string, signal?: AbortSignal) =>
+	request<ChatGitHubConnection>(
+		token,
+		`/chats/${encodeURIComponent(chatId)}/github/connect`,
+		'POST',
+		undefined,
+		signal
+	);
+
+export const pollChatGitHub = (token: string, chatId: string, signal?: AbortSignal) =>
+	request<ChatGitHubConnection>(
+		token,
+		`/chats/${encodeURIComponent(chatId)}/github/poll`,
+		'POST',
+		undefined,
+		signal
+	);
+
+export const disconnectChatGitHub = (token: string, chatId: string, signal?: AbortSignal) =>
+	request<ChatGitHubConnection>(
+		token,
+		`/chats/${encodeURIComponent(chatId)}/github`,
+		'DELETE',
+		undefined,
+		signal
+	);

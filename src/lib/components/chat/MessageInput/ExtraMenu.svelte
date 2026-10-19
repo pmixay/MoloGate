@@ -21,6 +21,9 @@
 	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
+	import GitHubConnection from './GitHubConnection.svelte';
+	import Github from '$lib/components/icons/Github.svelte';
+	import type { ChatGitHubConnection } from '$lib/apis/containers';
 	import InfoCircle from '$lib/components/icons/InfoCircle.svelte';
 
 	const i18n: any = getContext('i18n');
@@ -28,6 +31,21 @@
 	export let chatId = '';
 
 	let show = false;
+	let github: GitHubConnection;
+	let githubConnection: ChatGitHubConnection | null = null;
+	let githubBusy = false;
+	let githubError = '';
+	let githubChatId = chatId;
+	$: if (githubChatId !== chatId) {
+		githubChatId = chatId;
+		githubConnection = null;
+		githubBusy = false;
+		githubError = '';
+	}
+	const openGitHub = () => {
+		show = false;
+		github?.open();
+	};
 	let container: ChatContainer | null = null;
 	let saving = false;
 	// Re-mounts the switch when a change is refused, so it shows the real state again.
@@ -44,6 +62,8 @@
 	let loadedFor: string | null = null;
 	$: if (chatId !== loadedFor) {
 		loadedFor = chatId;
+		container = null;
+		saving = false;
 		load();
 	}
 	$: if (show || $newChatContainerNetwork === null) {
@@ -69,14 +89,17 @@
 			newChatContainerNetwork.set(enabled);
 			return;
 		}
+		const id = chatId;
 		saving = true;
 		try {
-			container = await setChatContainerNetwork(localStorage.token, chatId, enabled);
+			const data = await setChatContainerNetwork(localStorage.token, id, enabled);
+			if (id === chatId) container = data;
 		} catch (error) {
+			if (id !== chatId) return;
 			toast.error(`${error}`);
 			switchKey += 1;
 		} finally {
-			saving = false;
+			if (id === chatId) saving = false;
 		}
 	};
 
@@ -195,6 +218,52 @@
 					/>
 				{/key}
 			</div>
+			<button
+				type="button"
+				class="flex w-full items-center gap-2.5 px-2 py-2 rounded-xl text-left hover:bg-gray-50/60 dark:hover:bg-gray-800/60 disabled:opacity-60"
+				disabled={githubBusy}
+				on:click={openGitHub}
+				aria-busy={githubBusy}
+			>
+				<Github className="size-4 shrink-0" />
+				<div class="flex-1 min-w-0">
+					<div class="text-[0.8125rem]">
+						{githubConnection?.connected ? $i18n.t('Manage GitHub') : $i18n.t('Connect GitHub')}
+					</div>
+					<div class="text-xs text-gray-500 dark:text-gray-400 leading-snug" role="status">
+						{#if !saved}
+							{$i18n.t('Send a message first to connect GitHub')}
+						{:else if githubBusy}
+							{$i18n.t('Checking GitHub…')}
+						{:else if githubError}
+							{$i18n.t('Unable to check GitHub. Click to retry.')}
+						{:else if githubConnection?.connected}
+							{githubConnection.login
+								? $i18n.t('Connected as {{login}}', { login: githubConnection.login })
+								: $i18n.t('Connected')}
+						{:else if !network}
+							{$i18n.t('Enable network access to connect GitHub')}
+						{:else if githubConnection?.pending}
+							{$i18n.t('Waiting for authorization')}
+						{:else}
+							{$i18n.t('Authorize GitHub for this chat')}
+						{/if}
+					</div>
+				</div>
+			</button>
 		</DropdownMenu>
 	</div>
 </Dropdown>
+
+<!-- Kept outside dropdown content so device authorization survives closing the Extra menu. -->
+{#key chatId}
+	<GitHubConnection
+		bind:this={github}
+		{chatId}
+		{network}
+		menuOpen={show}
+		bind:connection={githubConnection}
+		bind:busy={githubBusy}
+		bind:error={githubError}
+	/>
+{/key}

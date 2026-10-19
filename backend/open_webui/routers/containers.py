@@ -67,6 +67,35 @@ async def set_chat_network(chat_id: str, form_data: NetworkForm, user=Depends(ge
     return await containers.describe(context)
 
 
+# GitHub credentials and device-login process stay inside this chat's sandbox.
+async def _github(chat_id: str, user, operation: str):
+    from open_webui.utils.github import github
+
+    await _require_enabled()
+    context = await _chat_context(chat_id, user)
+    return await github(context, user.id, operation)
+
+
+@router.get('/chats/{chat_id}/github')
+async def get_chat_github(chat_id: str, user=Depends(get_verified_user)):
+    return await _github(chat_id, user, 'status')
+
+
+@router.post('/chats/{chat_id}/github/connect')
+async def connect_chat_github(chat_id: str, user=Depends(get_verified_user)):
+    return await _github(chat_id, user, 'connect')
+
+
+@router.post('/chats/{chat_id}/github/poll')
+async def poll_chat_github(chat_id: str, user=Depends(get_verified_user)):
+    return await _github(chat_id, user, 'poll')
+
+
+@router.delete('/chats/{chat_id}/github')
+async def disconnect_chat_github(chat_id: str, user=Depends(get_verified_user)):
+    return await _github(chat_id, user, 'disconnect')
+
+
 class WarmupForm(BaseModel):
     chat_id: str | None = None
 
