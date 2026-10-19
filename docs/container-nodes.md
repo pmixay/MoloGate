@@ -91,7 +91,7 @@ Each container, by default (`NODE_CONTAINER_*` settings below):
 | Memory               | 1 GiB, no swap             | cgroup limit; the kernel kills sandbox processes first     |
 | Processes            | 512                        | pids limit                                                 |
 | Open files           | 4,096                      | ulimit                                                     |
-| `/tmp`               | 256 MiB                    | tmpfs (counts towards memory)                              |
+| `/tmp`               | 512 MiB                    | tmpfs (counts towards memory)                              |
 | Disk                 | 10 GiB                     | Docker quota where supported, else watched (see below)     |
 | Bandwidth            | 100 MiB/s up and down      | `tc` token bucket up, policing (or host-side shaping) down |
 | Logs                 | 1 MiB                      | json-file rotation                                         |
@@ -233,7 +233,7 @@ so tools honoring `TMPDIR` also use disk. Explicit nonempty temp environment ove
 (`TMPDIR` takes precedence, followed by `TMP`, then `TEMP`, when selecting the default). `/tmp`
 itself is not redirected; tools hardcoding it still use tmpfs. Open Terminal logs already default to
 `/home/user/.local/state/open-terminal/logs`; `OPEN_TERMINAL_LOG_DIR` and upstream log configuration
-remain supported. Disk exhaustion can still break temporary files and logs.
+remain supported. Disk exhaustion can still break temporary files and logs, and exhausting shared node disk can affect other sandboxes. The workspace volume is not covered by writable-layer quotas; this change is not a hard per-workspace disk quota.
 
 Changing `NODE_CONTAINER_TMP` or updating the node does **not** resize existing containers
 automatically. The new cap applies only to newly created containers. Likewise, the entrypoint/cache
