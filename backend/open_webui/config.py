@@ -2255,12 +2255,19 @@ TASK_MODEL_PARAMS = task_model_params
 
 CONTEXT_COMPACTION_MODEL = os.getenv('CONTEXT_COMPACTION_MODEL', '')
 
-ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'False').lower() == 'true'
+# Mologate: compact long contexts by default; admins can switch it off in Interface settings
+# or with ENABLE_CONTEXT_COMPACTION=False. A persisted admin setting always wins.
+ENABLE_CONTEXT_COMPACTION = os.getenv('ENABLE_CONTEXT_COMPACTION', 'True').lower() == 'true'
 
 # Mologate: permission prompts. Tool calls run without asking; this model (then the fallback)
 # flags the critical or very dangerous ones for the user to confirm. See utils/tool_permissions.py.
 TOOL_PERMISSION_MODEL = os.getenv('TOOL_PERMISSION_MODEL', 'codex-auto-approve')
 TOOL_PERMISSION_FALLBACK_MODEL = os.getenv('TOOL_PERMISSION_FALLBACK_MODEL', 'glm-5.3-flash')
+
+# Mologate: compact once the chat reaches this share of the responding model's own context
+# window (per-model basis). 0 disables the percentage basis; the fixed threshold below still
+# applies as a fallback for models whose window is unknown. Default 75%.
+CONTEXT_COMPACTION_AUTO_COMPACT_PERCENT = int(os.getenv('CONTEXT_COMPACTION_AUTO_COMPACT_PERCENT', '75'))
 
 CONTEXT_COMPACTION_TOKEN_THRESHOLD = int(os.getenv('CONTEXT_COMPACTION_TOKEN_THRESHOLD', '80000'))
 
@@ -3214,6 +3221,7 @@ DEFAULT_CONFIG = {
     'task.model.params': TASK_MODEL_PARAMS,
     'chat.context_compaction.model': CONTEXT_COMPACTION_MODEL,
     'chat.context_compaction.enable': ENABLE_CONTEXT_COMPACTION,
+    'chat.context_compaction.auto_compact_percent': CONTEXT_COMPACTION_AUTO_COMPACT_PERCENT,
     'chat.context_compaction.token_threshold': CONTEXT_COMPACTION_TOKEN_THRESHOLD,
     'chat.context_compaction.token_cap': CONTEXT_COMPACTION_TOKEN_CAP,
     'chat.context_compaction.retention_percentage': CONTEXT_COMPACTION_RETENTION_PERCENTAGE,
