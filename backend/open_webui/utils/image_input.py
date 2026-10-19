@@ -6,7 +6,8 @@ this order:
 1. The admin turned the model's Vision capability off: it can't read images.
 2. The provider's ``/models`` metadata lists the model's input modalities and images aren't
    among them: it can't read images.
-3. Otherwise it can, as before.
+3. Without modality metadata, a documented text-only model can't read images.
+4. Otherwise it can, as before.
 
 Custom models built on a base model inherit the base model's provider metadata.
 
@@ -14,12 +15,20 @@ Requests to a model that can't read images have their image parts replaced with 
 note, so earlier images in the chat, or images a tool returned, never reach it.
 """
 
+import re
 from typing import Any
 
 FLAG_KEY = 'reads_images'
 
 IMAGE_PART_TYPES = {'image_url', 'input_image'}
 IMAGE_OMITTED_NOTE = '[Image omitted: the selected model cannot read images.]'
+
+# Z.ai can omit modalities from /models. These flagships accept text only:
+# https://docs.z.ai/guides/llm/glm-5.2
+# https://docs.z.ai/guides/llm/glm-5.3
+# Match whole upstream names, allowing account, organization and connection prefixes.
+# Do not match the entire family: GLM-5.3-Flash/FlashX and GLM-5V support images.
+TEXT_ONLY_GLM = re.compile(r'(?:^|[:/.])glm-5\.[23]$', re.IGNORECASE)
 
 
 def _modalities(value: Any) -> list[str] | None:
@@ -33,7 +42,7 @@ def _modalities(value: Any) -> list[str] | None:
 
 
 def get_provider_reads_images(model: dict) -> bool | None:
-    """What a provider's /models entry says about image input, or None when it says nothing."""
+    """Image support from /models or documented model defaults, otherwise None."""
     raw = model.get('openai') if isinstance(model.get('openai'), dict) else model
 
     architecture = raw.get('architecture') if isinstance(raw.get('architecture'), dict) else {}
@@ -50,6 +59,10 @@ def get_provider_reads_images(model: dict) -> bool | None:
 
     if isinstance(raw.get('supports_vision'), bool):
         return raw['supports_vision']
+
+    upstream_id = str(model.get('upstream_model_id') or raw.get('id') or model.get('id') or '').strip()
+    if TEXT_ONLY_GLM.search(upstream_id):
+        return False
     return None
 
 
