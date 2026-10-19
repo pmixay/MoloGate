@@ -29,6 +29,15 @@ PRs #8–#12 are merged; PR #13 is awaiting its integration build. Production de
       conservative partial scans, and verified change summaries while tools work and after completion.
       This is tool-event-driven refresh, not a continuous filesystem watcher.
 
+## Tool-context efficiency
+
+- [ ] **Request-only tool clearing and mid-loop compaction:** implemented on
+      `fix/tool-context-budget`, pending review/CI. Keep full chat transcripts while bounding replayed
+      results, summarize long tool loops at complete call/result boundaries, refresh the context
+      indicator from actual outgoing requests, and prefer direct work over unnecessary delegation.
+      See [tool context management](docs/tool-context-management.md) for budgets, opt-out, tradeoffs
+      and the public Claude context-engineering references.
+
 ## Limits
 
 The full design and phased plan for accounts, limits, credits and personal API keys is in

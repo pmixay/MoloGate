@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -7,6 +8,7 @@ from fastapi.responses import JSONResponse
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.utils.chat_id import is_saved_chat_id
+from open_webui.utils.tool_context import clear_tool_context, safe_tool_boundary, summary_messages
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list
 from open_webui.utils.payload import apply_params_to_form_data
@@ -406,6 +408,8 @@ async def _generate_summary(
         raise ValueError('No available model for context compaction')
 
     summary_prompt_template = summary_prompt_template.strip() or DEFAULT_CONTEXT_COMPACTION_PROMPT
+    compacted_messages = summary_messages(compacted_messages)
+    recent_messages = summary_messages(recent_messages)
     all_messages = [*compacted_messages, *recent_messages]
     prompt = replace_prompt_variable(summary_prompt_template, get_last_user_message(all_messages) or '')
     prompt = replace_messages_variable(prompt, all_messages)
@@ -508,3 +512,93 @@ def _estimate_tokens(value: Any) -> int:
         return 0
 
     return max(1, len(value) // 4)
+
+
+async def prepare_tool_continuation(
+    request, user, payload: dict, metadata: dict, models: dict, *, output_items: int = 0
+) -> dict:
+    """Clear old tool payloads on every round, then summarize at a protocol-safe boundary.
+
+    The transcript is not modified. A cached prefix digest keeps previously summarized loop
+    history out of subsequent requests even when display output is reconstructed from scratch.
+    Stateful provider continuations cannot clear server history: start a fresh stateless request
+    from the complete reconstructed transcript whenever editing or summary changes it.
+    """
+    original = payload.get('messages') or []
+    editing = await Config.get('chat.tool_context.enable', True)
+    messages = clear_tool_context(original) if editing else original
+    replay = original
+    cache = metadata.get('_tool_context_checkpoint')
+    reused = False
+    if isinstance(cache, dict) and len(messages) >= cache['count']:
+        prefix = JSONCodec.dumps(original[: cache['count']], sort_keys=True)
+        if hashlib.sha256(prefix.encode()).hexdigest() == cache['digest']:
+            messages = [
+                *cache.get('systems', []),
+                {'role': 'system', 'content': cache['summary']},
+                *messages[cache['count'] :],
+            ]
+            reused = True
+    config = await _load_config()
+    threshold = await _resolve_auto_threshold(config, payload.get('model'), models)
+    fixed = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
+    threshold = min(t for t in (threshold, fixed) if t and t > 0)
+    estimate = _estimate_messages_tokens(messages) + _estimate_tokens(payload.get('tools'))
+    if config['enable'] and estimate >= threshold:
+        boundary = safe_tool_boundary(messages)
+        if boundary:
+            try:
+                summary = await _generate_summary(
+                    request,
+                    user,
+                    payload.get('model'),
+                    models,
+                    messages[:boundary],
+                    messages[boundary:],
+                    None,
+                    config['prompt_template'],
+                )
+                if summary.strip():
+                    prefix_count = boundary
+                    if reused:
+                        prefix_count += cache['count'] - len(cache.get('systems', [])) - 1
+                    kept_systems = [m for m in original[:prefix_count] if m.get('role') in ('system', 'developer')]
+                    last_user = next((m for m in reversed(original) if m.get('role') == 'user'), None)
+                    if last_user is not None and last_user not in messages[boundary:]:
+                        kept_systems.append(last_user)
+                    note = '[CONVERSATION SUMMARY]\n' + summary
+                    # Keep original system/developer instructions verbatim; summary is separate.
+                    messages = [*kept_systems, {'role': 'system', 'content': note}, *messages[boundary:]]
+                    cache = {
+                        'count': prefix_count,
+                        'digest': hashlib.sha256(
+                            JSONCodec.dumps(replay[:prefix_count], sort_keys=True).encode()
+                        ).hexdigest(),
+                        'summary': note,
+                        'systems': kept_systems,
+                    }
+                    metadata['_tool_context_checkpoint'] = cache
+            except Exception:
+                log.exception('Tool-loop compaction failed; keeping bounded tool results')
+    result = {**payload, 'messages': messages}
+    if messages != original:
+        result.pop('previous_response_id', None)
+    # Report what is actually sent after clearing, including every tool continuation.
+    try:
+        from open_webui.utils.context_window import build_context_breakdown
+
+        breakdown = build_context_breakdown(result)
+        breakdown['output_items'] = output_items
+        if is_saved_chat_id(metadata.get('chat_id')) and metadata.get('message_id'):
+            await Chats.upsert_message_to_chat_by_id_and_message_id(
+                metadata['chat_id'], metadata['message_id'], {'context_breakdown': breakdown}, touch=False
+            )
+        if metadata.get('chat_id') and metadata.get('message_id'):
+            from open_webui.socket.main import get_event_emitter
+
+            emitter = await get_event_emitter(metadata)
+            if emitter:
+                await emitter({'type': 'chat:completion', 'data': {'context_breakdown': breakdown}})
+    except Exception:
+        log.debug('Could not publish tool context breakdown', exc_info=True)
+    return result
