@@ -1,5 +1,6 @@
 <script>
 	import { getContext } from 'svelte';
+	import ToolElapsed from '$lib/components/common/ToolElapsed.svelte';
 	const i18n = getContext('i18n');
 	import WebSearchResults from '../WebSearchResults.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
@@ -169,5 +170,12 @@
 				</div>
 			</div>
 		{/if}
+		<div class="ml-auto shrink-0">
+			<ToolElapsed
+				startedAt={status?.startedAt ? status.startedAt / 1000 : undefined}
+				endedAt={status?.endedAt ? status.endedAt / 1000 : undefined}
+				done={done || status?.done === true}
+			/>
+		</div>
 	</div>
 {/if}

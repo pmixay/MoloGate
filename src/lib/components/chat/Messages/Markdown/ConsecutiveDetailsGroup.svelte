@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getToolPreview } from '$lib/components/common/toolPreview';
 	import { decode } from 'html-entities';
 	import { getContext } from 'svelte';
 	import type { Writable } from 'svelte/store';
@@ -154,7 +155,13 @@
 			tokens
 				.filter((t) => t?.attributes?.type === 'tool_calls')
 				.forEach((t) => {
-					const name = t?.attributes?.name ?? 'tool';
+					let preview = '';
+					try {
+						preview = getToolPreview(JSON.parse(decode(t.attributes?.arguments ?? '{}')));
+					} catch {
+						/* Arguments may still be streaming. */
+					}
+					const name = preview || t?.attributes?.name || 'tool';
 					nameCounts[name] = (nameCounts[name] || 0) + 1;
 				});
 

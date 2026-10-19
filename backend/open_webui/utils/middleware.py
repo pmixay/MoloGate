@@ -3534,15 +3534,21 @@ async def drain_approved_tool_calls(request, form_data, user, model, metadata) -
                 'arguments': item.get('arguments', '{}'),
             },
         }
-        result = await execute_tool_call_for_output(
-            request,
-            form_data,
-            user,
-            metadata,
-            event_caller,
-            event_emitter,
-            tool_call,
-        )
+        item['started_at'] = time.time()
+        if event_emitter:
+            await event_emitter({'type': 'chat:completion', 'data': {'done': False, 'output': output}})
+        try:
+            result = await execute_tool_call_for_output(
+                request,
+                form_data,
+                user,
+                metadata,
+                event_caller,
+                event_emitter,
+                tool_call,
+            )
+        finally:
+            item['ended_at'] = time.time()
         item['arguments'] = tool_call.get('function', {}).get('arguments', '{}')
         output_parts = [{'type': 'input_text', 'text': result.get('content', '')}]
         item['status'] = 'failed' if _is_tool_result_error(result.get('content', '')) else 'completed'
@@ -6087,6 +6093,27 @@ async def streaming_chat_response_handler(response, ctx):
                         return params
 
                     async def execute_tool_call(tool_call):
+                        # Both Chat Completions and Responses calls reach this executor.
+                        call_id = tool_call.get('id', '')
+                        item = next(
+                            (
+                                item
+                                for item in output
+                                if item.get('type') == 'function_call' and item.get('call_id') == call_id
+                            ),
+                            None,
+                        )
+                        if item is not None:
+                            item['started_at'] = time.time()
+                            await emit_output()
+                        try:
+                            return await execute_tool_call_inner(tool_call)
+                        finally:
+                            if item is not None:
+                                item['ended_at'] = time.time()
+                                await emit_output()
+
+                    async def execute_tool_call_inner(tool_call):
                         name = tool_call.get('function', {}).get('name', '')
                         try:
                             params = parse_tool_params(tool_call)
