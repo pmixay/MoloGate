@@ -89,7 +89,8 @@ from open_webui.utils.ask_user import stage_ask_user_tool_calls
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
-from open_webui.utils.context_compaction import compact_messages_for_request
+from open_webui.utils.context_compaction import compact_messages_for_request, prepare_tool_continuation
+from open_webui.utils.tool_context import clear_tool_context, context_output_count, TOOL_GUIDANCE
 from open_webui.utils.context_window import build_context_breakdown
 from open_webui.utils.files import (
     convert_markdown_base64_images,
@@ -2557,6 +2558,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         reasoning_format=get_reasoning_format(model),
     )
     form_data['messages'] = sanitize_tool_pairs(form_data['messages'])
+    if await Config.get('chat.tool_context.enable', True):
+        form_data['messages'] = clear_tool_context(form_data['messages'])
 
     system_message = get_system_message(form_data.get('messages', []))
     if system_message:  # Chat Controls/User Settings
@@ -3315,6 +3318,9 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             raise Exception(f'{e}')
 
     form_data = normalize_messages_for_model(form_data)
+
+    if metadata.get('tools') or form_data.get('tools'):
+        form_data['messages'] = add_or_update_system_message(TOOL_GUIDANCE, form_data['messages'], append=True)
 
     # Mologate: what fills the context window, for the composer's context indicator. Only a
     # fresh turn records it; a resumed or continued turn keeps the one its first request made.
@@ -6384,53 +6390,47 @@ async def streaming_chat_response_handler(response, ctx):
                             'metadata': metadata,
                         }
 
-                        if ENABLE_RESPONSES_API_STATEFUL and last_response_id:
-                            system_message = get_system_message(form_data['messages'])
-                            new_form_data['messages'] = (
-                                [system_message] if system_message else []
-                            ) + convert_output_to_messages(
-                                output, raw=True, reasoning_format=get_reasoning_format(model)
+                        # Context editing must use complete local history. A provider's
+                        # previous_response_id would retain old tool results server-side.
+                        new_form_data.pop('previous_response_id', None)
+                        tool_messages = convert_output_to_messages(
+                            output,
+                            raw=True,
+                            reasoning_format=get_reasoning_format(model),
+                            flatten_tool_images=True,
+                        )
+
+                        # Chat Completions providers don't support multimodal
+                        # tool messages.  Extract images into a user message.
+                        image_urls = []
+                        for message in tool_messages:
+                            if message.get('role') == 'tool' and isinstance(message.get('content'), list):
+                                text_parts = []
+                                for part in message['content']:
+                                    if part.get('type') == 'input_text':
+                                        text_parts.append(part.get('text', ''))
+                                    elif part.get('type') == 'input_image':
+                                        image_urls.append(part.get('image_url', ''))
+                                message['content'] = ''.join(text_parts)
+
+                        new_form_data['messages'] = [
+                            *form_data['messages'],
+                            *tool_messages,
+                        ]
+
+                        if image_urls:
+                            new_form_data['messages'].append(
+                                {
+                                    'role': 'user',
+                                    'content': [
+                                        {
+                                            'type': 'text',
+                                            'text': 'Here are the images from the tool results above. Please analyze them.',
+                                        },
+                                        *[{'type': 'image_url', 'image_url': {'url': url}} for url in image_urls],
+                                    ],
+                                }
                             )
-                            new_form_data['previous_response_id'] = last_response_id
-                        else:
-                            tool_messages = convert_output_to_messages(
-                                output,
-                                raw=True,
-                                reasoning_format=get_reasoning_format(model),
-                                flatten_tool_images=True,
-                            )
-
-                            # Chat Completions providers don't support multimodal
-                            # tool messages.  Extract images into a user message.
-                            image_urls = []
-                            for message in tool_messages:
-                                if message.get('role') == 'tool' and isinstance(message.get('content'), list):
-                                    text_parts = []
-                                    for part in message['content']:
-                                        if part.get('type') == 'input_text':
-                                            text_parts.append(part.get('text', ''))
-                                        elif part.get('type') == 'input_image':
-                                            image_urls.append(part.get('image_url', ''))
-                                    message['content'] = ''.join(text_parts)
-
-                            new_form_data['messages'] = [
-                                *form_data['messages'],
-                                *tool_messages,
-                            ]
-
-                            if image_urls:
-                                new_form_data['messages'].append(
-                                    {
-                                        'role': 'user',
-                                        'content': [
-                                            {
-                                                'type': 'text',
-                                                'text': 'Here are the images from the tool results above. Please analyze them.',
-                                            },
-                                            *[{'type': 'image_url', 'image_url': {'url': url}} for url in image_urls],
-                                        ],
-                                    }
-                                )
 
                         if not model_reads_images(model):
                             new_form_data = strip_image_inputs(new_form_data)
@@ -6446,6 +6446,14 @@ async def streaming_chat_response_handler(response, ctx):
                                 extra_params=extra_params,
                             )
 
+                        new_form_data = await prepare_tool_continuation(
+                            request,
+                            user,
+                            new_form_data,
+                            metadata,
+                            {model_id: model},
+                            output_items=context_output_count(full_output()),
+                        )
                         new_form_data = normalize_messages_for_model(new_form_data)
 
                         res = await generate_chat_completion(
@@ -6667,6 +6675,14 @@ async def streaming_chat_response_handler(response, ctx):
                                     extra_params=extra_params,
                                 )
 
+                            new_form_data = await prepare_tool_continuation(
+                                request,
+                                user,
+                                new_form_data,
+                                metadata,
+                                {model_id: model},
+                                output_items=context_output_count(full_output()),
+                            )
                             new_form_data = normalize_messages_for_model(new_form_data)
 
                             res = await generate_chat_completion(

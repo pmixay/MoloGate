@@ -3221,6 +3221,7 @@ DEFAULT_CONFIG = {
     'task.model.params': TASK_MODEL_PARAMS,
     'chat.context_compaction.model': CONTEXT_COMPACTION_MODEL,
     'chat.context_compaction.enable': ENABLE_CONTEXT_COMPACTION,
+    'chat.tool_context.enable': os.getenv('ENABLE_TOOL_CONTEXT_CLEARING', 'True').lower() == 'true',
     'chat.context_compaction.auto_compact_percent': CONTEXT_COMPACTION_AUTO_COMPACT_PERCENT,
     'chat.context_compaction.token_threshold': CONTEXT_COMPACTION_TOKEN_THRESHOLD,
     'chat.context_compaction.token_cap': CONTEXT_COMPACTION_TOKEN_CAP,

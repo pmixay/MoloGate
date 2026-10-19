@@ -21,6 +21,7 @@ from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import get_message_list
 from open_webui.utils.model_ids import find_model_id
 from open_webui.utils.subagent_profiles import get_profiles, resolve_profile
+from open_webui.utils.tool_context import shorten
 from sqlalchemy import select
 from starlette.datastructures import Headers
 
@@ -916,24 +917,12 @@ async def delegate(
     def result_text(result: dict, duration: float) -> str:
         lines = [
             f'[ASYNC SUBAGENT COMPLETE - {delegation_id}]',
-            (
-                'A background subagent you dispatched earlier has finished. '
-                'The original task source is included so you can decide whether '
-                'to use the result or continue without it.'
-            ),
-            '',
-            f'Original task: {task}',
-            f'Agent: {delegation_id} ({agent_profile["name"]})',
+            f'Task: {shorten(task, 600)}',
+            f'Agent: {delegation_id} ({agent_profile["name"]}) · chat {chat_id}',
+            f'Status: {result.get("status", "completed")}   Duration: {duration:.1f}s',
+            'Use the result if relevant; no need to repeat this notification to the user.',
+            '--- RESULT ---',
         ]
-        if context:
-            lines.append(f'Context provided: {context}')
-        lines.extend(
-            [
-                f'Subagent chat: {chat_id}',
-                f'Status: {result.get("status", "completed")}   Duration: {duration:.1f}s',
-                '--- RESULT ---',
-            ]
-        )
         if result.get('status') == 'completed':
             lines.append(result.get('summary') or 'Subagent completed without a final summary.')
         elif result.get('status') == 'interrupted':
@@ -945,7 +934,7 @@ async def delegate(
             lines.append(f'The subagent did not complete successfully.{detail}')
             if result.get('summary'):
                 lines.extend(['Partial output:', result['summary']])
-        return '\n'.join(lines)
+        return shorten('\n'.join(lines), 5000)
 
     async def deliver_when_done(child_task: asyncio.Task, started_at: float) -> None:
         """Post a background sub-agent's result to the main chat once its run ends."""

@@ -1629,7 +1629,8 @@ async def delegate_task(
     __message_id__: str = None,
 ) -> str:
     """
-    Delegate focused work to a parallel sub-agent using the current model and tools.
+    Optionally delegate a substantial, independent task to a parallel sub-agent.
+    Work directly for routine commands and small edits; delegation adds context and latency.
     task_status shows a sub-agent's progress and result, and cancel_task stops it.
     A foreground sub-agent that runs long moves to the background by itself; its result then comes back as a message.
 

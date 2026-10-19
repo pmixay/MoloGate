@@ -159,8 +159,19 @@ export const buildContextBreakdown = (
 	for (const category of CONTEXT_CATEGORIES) {
 		categories[category] = toCount(recorded[category]);
 	}
-	for (const message of messages.slice(baseIdx)) {
-		addMessageTokens(categories, message);
+	for (const [offset, message] of messages.slice(baseIdx).entries()) {
+		// A loop checkpoint already includes earlier display output. Add only output produced
+		// since that request, not the entire preserved transcript again.
+		const consumed = offset === 0 ? messages[baseIdx].context_breakdown.output_items : undefined;
+		if (Number.isInteger(consumed) && consumed >= 0 && Array.isArray(message.output)) {
+			addMessageTokens(categories, {
+				...message,
+				content: '',
+				output: message.output.slice(consumed)
+			});
+		} else {
+			addMessageTokens(categories, message);
+		}
 	}
 
 	const calibration = getCalibration(messages);
