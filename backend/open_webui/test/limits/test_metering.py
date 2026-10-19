@@ -213,6 +213,7 @@ class MeteringCase(DatabaseCase):
                 await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
                 await connection.run_sync(table.create)
         metering._last.clear()
+        metering._polled.clear()
         metering._locks.clear()
         metering._calibrations.clear()
         metering._calibrations_read = None
@@ -274,6 +275,26 @@ class MeteringDatabaseTests(MeteringCase):
         await self.read(account.id, weekly(0.5, resets + 7 * DAY), START + 400)
         [window] = await Metering.windows()
         self.assertEqual((window.used_percent, window.observed_at), (1, START + 400))
+
+    async def test_headers_wait_while_a_poll_reads_the_window(self):
+        account = await self.create_account(provider='codex', plan='plus', sharing='shared')
+
+        def five_hours(used, resets_at):
+            return [{'id': 'primary', 'used_percent': used, 'resets_at': resets_at, 'window_minutes': 300}]
+
+        # Two views of one window that disagree: they must not alternate into rises.
+        for step in range(6):
+            at = START + step * 20
+            await self.read(account.id, five_hours(26 + step, START + 4 * HOUR), at, source='poll')
+            await self.read(account.id, five_hours(75 + step, START + 180), at + 5, source='headers')
+        readings = await self.rows(AccountReading)
+        self.assertEqual({r.source for r in readings}, {'poll'})
+        self.assertEqual(max(r.used_percent for r in readings), 31)
+
+        # Without a recent poll, the headers are the only view and are kept.
+        later = START + 100 + metering.POLL_FRESH_SECONDS + 60
+        await self.read(account.id, five_hours(40, START + 4 * HOUR), later, source='headers')
+        self.assertIn('headers', {r.source for r in await self.rows(AccountReading)})
 
     async def test_snapshots_from_requests_are_kept(self):
         from open_webui.utils.provider_limits import record_provider_limits

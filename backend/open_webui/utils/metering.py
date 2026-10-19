@@ -38,6 +38,11 @@ CALIBRATION_DAYS = 14
 RETENTION_DAYS = 35
 # The latest window is rewritten at most this often when the reading has not changed.
 WINDOW_TOUCH_SECONDS = 60
+# A response's headers can describe another period of the window than the provider's own view
+# (codex-lb's poll): one account showed 75% resetting in minutes next to 26% resetting in four
+# hours, and alternating the two made every reading a fake rise. While a poll has read the window
+# this recently, header readings are left out. Z.ai's quota endpoint is read every five minutes.
+POLL_FRESH_SECONDS = 15 * 60
 LEADER_KEY = 'mologate:metering:leader'
 WORKER_ID = str(uuid.uuid4())
 # Base plans weigh 1 by definition (the 1x of decision 7); other plans' weights are fitted
@@ -47,6 +52,8 @@ BASE_PLANS = {'codex': {'plus'}, 'zai': {'lite'}}
 CALIBRATION_CACHE_SECONDS = 5 * 60
 
 _last: dict[tuple[str, str], dict] = {}
+# When each window was last read by a poll.
+_polled: dict[tuple[str, str], int] = {}
 _locks: dict[tuple[str, str], asyncio.Lock] = {}
 _tasks: set = set()
 _calibrations: dict[tuple[str, str], dict] = {}
@@ -106,6 +113,10 @@ async def _store(account_id: str, readings: list[dict], source: str, now: int) -
 
 async def _store_one(account_id: str, reading: dict, source: str, now: int) -> None:
     key = (account_id, reading['window'])
+    if source == 'poll':
+        _polled[key] = now
+    elif now - _polled.get(key, 0) < POLL_FRESH_SECONDS:
+        return
     last = _last.get(key)
     if last is None:
         row = await Metering.latest_reading(*key)
