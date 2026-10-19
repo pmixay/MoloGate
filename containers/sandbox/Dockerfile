@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     HOME=/home/user \
+    XDG_CACHE_HOME=/home/user/.cache \
     USER=root \
     SHELL=/bin/bash \
     PIP_NO_CACHE_DIR=1 \

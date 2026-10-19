@@ -95,6 +95,9 @@ class PromptTests(unittest.TestCase):
         self.assertIn('/home/user/uploads/b.pdf (3 MB) (attached to this message)', prompt)
         self.assertIn('1 CPU, 1 GB memory, 10 GB disk, 100 MiB/s network', prompt)
         self.assertIn('Fresh container.', prompt)
+        self.assertIn('/tmp is a small memory-backed tmpfs', prompt)
+        self.assertIn('/home/user/worktrees', prompt)
+        self.assertIn('/home/user/.cache', prompt)
         self.assertIn('Network: on', containers.container_prompt({'network': True}, None, []))
 
     def test_unique_upload_paths(self):
