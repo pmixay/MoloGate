@@ -404,7 +404,10 @@
 
 								<div class="mt-1 w-full min-w-full">
 									{#if (message?.content ?? '') === ''}
-										<WorkingIndicator />
+										<!-- Mologate: hammer animation + live elapsed timer while the merged response is working -->
+										<WorkingIndicator
+											startedAt={(message.timestamp ?? history.messages[messageId]?.timestamp) * 1000}
+										/>
 									{:else}
 										<div class="markdown-prose">
 											<Markdown id={`merged`} content={message.content ?? ''} />

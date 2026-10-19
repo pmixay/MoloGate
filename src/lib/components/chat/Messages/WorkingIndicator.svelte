@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { getContext } from 'svelte';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 
@@ -9,18 +10,52 @@
 	const variant = { name: 'hammer-c', size: 64 };
 	const src = (theme: 'dark' | 'light', ext: 'gif' | 'png') =>
 		`${WEBUI_BASE_URL}/assets/working/${variant.name}-${theme}.${ext}`;
+
+	// Mologate: live elapsed timer beside the hammer while the model works.
+	// `startedAt` is a ms epoch timestamp; when missing we count from mount.
+	export let startedAt: number | null | undefined = undefined;
+
+	const formatElapsed = (ms: number): string => {
+		const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+		if (totalSeconds < 60) return `${totalSeconds}s`;
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+		const hours = Math.floor(minutes / 60);
+		return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`;
+	};
+
+	const mountTime = Date.now();
+	let elapsedMs = 0;
+
+	$: effectiveStart = Number.isFinite(startedAt) ? (startedAt as number) : mountTime;
+	$: elapsedMs = Math.max(0, Date.now() - effectiveStart);
+
+	const interval = setInterval(() => {
+		elapsedMs = Math.max(0, Date.now() - effectiveStart);
+	}, 1000);
+
+	onDestroy(() => clearInterval(interval));
 </script>
 
 <div
 	role="status"
-	aria-label={$i18n.t('Working')}
-	class="working-indicator my-1"
-	style="--working-size: {variant.size / 16}rem"
+	aria-label={`${$i18n.t('Working')} ${formatElapsed(elapsedMs)}`}
+	class="working-wrap my-1 flex items-end gap-2"
 >
-	<img src={src('light', 'gif')} alt="" class="for-light anim" />
-	<img src={src('dark', 'gif')} alt="" class="for-dark anim" />
-	<img src={src('light', 'png')} alt="" class="for-light still" />
-	<img src={src('dark', 'png')} alt="" class="for-dark still" />
+	<div class="working-indicator" style="--working-size: {variant.size / 16}rem">
+		<img src={src('light', 'gif')} alt="" class="for-light anim" />
+		<img src={src('dark', 'gif')} alt="" class="for-dark anim" />
+		<img src={src('light', 'png')} alt="" class="for-light still" />
+		<img src={src('dark', 'png')} alt="" class="for-dark still" />
+	</div>
+
+	<!-- Mologate: elapsed working time; monospace + tabular digits avoid jitter -->
+	<span
+		class="working-timer pb-2 font-mono text-xs text-gray-500 dark:text-gray-400 tabular-nums"
+	>
+		{formatElapsed(elapsedMs)}
+	</span>
 </div>
 
 <style>
