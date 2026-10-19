@@ -3,6 +3,33 @@
 Planned features for Mologate, the Molotok team's fork of Open WebUI. Items are grouped by area and
 are not in priority order. Tick an item off when it ships.
 
+## October 2026 development status
+
+See [October development updates](docs/development-updates-2026-10.md) for the detailed scope,
+review status, deployment checks and safe rollback procedure. **Merged is not the same as deployed**;
+open PRs below are not shipped.
+
+- [x] **GitHub connection and working-model animation:** [PR #8](https://github.com/pmixay/MoloGate/pull/8)
+      merged into main (`3dea56a`): GitHub device authorization button and one `hammer-c` working-model animation.
+      The follow-up catalog fix is on main as `c334456`.
+- [ ] **Default context compaction:** [PR #9](https://github.com/pmixay/MoloGate/pull/9) is open.
+      Enable by default when no saved choice exists; preserve an explicit saved `enable: false`.
+      Trigger at 75% of a known model context **or the 80,000-token safety threshold, whichever comes
+      first**. For a 128k context, 80k triggers before 75% (96k); this is not a pure 75% trigger.
+- [ ] **Tool-use display and timing:** [PR #10](https://github.com/pmixay/MoloGate/pull/10) is open:
+      live `hammer-c` elapsed time, actual persisted server tool start/end times, collapsed code
+      snippets, mobile layout and grouped tool calls. Hide timing when timestamps are missing.
+- [ ] **Delete all chats:** [PR #11](https://github.com/pmixay/MoloGate/pull/11) is open: sidebar
+      action with confirmation and permission enforcement.
+- [ ] **Sandbox temporary storage:** [PR #12](https://github.com/pmixay/MoloGate/pull/12) is open:
+      512 MiB `/tmp`, server `TMPDIR` on disk under `/home/user`, preserving explicit overrides;
+      document `XDG_CACHE_HOME` and rebuilding both images without destroying existing workspaces.
+- [ ] **File-change tracking correctness — in progress:** on `fix/file-change-tracking`, exclude
+      newly cloned repository baselines, generated files and caches from false counts while keeping
+      real edits visible during generation and after it finishes. Backend/UI implementation now refreshes after tools return and at response end, deduplicated and throttled to at
+      least two seconds, with forced refresh for `write_file`/`replace_file_content`; this is not a
+      filesystem watcher. New PR and CI remain pending; no PR number is assigned before creation.
+
 ## Limits
 
 The full design and phased plan for accounts, limits, credits and personal API keys is in
@@ -220,6 +247,8 @@ The design, setup and settings are in [docs/container-nodes.md](docs/container-n
     the chat's container, with file-type icons and lines added and removed; clicking one shows its
     diff, and a folder button opens it in the file browser. The bar above the message box with the
     whole chat's changes shows only in chats linked to a GitHub repository (below).
+  - In progress: correct clone/generated/cache false counts and show real edits during generation
+    as well as after completion. See [October development updates](docs/development-updates-2026-10.md#file-change-tracking--in-progress).
 
 ### Agents
 

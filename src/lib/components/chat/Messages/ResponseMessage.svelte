@@ -650,8 +650,8 @@
 								<CodeExecutions codeExecutions={message.code_executions} />
 							{/if}
 
-							{#if message.done && message.changes?.total}
-								<ChangesSummary changes={message.changes} />
+							{#if message.changes?.total}
+								<ChangesSummary changes={message.changes} live={!message.done} />
 							{/if}
 						</div>
 					</div>

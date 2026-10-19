@@ -697,7 +697,7 @@ async def collect_changes(metadata: dict) -> dict | None:
     except NodeError as e:
         log.info('Could not list changes for %s: %s', snapshot['context'], e)
         return None
-    if not result.get('total'):
+    if result.get('error'):
         return None
     return {
         'files': result.get('files') or [],
