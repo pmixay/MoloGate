@@ -88,6 +88,27 @@
 		}
 	}
 
+	// Mologate: a short live preview of what the tool is doing, Claude-Code style — the first
+	// line of a command (or its main argument for other tools), not just the tool's name.
+	const previewFromArgs = (name: string, args: Record<string, unknown> | null): string => {
+		if (!args) return '';
+		const firstLine = (value: unknown): string => {
+			const text = typeof value === 'string' ? value : '';
+			return text.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
+		};
+		if (typeof args.command === 'string') return firstLine(args.command);
+		if (typeof args.cmd === 'string') return firstLine(args.cmd);
+		for (const key of ['query', 'url', 'path', 'file_path', 'pattern', 'searchQuery']) {
+			if (typeof args[key] === 'string' && (args[key] as string).trim()) {
+				return `${key}: ${firstLine(args[key])}`;
+			}
+		}
+		if (typeof args.task === 'string' && args.task.trim()) return firstLine(args.task);
+		return '';
+	};
+
+	$: toolPreview = previewFromArgs(attributes?.name ?? '', parsedArgs);
+
 	function parseArguments(str: string): Record<string, unknown> | null {
 		try {
 			const parsed = parseJSONString(str);
@@ -292,6 +313,10 @@
 							{$i18n.t('Allow {{NAME}}?', { NAME: attributes.name })}
 						{:else if isPreparing}
 							{$i18n.t('Preparing {{NAME}}...', { NAME: attributes.name })}
+						{:else if toolPreview}
+							<span class="opacity-60">{$i18n.t('Executing')} </span>{$i18n.t(attributes.name)}
+							<span class="opacity-60">·</span>
+							<code class="font-mono text-[0.9em] px-1 rounded bg-gray-100 dark:bg-gray-800">{toolPreview}</code>
 						{:else}
 							{$i18n.t('Executing {{NAME}}...', { NAME: attributes.name })}
 						{/if}
