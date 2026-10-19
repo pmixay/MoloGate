@@ -67,12 +67,15 @@ class AutoThresholdTests(unittest.TestCase):
 
     def test_request_compacts_at_75_percent_of_window(self):
         """A 128k model at 97k used compacts, even below the fixed 80k threshold."""
-        messages = [{'id': f'm{i}', 'role': 'user' if i % 2 == 0 else 'assistant', 'content': 'x' * 400}
-                    for i in range(20)]
+        messages = [
+            {'id': f'm{i}', 'role': 'user' if i % 2 == 0 else 'assistant', 'content': 'x' * 400} for i in range(20)
+        ]
         messages[-1]['usage'] = {'prompt_tokens': 97000, 'completion_tokens': 100}
 
-        with patch.object(context_compaction, '_load_config', new=AsyncMock(return_value=config())), \
-             patch.object(context_compaction, '_generate_summary', new=AsyncMock(return_value='summary')):
+        with (
+            patch.object(context_compaction, '_load_config', new=AsyncMock(return_value=config())),
+            patch.object(context_compaction, '_generate_summary', new=AsyncMock(return_value='summary')),
+        ):
             compacted, summary, changed = asyncio.run(
                 context_compaction.compact_messages_for_request(
                     request=None,
@@ -87,8 +90,9 @@ class AutoThresholdTests(unittest.TestCase):
         self.assertTrue(changed)
 
     def test_below_threshold_does_not_compact(self):
-        messages = [{'id': f'm{i}', 'role': 'user' if i % 2 == 0 else 'assistant', 'content': 'x' * 40}
-                    for i in range(6)]
+        messages = [
+            {'id': f'm{i}', 'role': 'user' if i % 2 == 0 else 'assistant', 'content': 'x' * 40} for i in range(6)
+        ]
         with patch.object(context_compaction, '_load_config', new=AsyncMock(return_value=config())):
             compacted, summary, changed = asyncio.run(
                 context_compaction.compact_messages_for_request(

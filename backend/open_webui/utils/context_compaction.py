@@ -219,9 +219,7 @@ async def _load_config() -> dict:
         'enable': bool(values.get('chat.context_compaction.enable', False)),
         'token_threshold': token_threshold,
         'token_cap': _parse_positive_int(values.get('chat.context_compaction.token_cap')) or token_threshold,
-        'auto_compact_percent': _clamp_auto_compact_percent(
-            values.get('chat.context_compaction.auto_compact_percent')
-        ),
+        'auto_compact_percent': _clamp_auto_compact_percent(values.get('chat.context_compaction.auto_compact_percent')),
         'retention_percentage': _clamp_retention_percentage(values.get('chat.context_compaction.retention_percentage')),
         'prompt_template': values.get('chat.context_compaction.prompt_template', '') or '',
     }
@@ -300,9 +298,7 @@ def _usage_token_count(usage: dict) -> int:
     return prompt_tokens + completion_tokens
 
 
-async def get_chat_context_usage(
-    chat: Any, model_id: str | None = None, models: dict | None = None
-) -> dict | None:
+async def get_chat_context_usage(chat: Any, model_id: str | None = None, models: dict | None = None) -> dict | None:
     chat_data = chat.chat or {}
     history = chat_data.get('history') or {}
     current_id = getattr(chat, 'current_message_id', None) or history.get('currentId')
