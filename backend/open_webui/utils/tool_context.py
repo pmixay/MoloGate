@@ -137,3 +137,17 @@ def summary_messages(messages: list[dict]) -> list[dict]:
         remaining = max(0, remaining - len(item['content']))
         prepared.append(item)
     return list(reversed(prepared))
+
+
+def context_output_count(output: list[dict]) -> int:
+    """Ignore trailing empty streaming placeholders that are removed before the next round."""
+    count = len(output)
+    while count:
+        item = output[count - 1]
+        if item.get('type') != 'message' or item.get('status') != 'in_progress':
+            break
+        parts = item.get('content') or []
+        if any(p.get('text', '').strip() for p in parts if isinstance(p, dict)):
+            break
+        count -= 1
+    return count

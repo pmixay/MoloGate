@@ -90,7 +90,7 @@ from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.context_compaction import compact_messages_for_request, prepare_tool_continuation
-from open_webui.utils.tool_context import clear_tool_context, TOOL_GUIDANCE
+from open_webui.utils.tool_context import clear_tool_context, context_output_count, TOOL_GUIDANCE
 from open_webui.utils.context_window import build_context_breakdown
 from open_webui.utils.files import (
     convert_markdown_base64_images,
@@ -6447,7 +6447,12 @@ async def streaming_chat_response_handler(response, ctx):
                             )
 
                         new_form_data = await prepare_tool_continuation(
-                            request, user, new_form_data, metadata, {model_id: model}, output_items=len(full_output())
+                            request,
+                            user,
+                            new_form_data,
+                            metadata,
+                            {model_id: model},
+                            output_items=context_output_count(full_output()),
                         )
                         new_form_data = normalize_messages_for_model(new_form_data)
 
@@ -6676,7 +6681,7 @@ async def streaming_chat_response_handler(response, ctx):
                                 new_form_data,
                                 metadata,
                                 {model_id: model},
-                                output_items=len(full_output()),
+                                output_items=context_output_count(full_output()),
                             )
                             new_form_data = normalize_messages_for_model(new_form_data)
 

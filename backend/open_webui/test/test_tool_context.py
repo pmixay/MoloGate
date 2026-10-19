@@ -93,6 +93,16 @@ class ClearingTests(unittest.TestCase):
         for limit in range(0, 300):
             self.assertLessEqual(len(tools.shorten('x' * 1000, limit)), limit)
 
+    def test_ui_checkpoint_excludes_empty_stream_placeholder(self):
+        output = [
+            {'type': 'function_call'},
+            {'type': 'function_call_output'},
+            {'type': 'message', 'status': 'in_progress', 'content': [{'text': ''}]},
+        ]
+        self.assertEqual(tools.context_output_count(output), 2)
+        output[-1]['content'][0]['text'] = 'real answer'
+        self.assertEqual(tools.context_output_count(output), 3)
+
 
 class ContinuationTests(unittest.IsolatedAsyncioTestCase):
     def setup_function(self, enabled=True, threshold=100):
