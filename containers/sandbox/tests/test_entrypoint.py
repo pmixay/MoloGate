@@ -10,14 +10,14 @@ import unittest
 from pathlib import Path
 
 ENTRYPOINT = Path(__file__).resolve().parents[1] / 'mologate-sandbox.sh'
-PROBE = '''
+PROBE = """
 import json, os, subprocess, sys, tempfile
 with tempfile.NamedTemporaryFile() as f:
     child = subprocess.check_output([sys.executable, '-c',
         'import tempfile; print(tempfile.gettempdir())'], text=True).strip()
     print(json.dumps({'env': {k: os.environ[k] for k in ('TMPDIR', 'TMP', 'TEMP')},
         'file': f.name, 'child_tmp': child, 'log_dir': os.getenv('OPEN_TERMINAL_LOG_DIR')}))
-'''
+"""
 
 
 class EntrypointTests(unittest.TestCase):
@@ -38,8 +38,9 @@ class EntrypointTests(unittest.TestCase):
             env.update(overrides)
             result = subprocess.run(['/bin/sh', '-c', script], env=env, text=True, capture_output=True, check=True)
             data = json.loads(result.stdout)
-            expected = overrides.get('TMPDIR', overrides.get('TMP', overrides.get('TEMP',
-                str(home / '.local/state/open-terminal/tmp'))))
+            expected = overrides.get(
+                'TMPDIR', overrides.get('TMP', overrides.get('TEMP', str(home / '.local/state/open-terminal/tmp')))
+            )
             self.assertEqual(data['env']['TMPDIR'], expected)
             self.assertEqual(data['env']['TMP'], overrides.get('TMP', expected))
             self.assertEqual(data['env']['TEMP'], overrides.get('TEMP', expected))
